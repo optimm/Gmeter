@@ -86,6 +86,8 @@ type Config struct {
 	// window with live counters.
 	SampleEvery time.Duration
 	Progress    func(Snapshot)
+
+	labels []string // the distinct Request labels in order of first use, filled in by normalize
 }
 
 // Request is one request of a replayed trace.
@@ -95,7 +97,13 @@ type Request struct {
 	Header http.Header // added to Config.Header; a name given here replaces the global value
 	Body   []byte      // empty uses Config.Body
 
-	url string // Config.URL with Target appended, filled in by normalize
+	// Label, if set, groups requests in the results: Result.Labels reports each
+	// distinct label separately. Give every request one or none, at most
+	// MaxLabels different ones.
+	Label string
+
+	url   string // Config.URL with Target appended, filled in by normalize
+	label int    // index of Label among the run's distinct labels, filled in by normalize
 }
 
 // Snapshot is a lock-free view of a run in progress.
@@ -163,6 +171,11 @@ type Result struct {
 	// Stages has one entry per stage of the profile, in order. Each total above
 	// is the sum of the same figure over the stages.
 	Stages []StageResult
+
+	// Labels has one entry per distinct Request.Label, busiest first, or is empty
+	// when the requests carry none. Each total above is the sum of the same
+	// figure over the labels.
+	Labels []LabelResult
 }
 
 // lateTolerance is how far past its due time the scheduler may reach a request
@@ -217,12 +230,14 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	stopSampler := startSampler(cfg, &live, start, tallies)
 
-	stages := make([]stageTally, len(cfg.Stages))
+	stages := make([]partTally, len(cfg.Stages))
+	labels := make([]partTally, len(cfg.labels))
+	scheduledBy := make([]uint64, len(cfg.labels))                                             // per label; only this goroutine writes it
 	scheduledIn, droppedIn := make([]uint64, len(cfg.Stages)), make([]uint64, len(cfg.Stages)) // only this goroutine writes them
 	jobs := make(chan job, cfg.Workers)
 	var wg sync.WaitGroup
 	for _, t := range tallies {
-		w := &worker{client: client, cfg: cfg, live: &live, t: t, stages: stages}
+		w := &worker{client: client, cfg: cfg, live: &live, t: t, stages: stages, labels: labels}
 		wg.Go(func() { w.run(ctx, jobs) })
 	}
 
@@ -256,6 +271,9 @@ loop:
 		prev = at
 		select {
 		case jobs <- job{at: at, stage: stage, seq: seq}:
+			if len(scheduledBy) > 0 {
+				scheduledBy[cfg.Requests[seq%uint64(len(cfg.Requests))].label]++
+			}
 			seq++
 			live.scheduled.Add(1)
 			scheduledIn[stage]++
@@ -290,6 +308,7 @@ loop:
 		TimerLag:  timerLag,
 		Late:      live.late.Load(),
 		Timeline:  timeline,
+		Labels:    labelResults(cfg.labels, scheduledBy, labels),
 	}
 	for i := range stages {
 		st := &stages[i] // the workers have exited: no lock needed
@@ -413,6 +432,9 @@ func (c Config) normalize() (Config, error) {
 			if _, err := http.NewRequest(method, r.url, nil); err != nil {
 				return c, fmt.Errorf("runner: request %d: invalid request: %w", i+1, err)
 			}
+		}
+		if c.labels, err = indexLabels(c.Requests); err != nil {
+			return c, err
 		}
 	}
 	return c, nil
@@ -553,13 +575,35 @@ type job struct {
 	seq   uint64    // its index in the schedule: which of the Requests to send
 }
 
-// stageTally is one stage's share of the results. Every worker records into
-// it, so it has a lock; that is cheap next to an HTTP round trip, and it
-// allocates its histograms only when a stage gets a first response.
-type stageTally struct {
+// partTally is one part of the run's results: one stage, or one label. Every
+// worker records into it, so it has a lock; that is cheap next to an HTTP round
+// trip, and it allocates its histograms only when it gets a first response.
+type partTally struct {
 	mu                 sync.Mutex
 	corrected, service *hist.Histogram
 	failed, badStatus  uint64
+}
+
+func (p *partTally) record(corrected, service time.Duration) {
+	p.mu.Lock()
+	if p.corrected == nil {
+		p.corrected, p.service = hist.New(), hist.New()
+	}
+	p.corrected.Record(corrected)
+	p.service.Record(service)
+	p.mu.Unlock()
+}
+
+func (p *partTally) fail() {
+	p.mu.Lock()
+	p.failed++
+	p.mu.Unlock()
+}
+
+func (p *partTally) bad() {
+	p.mu.Lock()
+	p.badStatus++
+	p.mu.Unlock()
 }
 
 type worker struct {
@@ -567,7 +611,8 @@ type worker struct {
 	cfg    Config
 	live   *counters
 	t      *tally
-	stages []stageTally
+	stages []partTally
+	labels []partTally // empty unless the requests carry labels
 }
 
 func (w *worker) run(ctx context.Context, jobs <-chan job) {
@@ -598,7 +643,7 @@ func (w *worker) do(ctx context.Context, j job) {
 	}
 	req, err := http.NewRequestWithContext(reqCtx, method, target, body)
 	if err != nil { // validated up front; defensive only
-		w.fail("other", j.stage)
+		w.fail("other", j)
 		return
 	}
 	req.Header = w.cfg.Header.Clone()
@@ -630,46 +675,50 @@ func (w *worker) do(ctx context.Context, j job) {
 		if ctx.Err() != nil { // the whole run was cancelled, not this request timing out
 			kind = "canceled"
 		}
-		w.fail(kind, j.stage)
+		w.fail(kind, j)
 		if kind == "timeout" {
-			w.record(j.stage, intended, sent, finished)
+			w.record(j, intended, sent, finished)
 		}
 		return
 	}
 	w.t.statuses[status]++
 	w.live.completed.Add(1)
-	w.record(j.stage, intended, sent, finished)
+	w.record(j, intended, sent, finished)
 	if status < 200 || status >= 400 {
-		st := &w.stages[j.stage]
-		st.mu.Lock()
-		st.badStatus++
-		st.mu.Unlock()
+		w.stages[j.stage].bad()
+		if l := w.label(j); l != nil {
+			l.bad()
+		}
 	}
 }
 
-func (w *worker) record(stage int, intended, sent, finished time.Time) {
+// label is the tally of the label of j's request, or nil if the requests have
+// no labels.
+func (w *worker) label(j job) *partTally {
+	if len(w.labels) == 0 {
+		return nil
+	}
+	return &w.labels[w.cfg.Requests[j.seq%uint64(len(w.cfg.Requests))].label]
+}
+
+func (w *worker) record(j job, intended, sent, finished time.Time) {
 	corrected, service := finished.Sub(intended), finished.Sub(sent)
 	w.t.corrected.Record(corrected)
 	w.t.service.Record(service)
 
-	st := &w.stages[stage]
-	st.mu.Lock()
-	if st.corrected == nil {
-		st.corrected, st.service = hist.New(), hist.New()
+	w.stages[j.stage].record(corrected, service)
+	if l := w.label(j); l != nil {
+		l.record(corrected, service)
 	}
-	st.corrected.Record(corrected)
-	st.service.Record(service)
-	st.mu.Unlock()
 }
 
-func (w *worker) fail(kind string, stage int) {
+func (w *worker) fail(kind string, j job) {
 	w.t.errors[kind]++
 	w.live.failed.Add(1)
-
-	st := &w.stages[stage]
-	st.mu.Lock()
-	st.failed++
-	st.mu.Unlock()
+	w.stages[j.stage].fail()
+	if l := w.label(j); l != nil {
+		l.fail()
+	}
 }
 
 // classify buckets a transport error into a short, stable label.

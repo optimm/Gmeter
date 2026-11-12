@@ -56,6 +56,11 @@ type Summary struct {
 	// coping at.
 	Stages []StageSummary `json:"stages"`
 
+	// Endpoints has one entry per endpoint of a replayed trace, busiest first;
+	// the key is left out of a run that has none. Its figures add up to the
+	// totals above.
+	Endpoints []EndpointSummary `json:"endpoints,omitempty"`
+
 	// Timeline has one point per sample window; its points add up to the totals
 	// above. Histograms holds the full latency distributions, which is what
 	// makes a saved run comparable and mergeable later.
@@ -172,10 +177,11 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 			TimerLagMaxMs: ms(res.TimerLag.Max()),
 			Late:          res.Late,
 		},
-		Warnings: []string{},
-		Version:  SchemaVersion,
-		Stages:   stageSummaries(res.Stages),
-		Timeline: points(res.Timeline),
+		Warnings:  []string{},
+		Version:   SchemaVersion,
+		Stages:    stageSummaries(res.Stages),
+		Endpoints: endpointSummaries(res.Labels),
+		Timeline:  points(res.Timeline),
 		Histograms: Histograms{
 			Corrected: res.Corrected.Dump(),
 			Service:   res.Service.Dump(),
@@ -294,6 +300,7 @@ func (s Summary) WriteText(w io.Writer) error {
 	b.WriteString("latency, service (from when the request was actually sent)\n")
 	writeLatency(&b, s.Service)
 	writeStages(&b, s.Stages)
+	writeEndpoints(&b, s.Endpoints)
 	writeTimeline(&b, s.Timeline)
 
 	_, err := io.WriteString(w, b.String())

@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -73,6 +74,11 @@ type Config struct {
 
 	Workers int           // max requests in flight (== max connections)
 	Timeout time.Duration // per request; default 30s
+
+	// TLS, if set, is the client TLS configuration for https URLs: the root
+	// certificates to trust, a client certificate, or skipping verification. Nil
+	// verifies the server's certificate against the system's roots.
+	TLS *tls.Config
 
 	// Spin is how long before each request's due time the scheduler stops
 	// sleeping and busy-waits instead. Zero uses a plain timer, which on some
@@ -220,7 +226,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, err
 	}
 
-	client := newClient(cfg.Workers)
+	client := newClient(cfg.Workers, cfg.TLS)
 	defer client.CloseIdleConnections()
 
 	start := time.Now()
@@ -462,7 +468,7 @@ func (c Config) normalize() (Config, error) {
 // newClient returns an HTTP/1.1 client capped at conns connections that
 // neither follows redirects (a 302 is a result, not a reason to send another
 // request) nor honours proxy environment variables.
-func newClient(conns int) *http.Client {
+func newClient(conns int, tlsConfig *tls.Config) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
 			DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
@@ -471,6 +477,7 @@ func newClient(conns int) *http.Client {
 			MaxConnsPerHost:     conns,
 			IdleConnTimeout:     90 * time.Second,
 			DisableCompression:  true,
+			TLSClientConfig:     tlsConfig.Clone(), // nil stays nil
 			// A non-nil empty map disables HTTP/2: v0 is HTTP/1.1 only.
 			TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{},
 		},
@@ -775,9 +782,27 @@ func classify(err error) string {
 		return "connection_reset"
 	case errors.As(err, &dns):
 		return "dns"
+	case isTLSFailure(err):
+		return "tls"
 	case errors.As(err, &netErr) && netErr.Timeout():
 		return "timeout"
 	default:
 		return "other"
 	}
+}
+
+// isTLSFailure reports whether err is the server's certificate being refused or
+// the handshake failing: an untrusted authority, the wrong host name, an expired
+// certificate, a server that does not speak TLS, or one that rejected ours.
+func isTLSFailure(err error) bool {
+	var (
+		verify  *tls.CertificateVerificationError
+		unknown x509.UnknownAuthorityError
+		host    x509.HostnameError
+		invalid x509.CertificateInvalidError
+		record  tls.RecordHeaderError
+		alert   tls.AlertError
+	)
+	return errors.As(err, &verify) || errors.As(err, &unknown) || errors.As(err, &host) ||
+		errors.As(err, &invalid) || errors.As(err, &record) || errors.As(err, &alert)
 }

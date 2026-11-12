@@ -271,6 +271,7 @@ are appended to it. A log can therefore never send a request to another host.
 | `-rate` | | send at this constant rate instead of at the recorded times; the trace is cycled in order |
 | `-duration` | one pass | with `-rate`: how long to keep sending; by default each request is sent once |
 | `-methods` | `GET,HEAD` | which methods to replay, or `all` (see below) |
+| `-endpoints` | `20` | the most rows in the per-endpoint breakdown, 2 to 100; `0` leaves it out (see below) |
 | `-arrivals` / `-seed` | `poisson` | access logs and `-rate` only; see below |
 
 `-workers`, `-timeout`, `-spin`, `-H`, `-json` and `-quiet` work as for a plain run. `-H` headers go with every
@@ -330,6 +331,46 @@ exact numbers. The point is the last row: the average rate is far below what the
 still more than 20 times the flat run's, because the bursts queue. `gmeter diff` notes when two runs replayed different
 traces, speeds or timings, since they are not like-for-like.
 
+### Per endpoint
+
+A replay reports each endpoint on its own as well as the whole mix. An endpoint is the method and the path, with
+the query string dropped and any path segment that is an identifier (only digits, a UUID, or 16 or more hex
+characters) replaced by `:id`: `GET /orders/18273?ref=mail` and `GET /orders/99` are both `GET /orders/:id`. The
+busiest endpoints get a row each and the rest are grouped as `(other)`; `-endpoints N` sets the most rows (each one
+costs two histograms, hence the limit of 100). Requests left out by `-methods` are not counted, so the ranking is
+of what was sent.
+
+Real output: a 10-second trace at about 300 rps (65% `/orders/N`, 20% `/search?q=...`, 15% `/users/N/cart`)
+against a toy server with four slots, where `/search` holds a slot for 40ms and everything else for 2ms. With
+`-workers 50`:
+
+```
+endpoints, busiest first (corrected latency; svc p99 is service latency, from when each request was actually sent)
+  endpoint             scheduled     bad  failed       p50       p99       max   svc p99
+  GET /orders/:id           1961       0       0     4.3ms    72.9ms    89.0ms    72.7ms
+  GET /search                625       0       0    42.6ms   105.3ms   118.9ms   103.0ms
+  GET /users/:id/cart        459       0       0     4.3ms    70.6ms    80.5ms    70.5ms
+```
+
+`/orders` costs 2ms but has a p99 of 73ms. This load keeps about three of the server's four slots busy (300 rps
+at about 10ms of slot time per request on average), so a request often has to wait for one, and a 2ms request
+waits as long as a 40ms one. The service p99 is just as high, because that wait is inside the server and both
+latencies include it. The same trace with `-workers 4` waits in the generator instead:
+
+```
+  GET /orders/:id           1961       0       0     8.0ms   109.6ms   131.4ms     5.6ms
+  GET /search                625       0       0    46.7ms   140.8ms   157.4ms    44.2ms
+  GET /users/:id/cart        459       0       0     6.5ms    83.3ms   124.4ms     5.1ms
+```
+
+Now the corrected p99 is 110ms and the service p99 is 5.6ms: once a request was sent it was answered quickly,
+but it had to wait for a free worker first (the generator line reported 37% of dispatches late). A gap between
+the two columns means requests waited in Gmeter; raise `-workers`.
+
+The names are paths from your trace, so they go into the saved JSON (`endpoints`). The query string never does,
+but a secret in a path segment that is not an identifier would; `-endpoints 0` keeps every path out of the report
+and the file.
+
 ### How far to trust a replay
 
 - **One-second logs hide short bursts.** The access-log row above recovers some of the burstiness (13.6ms against
@@ -341,8 +382,14 @@ traces, speeds or timings, since they are not like-for-like.
   environment returns `404`, which counts as a bad status. Check that count before reading the latency.
 - **Cycling warms caches.** With `-rate`, a trace shorter than the run is sent over and over, and later passes
   are served from warmer caches than the first. Use a trace at least as long as the run.
-- **There is no per-endpoint breakdown yet.** Latency is for the whole mix. A burst larger than `-workers` in
-  flight shows up as late dispatches in the generator line.
+- **An endpoint's latency includes what it waited behind.** Requests share the server's threads and connections,
+  so a fast endpoint that arrives while slow ones hold them all is slow too (the 2ms `/orders` with a p99 of 73ms
+  above). The table cannot tell "slow itself" from "stuck behind a slow neighbour"; to separate them, replay that
+  endpoint alone from a trace of only its requests. A burst larger than `-workers` in flight shows up as late
+  dispatches in the generator line.
+- **Endpoint names are recognised by shape.** Identifiers are found by how they look, so a slug such as
+  `/products/blue-shoes` or a name such as `/img/123.png` stays a different endpoint each time, and once there
+  are more than `-endpoints` rows the least busy fall into `(other)`.
 - The whole trace is read into memory before the run starts.
 
 ## Comparing runs
@@ -403,7 +450,8 @@ run-to-run noise, so treat small differences with suspicion and repeat the runs.
 (For a plain run. `gmeter find -json` saves the target, the result with its caveats as flags, and every trial.
 `gmeter replay -json` saves the same, and `run.replay` says what was replayed: the trace's file name, its format,
 how many requests were sent, the timing (`recorded` with its speed, or `fixed rate`), and how many were skipped by
-`-methods` or could not be parsed. For a replay `run.method` lists the methods in the trace.)
+`-methods` or could not be parsed. For a replay `run.method` lists the methods in the trace, and `endpoints` has
+one digest per endpoint: its name, requests scheduled, failures, bad statuses, and corrected and service latency.)
 
 `version`, `run` (URL, method, workers, duration, profile, arrivals, seed, spin, start time), the totals,
 `generator`, `warnings`, `stages` (one digest per stage of the profile), the per-window `timeline`, and the
@@ -502,11 +550,13 @@ not the tails. Gmeter's own check still catches that case: the timer-lag and lat
 - **`internal/replay`**: reads a traffic log (JSON Lines or an access log) into requests and, if it has times,
   into the offsets at which each is due. The runner takes those as `Offsets` instead of a profile, and the
   requests as `Requests`, cycled by schedule index. Access-log seconds are spread before the schedule is built,
-  so the scheduler never needs to know where its times came from.
+  so the scheduler never needs to know where its times came from. It also names each request's endpoint and caps
+  how many are reported; the runner only sees opaque labels.
 - **`internal/runner`**: scheduler, workers, an HTTP/1.1 client capped at `-workers` connections, live
-  counters (atomics), per-stage results (a small lock per stage, taken once per response), and the
-  generator-health measurements.
-- **`internal/report`**: text and JSON output, the per-window timeline, and run comparison (`diff`).
+  counters (atomics), per-stage and per-label results (a small lock per stage and per label, taken once per
+  response), and the generator-health measurements.
+- **`internal/report`**: text and JSON output, the per-window timeline, the per-endpoint table, and run
+  comparison (`diff`).
 
 ### Choices worth knowing
 
@@ -542,6 +592,7 @@ the live windows pinpoint when a stall happened.
 - [x] **v2a**: load profiles (steps, ramps, pauses), Poisson arrivals with a reproducible seed, per-stage results
 - [x] **v2b**: `gmeter find`: the highest rate that meets a latency target, with confirmation and caveats
 - [x] **v2c**: `gmeter replay`: a traffic log (JSON Lines or an access log) at its recorded pace or a fixed rate
-- [ ] **v2d**: per-phase timings (connect, TLS, first byte), and a per-endpoint breakdown for replays
+- [x] **v2d**: a per-endpoint breakdown for replays (`-endpoints`)
+- [ ] **v2e**: per-phase timings (connect, TLS, first byte), and `gmeter diff` per endpoint
 - [ ] **v3**: distributed mode with one controller driving several generators (merging histograms, not
       averaging percentiles), HTTP/2 and gRPC

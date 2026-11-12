@@ -36,7 +36,27 @@ type Summary struct {
 	// closed-loop tester would have reported).
 	Corrected Latency `json:"latency_corrected"`
 	Service   Latency `json:"latency_service"`
+
+	// Generator describes how well Gmeter itself kept time, so you can tell a
+	// slow server from a struggling load generator. Warnings explains any
+	// reading that crosses a threshold; it is always a list, never null.
+	Generator Generator `json:"generator"`
+	Warnings  []string  `json:"warnings"`
 }
+
+// Generator is the load generator's own health.
+type Generator struct {
+	TimerLagP99Ms float64 `json:"timer_lag_p99_ms"`
+	TimerLagMaxMs float64 `json:"timer_lag_max_ms"`
+	Late          uint64  `json:"late_dispatches"` // reached after their due time
+}
+
+// Thresholds beyond which a run gets a warning. Timers on an idle machine wake
+// within microseconds, so a p99 over 5ms means the generator is being starved.
+const (
+	timerLagWarn     = 5 * time.Millisecond
+	lateWarnFraction = 0.05
+)
 
 // Latency is a histogram digest in milliseconds.
 type Latency struct {
@@ -61,6 +81,12 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 		Errors:         res.Errors,
 		Corrected:      digest(res.Corrected),
 		Service:        digest(res.Service),
+		Generator: Generator{
+			TimerLagP99Ms: ms(res.TimerLag.Quantile(0.99)),
+			TimerLagMaxMs: ms(res.TimerLag.Max()),
+			Late:          res.Late,
+		},
+		Warnings: []string{},
 	}
 	for code, n := range res.Statuses {
 		s.Responses += n
@@ -75,7 +101,25 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 	if s.ElapsedSeconds > 0 {
 		s.AchievedRPS = float64(s.Responses) / s.ElapsedSeconds
 	}
+
+	if lag := res.TimerLag.Quantile(0.99); lag > timerLagWarn {
+		s.Warnings = append(s.Warnings, fmt.Sprintf(
+			"generator timer lag p99 is %s: Gmeter is struggling to keep time on this machine, so results at this rate may be distorted; lower the rate, free up CPU, or run it somewhere quieter",
+			FormatDuration(lag)))
+	}
+	if frac := s.lateFraction(); frac > lateWarnFraction {
+		s.Warnings = append(s.Warnings, fmt.Sprintf(
+			"%d of %d requests (%.0f%%) were dispatched after their due time: every worker was busy (raise -workers, or the server is slow) or the rate is finer than this machine's timers can pace; their latency still counts from the due time",
+			s.Generator.Late, s.Scheduled, frac*100))
+	}
 	return s
+}
+
+func (s Summary) lateFraction() float64 {
+	if s.Scheduled == 0 {
+		return 0
+	}
+	return float64(s.Generator.Late) / float64(s.Scheduled)
 }
 
 func digest(h *hist.Histogram) Latency {
@@ -123,6 +167,13 @@ func (s Summary) WriteText(w io.Writer) error {
 		}
 		fmt.Fprintf(&b, "errors     %s\n", strings.Join(parts, "   "))
 	}
+	fmt.Fprintf(&b, "generator  timer lag p99 %s, max %s   late %d (%.1f%%)\n",
+		FormatDuration(time.Duration(s.Generator.TimerLagP99Ms*float64(time.Millisecond))),
+		FormatDuration(time.Duration(s.Generator.TimerLagMaxMs*float64(time.Millisecond))),
+		s.Generator.Late, s.lateFraction()*100)
+	for _, w := range s.Warnings {
+		fmt.Fprintf(&b, "warning    %s\n", w)
+	}
 
 	b.WriteString("\nlatency, corrected (from each request's intended send time)\n")
 	writeLatency(&b, s.Corrected)
@@ -138,7 +189,7 @@ func writeLatency(b *strings.Builder, l Latency) {
 		b.WriteString("  no samples\n")
 		return
 	}
-	d := func(m float64) string { return formatDuration(time.Duration(m * float64(time.Millisecond))) }
+	d := func(m float64) string { return FormatDuration(time.Duration(m * float64(time.Millisecond))) }
 	fmt.Fprintf(b, "  p50 %s   p90 %s   p99 %s   p99.9 %s   max %s\n",
 		d(l.P50Ms), d(l.P90Ms), d(l.P99Ms), d(l.P999Ms), d(l.MaxMs))
 }
@@ -152,8 +203,8 @@ func sortedKeys[K int | string](m map[K]uint64) []K {
 	return keys
 }
 
-// formatDuration picks a readable unit: ns, µs, ms or s.
-func formatDuration(d time.Duration) string {
+// FormatDuration picks a readable unit: ns, µs, ms or s.
+func FormatDuration(d time.Duration) string {
 	switch {
 	case d < time.Microsecond:
 		return fmt.Sprintf("%dns", d.Nanoseconds())

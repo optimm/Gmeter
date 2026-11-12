@@ -132,6 +132,46 @@ func (c Comparison) EndpointRegressions(thresholdPct float64) []EndpointRow {
 	return out
 }
 
+// ErrorPercents are the endpoint's error rates in A and B, in percent: failed
+// requests plus bad statuses as a share of the requests sent to it. It is false
+// when either run sent it fewer than MinEndpointSamples requests, since a rate
+// over so few is mostly chance. Unlike the p99 it does not need latency
+// samples: an endpoint that fails every request is the case it exists for.
+func (r EndpointRow) ErrorPercents() (a, b float64, ok bool) {
+	if r.RequestsA < MinEndpointSamples || r.RequestsB < MinEndpointSamples {
+		return 0, 0, false
+	}
+	return float64(r.ErrorsA) * 100 / float64(r.RequestsA), float64(r.ErrorsB) * 100 / float64(r.RequestsB), true
+}
+
+// EndpointErrorRegressions lists the endpoints whose error rate in B is more than
+// thresholdPoints percentage points above A's, the biggest rise first.
+func (c Comparison) EndpointErrorRegressions(thresholdPoints float64) []EndpointRow {
+	var out []EndpointRow
+	rise := func(r EndpointRow) float64 {
+		a, b, _ := r.ErrorPercents()
+		return b - a
+	}
+	for _, r := range c.Endpoints {
+		if _, _, ok := r.ErrorPercents(); ok && rise(r) > thresholdPoints {
+			out = append(out, r)
+		}
+	}
+	slices.SortStableFunc(out, func(x, y EndpointRow) int { return cmp.Compare(rise(y), rise(x)) })
+	return out
+}
+
+// EndpointsErrorGated is how many endpoints EndpointErrorRegressions can judge.
+func (c Comparison) EndpointsErrorGated() int {
+	n := 0
+	for _, r := range c.Endpoints {
+		if _, _, ok := r.ErrorPercents(); ok {
+			n++
+		}
+	}
+	return n
+}
+
 // EndpointsGated is how many endpoints EndpointRegressions can judge. Zero means
 // a gate on endpoints would pass whatever happened, which is not the same as
 // the endpoints being fine.

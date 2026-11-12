@@ -164,8 +164,9 @@ know:
   without it, so any time difference is inside run-to-run noise. Reproduce with
   `go test -run '^$' -bench PhaseTrace -benchmem ./internal/runner`. `-phases=false` turns it off. `gmeter find`
   does not record them.
-- They are saved in the JSON as `phases` (digests). They are for the whole run: not per endpoint, and `diff` does
-  not compare them yet.
+- They are saved in the JSON as `phases` (digests). The table above is for the whole run, with distributions;
+  a replay also gets one per endpoint, but with means only (see [Per endpoint](#per-endpoint)), and `diff` compares
+  both (see [Phases](#phases) under Comparing runs).
 
 ## Load profiles: steps and ramps
 
@@ -425,6 +426,35 @@ Now the corrected p99 is 110ms and the service p99 is 5.6ms: once a request was 
 but it had to wait for a free worker first (the generator line reported 37% of dispatches late). A gap between
 the two columns means requests waited in Gmeter; raise `-workers`.
 
+With phases on (the default) a second table says where each endpoint's time went: the mean time per answered
+request in each phase, so the columns add up to the mean. A fresh run of the same two setups:
+
+```
+-workers 50
+  endpoint             answered      mean     queue   connect      send      wait  transfer
+  GET /orders/:id          1961    12.8ms      15µs       6µs      12µs    12.8ms      12µs
+  GET /search               625    50.9ms      17µs       4µs      12µs    50.8ms      13µs
+  GET /users/:id/cart       459    11.9ms      15µs       1µs      12µs    11.8ms      12µs
+
+-workers 4
+  endpoint             answered      mean     queue   connect      send      wait  transfer
+  GET /orders/:id          1961    15.6ms    13.0ms     498ns       9µs     2.6ms      12µs
+  GET /search               625    53.8ms    12.9ms     936ns      10µs    40.9ms      14µs
+  GET /users/:id/cart       459    14.7ms    12.1ms       1µs       9µs     2.6ms      12µs
+```
+
+A 2ms `/orders` request spends 12.8ms in `wait` with 50 workers: that is the server, holding it until a slot
+was free. With 4 workers its `wait` is 2.6ms, about its own cost, and the other 13ms are `queue`: it waited in
+Gmeter. All three endpoints queue for 12-13ms because the limit is the one shared pool of workers.
+
+- **Only means, not percentiles.** A distribution costs about a quarter of a megabyte, and 100 endpoints with 7
+  phases each would take hundreds. The whole-run table has the percentiles.
+- **`connect` is dns + connect + tls**, averaged over all of the endpoint's answered requests, not only those
+  that opened a connection. The JSON keeps every phase apart, with how many requests had it, its mean and its
+  share (`endpoints[].phases`).
+- **Timeouts and failed requests have no phases**, so with any, the columns add up to the mean of the answered
+  requests only.
+
 The names are paths from your trace, so they go into the saved JSON (`endpoints`). The query string never does,
 but a secret in a path segment that is not an identifier would; `-endpoints 0` keeps every path out of the report
 and the file.
@@ -504,6 +534,37 @@ usage or an unreadable file. It looks only at p99. A single run per side cannot 
 run-to-run noise, so treat small differences with suspicion and repeat the runs. A threshold of `NaN` or
 `Inf` could never be exceeded, so it is refused instead of silently passing.
 
+### Phases
+
+When both files recorded phases (a run or a replay does unless it was given `-phases=false`), `diff` shows which phase
+moved. Real output: the replay above against the same four-slot server, `-workers 50` as A and `-workers 4` as B
+(`diff` also notes that the worker counts differ, and that B's generator reported a warning):
+
+```
+where the time goes, per answered request (corrected latency by phase; p99 is over the requests that had the phase)
+  phase       mean A    mean B     change     p99 A     p99 B  p99 change  share A  share B
+  queue         20µs    13.1ms    +13.1ms      86µs    76.9ms   +89348.7%     0.1%    55.6%
+  connect        4µs     702ns       -3µs     789µs     820µs       +4.0%     0.0%     0.0%
+  send          12µs      10µs       -2µs      47µs      43µs       -8.0%     0.1%     0.0%
+  wait        20.4ms    10.5ms    -10.0ms    84.9ms    42.4ms      -50.1%    99.8%    44.3%
+  transfer      12µs      12µs     +118ns      45µs      43µs       -2.6%     0.1%     0.1%
+biggest change: queue, +13.1ms per answered request (mean 20.5ms to 23.6ms)
+```
+
+The mean latency only rose 3ms, but the table shows what happened: `wait` fell 10ms while `queue` rose 13ms.
+With only four requests in flight the server's four slots never had a line, so the waiting moved into Gmeter.
+Time that moved from the server to the generator is a finding about the test setup, not about the system.
+
+- **Means are per answered request.** Each run is averaged over its own answered requests, so runs that
+  answered different numbers compare, a phase only some requests had (a connect) counts as zero for the rest, and
+  the phases add up to each run's mean latency. The p99s are over the requests that had the phase, so they do not
+  add up.
+- **Noise is not named.** The line under the table names the phase whose time per request changed most, up or
+  down, only if it changed by at least a tenth of A's mean latency. Otherwise it says that none did, instead of
+  naming whichever differed most by chance.
+- **It is not a gate.** `-threshold` and `-endpoint-threshold` still judge the p99.
+- If only one file has phases, `diff` says so and compares none.
+
 ### Per endpoint
 
 When both files are replays (see `gmeter replay`) that kept their endpoint breakdown, `diff` also compares the
@@ -514,10 +575,20 @@ the other endpoints are not affected):
 ```
 endpoints, worst p99 change first (corrected latency; errors are failures and bad statuses, A to B)
   endpoint              req A   req B     p50 A     p50 B     p99 A     p99 B  p99 change     errors
-  GET /search             625     625    40.8ms    90.8ms    48.7ms    96.2ms      +97.6%        0→0
-  GET /orders/:id        1961    1961     2.7ms     2.7ms     8.3ms     8.5ms       +1.9%        0→0
-  GET /users/:id/cart     459     459     2.7ms     2.7ms     7.7ms     6.5ms      -15.4%        0→0
+  GET /search             625     625    40.5ms    90.5ms    42.3ms    92.3ms     +118.4%        0→0
+  GET /orders/:id        1961    1961     2.5ms     2.5ms     3.0ms     3.0ms       +0.3%        0→0
+  GET /users/:id/cart     459     459     2.5ms     2.5ms     3.0ms     3.0ms       -0.3%        0→0
+
+endpoints, where the time moved (change in the mean time per answered request, B minus A; connect is dns + connect + tls)
+  endpoint                 queue    connect       send       wait   transfer
+  GET /search               -1µs      -206ns       -2µs    +50.0ms      +58ns
+  GET /orders/:id           -4µs      +357ns     +198ns       -3µs      -72ns
+  GET /users/:id/cart       -7µs      -140ns     -268ns       +6µs     -583ns
 ```
+
+The second table is the answer to "which endpoint, and where": `/search` got 50ms slower, all of it in `wait`, and
+nothing else moved. Each run is averaged over its own answered requests, as in [Phases](#phases). It is there for
+every endpoint both files recorded phases for, marked `*` like the table above it.
 
 The `errors` column is failures plus bad statuses, so an endpoint that stopped answering shows up there even
 though it has no latency to compare. Endpoints only one run has are listed under the table.
@@ -527,15 +598,19 @@ though it has no latency to compare. Endpoints only one run has are listed under
 ```bash
 gmeter diff -endpoint-threshold 30 before.json after.json
 # REGRESSION: 1 endpoint's corrected p99 rose more than 30%:
-#   GET /search  +97.6%  (48.7ms -> 96.2ms)
+#   GET /search  +118.4%  (42.3ms -> 92.3ms)  mean grew most in wait (+50.0ms)
 ```
 
 - **Small endpoints are not judged.** The p99 of fewer than 100 requests is nearly their slowest request, so an
   endpoint with fewer than 100 answered requests in either run is marked `*`, listed last and left out of the gate.
-  The `/users` row above moved by -15% with 459 requests: expect that much noise from a single run.
+  Expect noise in a single run: in an earlier run of this same pair, `/users/:id/cart` moved by -15% with
+  459 requests.
 - **A gate that judged nothing fails.** If neither file has a breakdown, or no endpoint has 100 requests in both,
   `-endpoint-threshold` exits `2` and says why, instead of reporting that everything is fine.
 - **It only looks at p99.** An endpoint that began to fail shows in the `errors` column but does not trip the gate.
+- **"mean grew most in" is about the mean.** The gate judges the p99, and says where the endpoint's *mean* time
+  grew most. The tail can come from another phase than the average does: read the table above for the whole
+  picture.
 - **A shared bottleneck moves every endpoint.** With `/search` at 90ms on a server of only four slots, the same
   replay overloaded the server and every endpoint's p99 rose from 70-100ms to about 5.8s. The diff shows
   that truthfully, and cannot say which endpoint caused it; the endpoints are only separable when the server is not
@@ -547,7 +622,8 @@ gmeter diff -endpoint-threshold 30 before.json after.json
 `gmeter replay -json` saves the same, and `run.replay` says what was replayed: the trace's file name, its format,
 how many requests were sent, the timing (`recorded` with its speed, or `fixed rate`), and how many were skipped by
 `-methods` or could not be parsed. For a replay `run.method` lists the methods in the trace, and `endpoints` has
-one digest per endpoint: its name, requests scheduled, failures, bad statuses, and corrected and service latency.)
+one digest per endpoint: its name, requests scheduled, failures, bad statuses, corrected and service latency, and
+its `phases`: for each phase, how many requests had it, their mean time in it and its share of the endpoint's time.)
 
 `version`, `run` (URL, method, workers, duration, profile, arrivals, seed, spin, start time), the totals,
 `generator`, `warnings`, `stages` (one digest per stage of the profile), `phases` (one digest per phase), the
@@ -652,9 +728,10 @@ not the tails. Gmeter's own check still catches that case: the timer-lag and lat
 - **`internal/runner`**: scheduler, workers, an HTTP/1.1 client capped at `-workers` connections, live
   counters (atomics), per-stage and per-label results (a small lock per stage and per label, taken once per
   response), the generator-health measurements, and the per-request phase clock (`httptrace` hooks behind a
-  mutex, since the transport can fire one after the request returned).
-- **`internal/report`**: text and JSON output, the per-window timeline, the per-endpoint table, and run
-  comparison (`diff`), including per endpoint.
+  mutex, since the transport can fire one after the request returned). A label keeps phase totals, a time and a
+  count per phase, and not histograms, which is what lets a hundred labels have phases.
+- **`internal/report`**: text and JSON output, the per-window timeline, the per-endpoint tables, and run
+  comparison (`diff`), including per endpoint and per phase.
 
 ### Choices worth knowing
 
@@ -693,6 +770,6 @@ the live windows pinpoint when a stall happened.
 - [x] **v2d**: a per-endpoint breakdown for replays (`-endpoints`)
 - [x] **v2e**: `gmeter diff` per endpoint (`-endpoint-threshold`)
 - [x] **v2f**: per-phase timings (`-phases`): queue, dns, connect, tls, send, wait, transfer
-- [ ] **v2g**: phases in `gmeter diff` and per endpoint
+- [x] **v2g**: phases in `gmeter diff`, and per endpoint (in the report and in `diff`)
 - [ ] **v3**: distributed mode with one controller driving several generators (merging histograms, not
       averaging percentiles), HTTP/2 and gRPC

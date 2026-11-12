@@ -491,7 +491,9 @@ and the file.
 - **Status codes are not compared with the logged ones.** A replayed id that does not exist in the target
   environment returns `404`, which counts as a bad status. Check that count before reading the latency.
 - **Cycling warms caches.** With `-rate`, a trace shorter than the run is sent over and over, and later passes
-  are served from warmer caches than the first. Use a trace at least as long as the run.
+  are served from warmer caches than the first. The report says so when it happens (`the trace has 3 requests but
+  the run sent 40, so it was replayed 13.3 times: ...`), and the warning is saved in the JSON. Use a trace at least
+  as long as the run.
 - **An endpoint's latency includes what it waited behind.** Requests share the server's threads and connections,
   so a fast endpoint that arrives while slow ones hold them all is slow too (the 2ms `/orders` with a p99 of 73ms
   above). The table cannot tell "slow itself" from "stuck behind a slow neighbour"; to separate them, replay that

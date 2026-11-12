@@ -197,6 +197,12 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	totalDuration, expected := pacer.Totals(stages)
 	summary := report.Summarize(res, targetRate(expected, totalDuration))
+	// Only a fixed rate can send more than the trace holds: recorded timing sends each request once.
+	if n := uint64(len(trace.Requests)); res.Scheduled > n {
+		summary.Warnings = append(summary.Warnings, fmt.Sprintf(
+			"the trace has %d requests but the run sent %d, so it was replayed %.1f times: every pass after the first is served from warmer caches, which flatters the latencies; use a trace at least as long as the run",
+			n, res.Scheduled, float64(res.Scheduled)/float64(n)))
+	}
 	summary.Run = report.RunInfo{
 		URL:             shownURL,
 		Method:          methodsIn(trace.Requests),

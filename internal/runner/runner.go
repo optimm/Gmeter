@@ -156,6 +156,7 @@ type StageResult struct {
 	Scheduled uint64 // requests dispatched to workers
 	Dropped   uint64 // owed by the stage but never dispatched
 	Failed    uint64 // transport failures
+	BadStatus uint64 // responses outside 200-399
 	// Corrected and Service are as in Result, for this stage's requests only.
 	Corrected *hist.Histogram
 	Service   *hist.Histogram
@@ -269,6 +270,7 @@ loop:
 			Scheduled: scheduledIn[i],
 			Dropped:   droppedIn[i],
 			Failed:    st.failed,
+			BadStatus: st.badStatus,
 			Corrected: st.corrected,
 			Service:   st.service,
 		}
@@ -474,7 +476,7 @@ type job struct {
 type stageTally struct {
 	mu                 sync.Mutex
 	corrected, service *hist.Histogram
-	failed             uint64
+	failed, badStatus  uint64
 }
 
 type worker struct {
@@ -532,6 +534,12 @@ func (w *worker) do(ctx context.Context, j job) {
 	w.t.statuses[status]++
 	w.live.completed.Add(1)
 	w.record(j.stage, intended, sent, finished)
+	if status < 200 || status >= 400 {
+		st := &w.stages[j.stage]
+		st.mu.Lock()
+		st.badStatus++
+		st.mu.Unlock()
+	}
 }
 
 func (w *worker) record(stage int, intended, sent, finished time.Time) {

@@ -789,3 +789,37 @@ func TestCancelledRunAccountsForEveryRequestOfEveryStage(t *testing.T) {
 		t.Errorf("stage drops %d + %d != run drops %d", res.Stages[0].Dropped, res.Stages[1].Dropped, res.Dropped)
 	}
 }
+
+// A server that answers every request with a 500 is failing, however fast it
+// is, so the stage results count bad statuses (outside 200-399) separately from
+// transport failures, in the stage the request was due in.
+func TestBadStatusesAreCountedInTheStageTheyWereDueIn(t *testing.T) {
+	begin := time.Now()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if time.Since(begin) >= 300*time.Millisecond { // the second stage only
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	cfg := stagedConfig(srv.URL,
+		pacer.Stage{Duration: 300 * time.Millisecond, From: 100, To: 100},
+		pacer.Stage{Duration: 300 * time.Millisecond, From: 100, To: 100})
+
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The server flips at 300ms after it was created, a moment before the run's
+	// second stage starts, so allow a request or two of slop at the boundary.
+	if res.Stages[0].BadStatus > 2 {
+		t.Errorf("stage 1 counted %d bad statuses, want about 0", res.Stages[0].BadStatus)
+	}
+	if res.Stages[1].BadStatus < 28 {
+		t.Errorf("stage 2 counted %d bad statuses, want about 30", res.Stages[1].BadStatus)
+	}
+	if res.Stages[1].Failed != 0 {
+		t.Errorf("a 500 is a response, not a transport failure, but stage 2 counted %d failures", res.Stages[1].Failed)
+	}
+}

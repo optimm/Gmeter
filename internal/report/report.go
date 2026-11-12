@@ -123,7 +123,8 @@ type Generator struct {
 // Thresholds beyond which a run gets a warning. Timers on an idle machine wake
 // within microseconds, so a p99 over 5ms means the generator is being starved.
 const (
-	timerLagWarn     = 5 * time.Millisecond
+	// TimerLagWarn is the timer-lag p99 above which a run gets a warning.
+	TimerLagWarn     = 5 * time.Millisecond
 	lateWarnFraction = 0.05
 )
 
@@ -178,7 +179,7 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 		s.AchievedRPS = float64(s.Responses) / s.ElapsedSeconds
 	}
 
-	if lag := res.TimerLag.Quantile(0.99); lag > timerLagWarn {
+	if lag := res.TimerLag.Quantile(0.99); lag > TimerLagWarn {
 		s.Warnings = append(s.Warnings, fmt.Sprintf(
 			"generator timer lag p99 is %s: Gmeter is struggling to keep time on this machine, so results at this rate may be distorted; lower the rate, free up CPU, or run it somewhere quieter",
 			FormatDuration(lag)))

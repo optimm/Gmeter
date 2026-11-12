@@ -1,0 +1,11 @@
+# build output
+/gmeter
+/bin/
+*.test
+*.out
+*.prof
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/

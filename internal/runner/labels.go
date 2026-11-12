@@ -21,9 +21,11 @@ type LabelResult struct {
 	Failed    uint64 // transport failures
 	BadStatus uint64 // responses outside 200-399
 	// Corrected and Service are as in Result, for this label's requests only.
-	// Under load the two differ per label: a slow label holds workers, so the
-	// requests of other labels queue behind it, and only their corrected latency
-	// shows the wait.
+	// They differ when requests waited for a free worker: with too few workers a
+	// slow label's requests hold them all and the other labels' requests queue
+	// behind it inside the generator, which only the corrected latency shows. A
+	// wait inside the server (for a thread or a connection) is in both, so a
+	// label's latency also reflects what it waited behind, not just its own cost.
 	Corrected *hist.Histogram
 	Service   *hist.Histogram
 }

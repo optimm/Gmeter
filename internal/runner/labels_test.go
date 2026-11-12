@@ -120,10 +120,10 @@ func TestLabelResultsCountFailuresAndBadStatusesOfTheirOwnRequests(t *testing.T)
 	}
 }
 
-// One slow endpoint makes the requests queued behind it late. Only the
-// corrected latency of the others shows it: from the moment each was actually
-// sent they were fast. This is the reason to read a breakdown with both.
-func TestASlowLabelShowsUpInTheCorrectedLatencyOfTheOnesQueuedBehindIt(t *testing.T) {
+// With too few workers, a slow endpoint's requests hold all of them and the
+// others wait for a free one inside the generator. Only the corrected latency of
+// those shows the wait: once sent, they were answered at once.
+func TestRequestsWaitingForAWorkerBehindASlowLabelShowOnlyInTheirCorrectedLatency(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/slow" {
 			time.Sleep(100 * time.Millisecond)

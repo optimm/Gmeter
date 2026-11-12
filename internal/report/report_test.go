@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -209,5 +210,158 @@ func TestJSONIncludesGeneratorHealthAndAlwaysHasAWarningsArray(t *testing.T) {
 	// [] rather than null, so consumers (and diffs) can rely on the key being a list.
 	if w, ok := raw["warnings"].([]any); !ok || len(w) != 0 {
 		t.Fatalf("warnings should be an empty array, got %#v", raw["warnings"])
+	}
+}
+
+// windows builds n one-second windows (200 rps, 5ms p99), with a freeze at index spike.
+func windows(n, spike int) []runner.Window {
+	ws := make([]runner.Window, n)
+	for i := range ws {
+		w := runner.Window{
+			End: time.Duration(i+1) * time.Second, Interval: time.Second,
+			Scheduled: 200, Responses: 200, RPS: 200,
+			P50: time.Millisecond, P99: 5 * time.Millisecond, Max: 9 * time.Millisecond,
+		}
+		if i == spike {
+			w.Responses, w.RPS, w.P99, w.Max = 100, 100, 996*time.Millisecond, time.Second
+		}
+		ws[i] = w
+	}
+	return ws
+}
+
+func TestSummarizeCarriesTheVersionAndTheTimeline(t *testing.T) {
+	res := sampleResult()
+	res.Timeline = windows(3, 1)
+	res.Timeline[2].Partial = true
+
+	s := Summarize(res, 10)
+
+	if s.Version != SchemaVersion {
+		t.Fatalf("Version = %d, want %d", s.Version, SchemaVersion)
+	}
+	if len(s.Timeline) != 3 {
+		t.Fatalf("Timeline has %d points, want 3", len(s.Timeline))
+	}
+	p := s.Timeline[1]
+	if p.EndSeconds != 2 || p.P99Ms != 996 || p.MaxMs != 1000 || p.RPS != 100 || p.Responses != 100 {
+		t.Fatalf("point 1 converted wrong: %+v", p)
+	}
+	if !s.Timeline[2].Partial || s.Timeline[0].Partial {
+		t.Fatalf("Partial flags wrong: %+v", s.Timeline)
+	}
+}
+
+func TestEmptyTimelineEncodesAsAnEmptyArray(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Summarize(sampleResult(), 10).WriteJSON(&buf); err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if tl, ok := raw["timeline"].([]any); !ok || len(tl) != 0 {
+		t.Fatalf("timeline should be [], got %#v", raw["timeline"])
+	}
+}
+
+// The reason full histograms are in the file: the saved distribution must
+// rebuild to the same percentiles the run reported.
+func TestSavedHistogramsRebuildTheSameDistribution(t *testing.T) {
+	res := sampleResult()
+	var buf bytes.Buffer
+	if err := Summarize(res, 10).WriteJSON(&buf); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := ReadSummary(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := hist.FromDump(loaded.Histograms.Corrected)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Count() != res.Corrected.Count() {
+		t.Fatalf("Count = %d, want %d", got.Count(), res.Corrected.Count())
+	}
+	for _, q := range []float64{0.5, 0.9, 0.99, 0.999} {
+		if got.Quantile(q) != res.Corrected.Quantile(q) {
+			t.Errorf("Quantile(%v) = %v, want %v", q, got.Quantile(q), res.Corrected.Quantile(q))
+		}
+	}
+}
+
+func TestReadSummaryRefusesFilesItCannotTrust(t *testing.T) {
+	cases := map[string]struct{ input, want string }{
+		"not json":          {`this is not json`, "not a gmeter summary"},
+		"no version":        {`{"scheduled": 5}`, "version"},
+		"future version":    {`{"version": 99}`, "version"},
+		"corrupt histogram": {`{"version": 1, "histograms": {"corrected": {"precision_bits": 3}}}`, "precision"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := ReadSummary(strings.NewReader(tc.input))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want one mentioning %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestSparklineScalesFromZeroToTheTallestBar(t *testing.T) {
+	if got := sparkline([]float64{0, 1, 2, 3, 4, 5, 6, 7}, 80, math.Max); got != "▁▂▃▄▅▆▇█" {
+		t.Errorf("ramp = %q, want ▁▂▃▄▅▆▇█", got)
+	}
+	if got := sparkline([]float64{0, 0, 0}, 80, math.Max); got != "▁▁▁" {
+		t.Errorf("all zeros = %q, want ▁▁▁", got)
+	}
+	if got := sparkline(nil, 80, math.Max); got != "" {
+		t.Errorf("empty input = %q, want empty", got)
+	}
+}
+
+func TestSparklineKeepsSpikesAndDipsWhenItHasToShrink(t *testing.T) {
+	vals := make([]float64, 160)
+	for i := range vals {
+		vals[i] = 1
+	}
+
+	spike := append([]float64(nil), vals...)
+	spike[77] = 100
+	if got := sparkline(spike, 80, math.Max); len([]rune(got)) != 80 || !strings.Contains(got, "█") {
+		t.Errorf("a spike must survive compression to 80 columns: %q", got)
+	}
+
+	dip := append([]float64(nil), vals...)
+	dip[77] = 0
+	if got := sparkline(dip, 80, math.Min); len([]rune(got)) != 80 || !strings.Contains(got, "▁") {
+		t.Errorf("a dip must survive compression to 80 columns: %q", got)
+	}
+}
+
+func TestTextReportPlotsTheTimelineAndNamesTheWorstWindow(t *testing.T) {
+	res := sampleResult()
+	res.Timeline = windows(12, 5) // the freeze ends at 6.0s
+	var buf bytes.Buffer
+	Summarize(res, 10).WriteText(&buf)
+	out := buf.String()
+
+	for _, want := range []string{"timeline", "p99 ", "rps ", "█", "▁", "worst 996", "6.0s"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestTextReportSkipsTheTimelineForRunsTooShortToPlot(t *testing.T) {
+	res := sampleResult()
+	res.Timeline = windows(1, -1)
+	var buf bytes.Buffer
+	Summarize(res, 10).WriteText(&buf)
+	if strings.Contains(buf.String(), "timeline") {
+		t.Fatalf("a single window is not a timeline:\n%s", buf.String())
 	}
 }

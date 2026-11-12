@@ -64,3 +64,84 @@ func writePhases(b *strings.Builder, phases []PhaseSummary) {
 		b.WriteString("  dns, connect and tls only count requests that opened a connection\n")
 	}
 }
+
+// PhaseMean is where one endpoint's time went in one phase. An endpoint keeps
+// only means, not the distributions of PhaseSummary: a distribution costs a
+// quarter of a megabyte, and a trace can have a hundred endpoints.
+type PhaseMean struct {
+	Phase string `json:"phase"`
+	// Count is how many of the endpoint's answered requests had the phase: all of
+	// them for every phase but dns, connect and tls.
+	Count uint64 `json:"count"`
+	// MeanMs is the average time in the phase of those Count requests.
+	MeanMs float64 `json:"mean_ms"`
+	// SharePct is the phase's part of the time the endpoint's answered requests
+	// took, in percent; the shares add up to 100.
+	SharePct float64 `json:"share_pct"`
+}
+
+// phaseMeans digests one endpoint's phase totals, leaving out phases none of its
+// requests went through, or returns nil if there are none.
+func phaseMeans(totals []runner.PhaseTotal) []PhaseMean {
+	var all time.Duration
+	for _, t := range totals {
+		all += t.Total
+	}
+	var out []PhaseMean
+	for _, t := range totals {
+		if t.Requests == 0 {
+			continue
+		}
+		share := 0.0
+		if all > 0 {
+			share = float64(t.Total) / float64(all) * 100
+		}
+		out = append(out, PhaseMean{
+			Phase:    t.Phase,
+			Count:    t.Requests,
+			MeanMs:   float64(t.Total) / float64(t.Requests) / float64(time.Millisecond),
+			SharePct: share,
+		})
+	}
+	return out
+}
+
+// shownPhases are the columns of the per-endpoint tables: dns, connect and tls
+// share one, as which of them a request has depends on its URL, not on its
+// endpoint, and each is a rare event on average.
+var shownPhases = [...]string{"queue", "connect", "send", "wait", "transfer"}
+
+// shownIndex is the column of a phase in shownPhases.
+func shownIndex(phase string) int {
+	switch phase {
+	case "queue":
+		return 0
+	case "dns", "connect", "tls":
+		return 1
+	case "send":
+		return 2
+	case "wait":
+		return 3
+	}
+	return 4 // transfer
+}
+
+// perRequest is the time an answered request of this endpoint spent in each of
+// shownPhases, on average: a phase only some requests had counts as zero for
+// the rest, so the columns add up to the mean latency of the answered requests.
+// answered is how many requests that is; it is zero, and so are the times, if
+// there are no phases.
+func perRequest(phases []PhaseMean) (v [len(shownPhases)]float64, answered uint64) {
+	for _, p := range phases {
+		if p.Phase == "queue" { // every answered request has one
+			answered = p.Count
+		}
+	}
+	if answered == 0 {
+		return v, 0
+	}
+	for _, p := range phases {
+		v[shownIndex(p.Phase)] += float64(p.Count) * p.MeanMs / float64(answered)
+	}
+	return v, answered
+}

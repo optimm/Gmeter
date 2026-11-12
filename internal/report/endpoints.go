@@ -18,6 +18,11 @@ type EndpointSummary struct {
 	BadStatus uint64  `json:"bad_status"`
 	Corrected Latency `json:"latency_corrected"`
 	Service   Latency `json:"latency_service"`
+
+	// Phases says where this endpoint's time went, in the order a request goes
+	// through them; the key is left out when phases were not recorded or nothing
+	// was answered.
+	Phases []PhaseMean `json:"phases,omitempty"`
 }
 
 // endpointSummaries digests the per-label results, or returns nil when the run
@@ -35,6 +40,7 @@ func endpointSummaries(labels []runner.LabelResult) []EndpointSummary {
 			BadStatus: l.BadStatus,
 			Corrected: digest(l.Corrected),
 			Service:   digest(l.Service),
+			Phases:    phaseMeans(l.Phases),
 		}
 	}
 	return out
@@ -73,4 +79,49 @@ func shorten(s string, width int) string {
 		return s
 	}
 	return string([]rune(s)[:width-1]) + "…"
+}
+
+// writeEndpointPhases prints where each endpoint's time went, in milliseconds per
+// answered request. Like writeEndpoints it prints nothing for fewer than two
+// endpoints, and nothing if no phases were recorded.
+func writeEndpointPhases(b *strings.Builder, endpoints []EndpointSummary) {
+	if len(endpoints) < 2 {
+		return
+	}
+	type row struct {
+		name     string
+		answered uint64
+		v        [len(shownPhases)]float64
+	}
+	var rows []row
+	width := len("endpoint")
+	for _, e := range endpoints {
+		if v, answered := perRequest(e.Phases); answered > 0 {
+			rows = append(rows, row{e.Endpoint, answered, v})
+			width = max(width, min(utf8.RuneCountInString(e.Endpoint), endpointWidth))
+		}
+	}
+	if len(rows) == 0 {
+		return
+	}
+	d := func(m float64) string { return FormatMs(m) }
+
+	b.WriteString("\nendpoints, where the time goes (mean time per answered request, so the phases add up to the mean)\n")
+	fmt.Fprintf(b, "  %-*s  %8s  %8s", width, "endpoint", "answered", "mean")
+	for _, name := range shownPhases {
+		fmt.Fprintf(b, "  %8s", name)
+	}
+	b.WriteString("\n")
+	for _, r := range rows {
+		var mean float64
+		for _, m := range r.v {
+			mean += m
+		}
+		fmt.Fprintf(b, "  %-*s  %8d  %8s", width, shorten(r.name, endpointWidth), r.answered, d(mean))
+		for _, m := range r.v {
+			fmt.Fprintf(b, "  %8s", d(m))
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("connect is dns + connect + tls, averaged over all answered requests, not only those that opened a connection; timeouts and failures have no phases and are not counted\n")
 }

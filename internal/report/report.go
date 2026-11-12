@@ -308,6 +308,7 @@ func (s Summary) WriteText(w io.Writer) error {
 	writePhases(&b, s.Phases)
 	writeStages(&b, s.Stages)
 	writeEndpoints(&b, s.Endpoints)
+	writeEndpointPhases(&b, s.Endpoints)
 	writeTimeline(&b, s.Timeline)
 
 	_, err := io.WriteString(w, b.String())

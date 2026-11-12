@@ -46,10 +46,16 @@ type Config struct {
 	Header http.Header // optional
 	Body   []byte      // optional
 
+	// The load profile is either Rate for Duration (a single constant stage),
+	// or Stages (steps and ramps). Set one or the other.
 	Rate     float64       // intended requests per second
 	Duration time.Duration // how long requests keep being scheduled
-	Workers  int           // max requests in flight (== max connections)
-	Timeout  time.Duration // per request; default 30s
+	Stages   []pacer.Stage
+	Arrivals pacer.Arrivals // how requests are spread within the rate: Even (the default) or Poisson
+	Seed     uint64         // random seed for Poisson arrivals; the same seed gives the same arrival times
+
+	Workers int           // max requests in flight (== max connections)
+	Timeout time.Duration // per request; default 30s
 
 	// Spin is how long before each request's due time the scheduler stops
 	// sleeping and busy-waits instead. Zero uses a plain timer, which on some
@@ -127,6 +133,24 @@ type Result struct {
 	// Partial window for the tail. The windows add up exactly to the totals
 	// above, so the per-second view and the summary can never disagree.
 	Timeline []Window
+
+	// Stages has one entry per stage of the profile, in order. Each total above
+	// is the sum of the same figure over the stages.
+	Stages []StageResult
+}
+
+// StageResult is what happened to the requests that were due during one stage
+// of the profile. Attribution is by due time: a request due in stage 1 that
+// the server only answered during stage 2 still counts for stage 1, because
+// it is the load that was being offered when it was due that is being tested.
+type StageResult struct {
+	Stage     pacer.Stage
+	Scheduled uint64 // requests dispatched to workers
+	Dropped   uint64 // owed by the stage but never dispatched
+	Failed    uint64 // transport failures
+	// Corrected and Service are as in Result, for this stage's requests only.
+	Corrected *hist.Histogram
+	Service   *hist.Histogram
 }
 
 // Run executes the load test and blocks until it is finished or ctx is done.
@@ -140,7 +164,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	defer client.CloseIdleConnections()
 
 	start := time.Now()
-	sched, err := pacer.New(start, cfg.Rate)
+	sched, err := pacer.New(start, cfg.Stages, cfg.Arrivals, cfg.Seed)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +172,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// If the server is hung the backlog would take forever to drain, so the
 	// scheduler abandons undispatched requests once the run is overdue by one
 	// request timeout. Workers keep using the parent ctx and finish normally.
-	schedCtx, cancelSched := context.WithDeadline(ctx, start.Add(cfg.Duration+cfg.Timeout))
+	schedCtx, cancelSched := context.WithDeadline(ctx, start.Add(sched.Duration()+cfg.Timeout))
 	defer cancelSched()
 
 	var live counters
@@ -158,10 +182,12 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	stopSampler := startSampler(cfg, &live, start, tallies)
 
-	jobs := make(chan time.Time, cfg.Workers)
+	stages := make([]stageTally, len(cfg.Stages))
+	scheduledIn, droppedIn := make([]uint64, len(cfg.Stages)), make([]uint64, len(cfg.Stages)) // only this goroutine writes them
+	jobs := make(chan job, cfg.Workers)
 	var wg sync.WaitGroup
 	for _, t := range tallies {
-		w := &worker{client: client, cfg: cfg, live: &live, t: t}
+		w := &worker{client: client, cfg: cfg, live: &live, t: t, stages: stages}
 		wg.Go(func() { w.run(ctx, jobs) })
 	}
 
@@ -169,37 +195,47 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// its place on the clock, so requests that had to wait are measured from
 	// when they were due, not from when a worker became free.
 	timerLag := hist.New() // written only by this goroutine
-	var n uint64
+	var dropped uint64
+	var prev time.Time // when the previous request was due
 loop:
-	for ; ; n++ {
-		at := sched.At(n)
-		if at.Sub(start) >= cfg.Duration {
+	for {
+		at, stage, ok := sched.Next()
+		if !ok {
 			break
 		}
 		if time.Now().Before(at) {
 			var gap time.Duration // to the previous request; the first one is due at the start
-			if n > 0 {
-				gap = at.Sub(sched.At(n - 1))
+			if !prev.IsZero() {
+				gap = at.Sub(prev)
 			}
 			if pacer.WaitUntil(schedCtx, at, pacer.CapSpin(cfg.Spin, gap)) != nil {
+				dropped++ // taken from the schedule but never dispatched
+				droppedIn[stage]++
 				break
 			}
 			timerLag.Record(time.Since(at))
 		} else {
 			live.late.Add(1) // already behind schedule when we got here
 		}
+		prev = at
 		select {
-		case jobs <- at:
+		case jobs <- job{at: at, stage: stage}:
 			live.scheduled.Add(1)
+			scheduledIn[stage]++
 		case <-schedCtx.Done():
+			dropped++
+			droppedIn[stage]++
 			break loop
 		}
 	}
-	// n is the first request that was never dispatched; everything the
-	// schedule still owed from here on counts as dropped.
-	var dropped uint64
-	for ; sched.At(n).Sub(start) < cfg.Duration; n++ {
+	// Everything the schedule still owes from here on counts as dropped.
+	for {
+		_, stage, ok := sched.Next()
+		if !ok {
+			break
+		}
 		dropped++
+		droppedIn[stage]++
 	}
 
 	close(jobs)
@@ -217,6 +253,21 @@ loop:
 		TimerLag:  timerLag,
 		Late:      live.late.Load(),
 		Timeline:  timeline,
+	}
+	for i := range stages {
+		st := &stages[i] // the workers have exited: no lock needed
+		r := StageResult{
+			Stage:     cfg.Stages[i],
+			Scheduled: scheduledIn[i],
+			Dropped:   droppedIn[i],
+			Failed:    st.failed,
+			Corrected: st.corrected,
+			Service:   st.service,
+		}
+		if r.Corrected == nil { // no response was ever recorded in this stage
+			r.Corrected, r.Service = hist.New(), hist.New()
+		}
+		res.Stages = append(res.Stages, r)
 	}
 	for _, t := range tallies {
 		t.corrected.AddTo(res.Corrected)
@@ -250,11 +301,14 @@ func (c Config) normalize() (Config, error) {
 	if c.Spin < 0 {
 		return c, fmt.Errorf("runner: spin must not be negative, got %v", c.Spin)
 	}
-	if _, err := pacer.New(time.Time{}, c.Rate); err != nil {
-		return c, err
+	switch {
+	case len(c.Stages) > 0 && (c.Rate != 0 || c.Duration != 0):
+		return c, fmt.Errorf("runner: set either Rate and Duration or Stages, not both")
+	case len(c.Stages) == 0:
+		c.Stages = pacer.ConstantRate(c.Rate, c.Duration)
 	}
-	if c.Duration <= 0 {
-		return c, fmt.Errorf("runner: duration must be positive, got %v", c.Duration)
+	if _, err := pacer.New(time.Time{}, c.Stages, c.Arrivals, c.Seed); err != nil {
+		return c, err
 	}
 	if c.Workers < 1 {
 		return c, fmt.Errorf("runner: workers must be at least 1, got %d", c.Workers)
@@ -400,20 +454,37 @@ func newTally() *tally {
 	}
 }
 
+// job is one request handed from the scheduler to a worker.
+type job struct {
+	at    time.Time // when it was due: latency is measured from here
+	stage int       // the stage of the profile it was due in
+}
+
+// stageTally is one stage's share of the results. Every worker records into
+// it, so it has a lock; that is cheap next to an HTTP round trip, and it
+// allocates its histograms only when a stage gets a first response.
+type stageTally struct {
+	mu                 sync.Mutex
+	corrected, service *hist.Histogram
+	failed             uint64
+}
+
 type worker struct {
 	client *http.Client
 	cfg    Config
 	live   *counters
 	t      *tally
+	stages []stageTally
 }
 
-func (w *worker) run(ctx context.Context, jobs <-chan time.Time) {
-	for intended := range jobs {
-		w.do(ctx, intended)
+func (w *worker) run(ctx context.Context, jobs <-chan job) {
+	for j := range jobs {
+		w.do(ctx, j)
 	}
 }
 
-func (w *worker) do(ctx context.Context, intended time.Time) {
+func (w *worker) do(ctx context.Context, j job) {
+	intended := j.at
 	reqCtx, cancel := context.WithTimeout(ctx, w.cfg.Timeout)
 	defer cancel()
 
@@ -423,7 +494,7 @@ func (w *worker) do(ctx context.Context, intended time.Time) {
 	}
 	req, err := http.NewRequestWithContext(reqCtx, w.cfg.Method, w.cfg.URL, body)
 	if err != nil { // validated up front; defensive only
-		w.fail("other")
+		w.fail("other", j.stage)
 		return
 	}
 	req.Header = w.cfg.Header.Clone()
@@ -444,25 +515,40 @@ func (w *worker) do(ctx context.Context, intended time.Time) {
 		if ctx.Err() != nil { // the whole run was cancelled, not this request timing out
 			kind = "canceled"
 		}
-		w.fail(kind)
+		w.fail(kind, j.stage)
 		if kind == "timeout" {
-			w.record(intended, sent, finished)
+			w.record(j.stage, intended, sent, finished)
 		}
 		return
 	}
 	w.t.statuses[status]++
 	w.live.completed.Add(1)
-	w.record(intended, sent, finished)
+	w.record(j.stage, intended, sent, finished)
 }
 
-func (w *worker) record(intended, sent, finished time.Time) {
-	w.t.corrected.Record(finished.Sub(intended))
-	w.t.service.Record(finished.Sub(sent))
+func (w *worker) record(stage int, intended, sent, finished time.Time) {
+	corrected, service := finished.Sub(intended), finished.Sub(sent)
+	w.t.corrected.Record(corrected)
+	w.t.service.Record(service)
+
+	st := &w.stages[stage]
+	st.mu.Lock()
+	if st.corrected == nil {
+		st.corrected, st.service = hist.New(), hist.New()
+	}
+	st.corrected.Record(corrected)
+	st.service.Record(service)
+	st.mu.Unlock()
 }
 
-func (w *worker) fail(kind string) {
+func (w *worker) fail(kind string, stage int) {
 	w.t.errors[kind]++
 	w.live.failed.Add(1)
+
+	st := &w.stages[stage]
+	st.mu.Lock()
+	st.failed++
+	st.mu.Unlock()
 }
 
 // classify buckets a transport error into a short, stable label.

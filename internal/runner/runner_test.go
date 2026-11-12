@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/optimm/Gmeter/internal/pacer"
 )
 
 func baseConfig(url string) Config {
@@ -276,6 +278,18 @@ func TestRejectsInvalidConfig(t *testing.T) {
 		"non-http scheme":  func(c *Config) { c.URL = "ftp://example.com/x" },
 		"negative timeout": func(c *Config) { c.Timeout = -time.Second },
 		"negative spin":    func(c *Config) { c.Spin = -time.Microsecond },
+		"stages and rate": func(c *Config) {
+			c.Stages = pacer.ConstantRate(10, time.Second) // Rate and Duration are still set
+		},
+		"a stage with no duration": func(c *Config) {
+			c.Rate, c.Duration = 0, 0
+			c.Stages = []pacer.Stage{{Duration: 0, From: 10, To: 10}}
+		},
+		"stages that schedule nothing": func(c *Config) {
+			c.Rate, c.Duration = 0, 0
+			c.Stages = []pacer.Stage{{Duration: time.Second}}
+		},
+		"unknown arrivals": func(c *Config) { c.Arrivals = pacer.Arrivals(9) },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -554,5 +568,204 @@ func TestRejectsNegativeSampleInterval(t *testing.T) {
 	cfg.SampleEvery = -time.Second
 	if _, err := Run(context.Background(), cfg); err == nil {
 		t.Fatal("Run succeeded, want a validation error")
+	}
+}
+
+// A step profile must actually change the rate. Window by window, the
+// scheduler dispatches about 25 requests per 250ms at 100 rps, then about 75
+// at 300 rps.
+func TestAStepProfileChangesTheRateMidRun(t *testing.T) {
+	srv := okServer(t)
+	cfg := baseConfig(srv.URL)
+	cfg.Rate, cfg.Duration = 0, 0
+	cfg.Stages = []pacer.Stage{
+		{Duration: 500 * time.Millisecond, From: 100, To: 100},
+		{Duration: 500 * time.Millisecond, From: 300, To: 300},
+	}
+	cfg.SampleEvery = 250 * time.Millisecond
+
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Scheduled != 200 || res.Dropped != 0 { // 50 + 150
+		t.Fatalf("scheduled %d, dropped %d, want 200 and 0", res.Scheduled, res.Dropped)
+	}
+
+	// Sum the windows that fall entirely in each stage; the sampler's ticks are
+	// not aligned to the stage boundary to the millisecond, so allow slack.
+	var first, second uint64
+	for _, w := range res.Timeline {
+		switch {
+		case w.End <= 560*time.Millisecond:
+			first += w.Scheduled
+		case w.End > 700*time.Millisecond:
+			second += w.Scheduled
+		}
+	}
+	if first < 35 || first > 70 || second < 105 || second > 160 {
+		t.Fatalf("dispatched %d in the first stage's windows and %d in the second's, want about 50 and about 150 (timeline %+v)", first, second, res.Timeline)
+	}
+}
+
+func TestARampSchedulesTheAreaUnderIt(t *testing.T) {
+	srv := okServer(t)
+	cfg := baseConfig(srv.URL)
+	cfg.Rate, cfg.Duration = 0, 0
+	cfg.Stages = []pacer.Stage{{Duration: time.Second, From: 0, To: 200}} // 100 requests
+
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Scheduled != 100 {
+		t.Fatalf("scheduled %d, want 100", res.Scheduled)
+	}
+}
+
+// With the same seed Poisson arrivals are the same arrivals, so the run
+// dispatches exactly what the schedule for that seed holds. (The count is a
+// random number around 100: seed 5 is checked below not to be exactly 100,
+// which is what evenly spaced arrivals would give.)
+func TestPoissonArrivalsFollowTheSeed(t *testing.T) {
+	const seed = 5
+	stages := pacer.ConstantRate(100, time.Second)
+	sched, err := pacer.New(time.Now(), stages, pacer.Poisson, seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want uint64
+	for {
+		if _, _, ok := sched.Next(); !ok {
+			break
+		}
+		want++
+	}
+	if want == 100 {
+		t.Fatal("this seed happens to give exactly 100 requests, so the test cannot tell Poisson from even spacing: pick another seed")
+	}
+
+	srv := okServer(t)
+	cfg := baseConfig(srv.URL)
+	cfg.Rate, cfg.Duration = 0, 0
+	cfg.Stages = stages
+	cfg.Arrivals, cfg.Seed = pacer.Poisson, seed
+	for range 2 {
+		res, err := Run(context.Background(), cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Scheduled != want {
+			t.Fatalf("scheduled %d, want %d (what the Poisson schedule for seed %d holds)", res.Scheduled, want, seed)
+		}
+	}
+}
+
+// latencyFrom answers instantly until `from` after the test started, and then
+// takes `slow` per request.
+func latencyFrom(t *testing.T, from, slow time.Duration) *httptest.Server {
+	t.Helper()
+	begin := time.Now()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if time.Since(begin) >= from {
+			time.Sleep(slow)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func stagedConfig(url string, stages ...pacer.Stage) Config {
+	cfg := baseConfig(url)
+	cfg.Rate, cfg.Duration = 0, 0
+	cfg.Stages = stages
+	return cfg
+}
+
+// A step test is only useful if it says which step the server stopped coping
+// at. Here the server turns slow halfway through, exactly at the step.
+func TestResultsAreBrokenDownByStage(t *testing.T) {
+	srv := latencyFrom(t, 500*time.Millisecond, 20*time.Millisecond)
+	cfg := stagedConfig(srv.URL,
+		pacer.Stage{Duration: 500 * time.Millisecond, From: 100, To: 100},
+		pacer.Stage{Duration: 500 * time.Millisecond, From: 300, To: 300})
+	cfg.Workers = 64 // enough that the slow stage does not saturate the workers
+
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Stages) != 2 {
+		t.Fatalf("%d stage results, want 2", len(res.Stages))
+	}
+	if res.Stages[0].Stage != cfg.Stages[0] || res.Stages[1].Stage != cfg.Stages[1] {
+		t.Errorf("stage results carry %v and %v, want the configured stages", res.Stages[0].Stage, res.Stages[1].Stage)
+	}
+	if res.Stages[0].Scheduled != 50 || res.Stages[1].Scheduled != 150 {
+		t.Errorf("scheduled per stage = %d and %d, want 50 and 150", res.Stages[0].Scheduled, res.Stages[1].Scheduled)
+	}
+	if p50 := res.Stages[0].Corrected.Quantile(0.5); p50 > 10*time.Millisecond {
+		t.Errorf("stage 1 (fast server) p50 = %v, want a few milliseconds at most", p50)
+	}
+	if p50 := res.Stages[1].Corrected.Quantile(0.5); p50 < 20*time.Millisecond {
+		t.Errorf("stage 2 (20ms per request) p50 = %v, want at least 20ms", p50)
+	}
+	if svc := res.Stages[1].Service.Quantile(0.5); svc < 20*time.Millisecond {
+		t.Errorf("stage 2 service p50 = %v, want at least 20ms", svc)
+	}
+
+	// The stages partition the run: nothing is lost or counted twice.
+	var scheduled, responses uint64
+	for _, st := range res.Stages {
+		scheduled += st.Scheduled
+		responses += st.Corrected.Count()
+	}
+	if scheduled != res.Scheduled || responses != res.Corrected.Count() {
+		t.Errorf("stages add up to %d scheduled and %d responses, the run has %d and %d",
+			scheduled, responses, res.Scheduled, res.Corrected.Count())
+	}
+}
+
+func TestFailuresAreCountedInTheStageTheyWereDueIn(t *testing.T) {
+	cfg := stagedConfig("http://127.0.0.1:1", // nothing listens: every request is refused
+		pacer.Stage{Duration: 200 * time.Millisecond, From: 100, To: 100},
+		pacer.Stage{Duration: 200 * time.Millisecond, From: 200, To: 200})
+
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stages[0].Failed != 20 || res.Stages[1].Failed != 40 {
+		t.Fatalf("failed per stage = %d and %d, want 20 and 40", res.Stages[0].Failed, res.Stages[1].Failed)
+	}
+	if res.Stages[0].Corrected.Count() != 0 || res.Stages[1].Corrected.Count() != 0 {
+		t.Errorf("refused connections must not be recorded as latency")
+	}
+}
+
+func TestCancelledRunAccountsForEveryRequestOfEveryStage(t *testing.T) {
+	srv := okServer(t)
+	cfg := stagedConfig(srv.URL,
+		pacer.Stage{Duration: time.Second, From: 100, To: 100},
+		pacer.Stage{Duration: time.Second, From: 200, To: 200})
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	res, err := Run(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each request was either dispatched or dropped, in the stage it was due.
+	for i, want := range []uint64{100, 200} {
+		if got := res.Stages[i].Scheduled + res.Stages[i].Dropped; got != want {
+			t.Errorf("stage %d: scheduled %d + dropped %d = %d, want %d", i+1, res.Stages[i].Scheduled, res.Stages[i].Dropped, got, want)
+		}
+	}
+	if res.Stages[1].Scheduled != 0 {
+		t.Errorf("stage 2 never started but dispatched %d", res.Stages[1].Scheduled)
+	}
+	if res.Stages[0].Dropped+res.Stages[1].Dropped != res.Dropped {
+		t.Errorf("stage drops %d + %d != run drops %d", res.Stages[0].Dropped, res.Stages[1].Dropped, res.Dropped)
 	}
 }

@@ -29,6 +29,11 @@ type Comparison struct {
 	// if A's p99 is zero). Regressed gates on it.
 	P99ChangePct float64
 
+	// Endpoints compares the endpoints both runs have (see Summary.Endpoints),
+	// worst p99 increase first; OnlyA and OnlyB name those just one run has.
+	Endpoints    []EndpointRow
+	OnlyA, OnlyB []string
+
 	a, b Summary
 }
 
@@ -60,6 +65,16 @@ func Compare(a, b Summary) (Comparison, error) {
 		a: a, b: b,
 		Notes:        likeForLike(a, b),
 		P99ChangePct: pct(a.Corrected.P99Ms, b.Corrected.P99Ms),
+	}
+	switch ea, eb := len(a.Endpoints) > 0, len(b.Endpoints) > 0; {
+	case ea && eb:
+		c.Endpoints, c.OnlyA, c.OnlyB = compareEndpoints(a.Endpoints, b.Endpoints)
+	case ea != eb:
+		has := "A"
+		if eb {
+			has = "B"
+		}
+		c.Notes = append(c.Notes, fmt.Sprintf("only %s has a per-endpoint breakdown, so endpoints are not compared", has))
 	}
 	c.Rows = []Row{
 		row("achieved rps", a.AchievedRPS, b.AchievedRPS, func(v float64) string { return fmt.Sprintf("%.1f", v) }),
@@ -110,6 +125,7 @@ func (c Comparison) WriteText(w io.Writer, nameA, nameB string) error {
 		fmt.Fprintf(&b, "  slower than A's p%.4g (%s): %.1f%%   (at most %.1f%% if nothing changed)\n",
 			s.Quantile*100, FormatDuration(s.Value), s.Share*100, (1-s.Quantile)*100)
 	}
+	writeEndpointDiff(&b, c)
 
 	_, err := io.WriteString(w, b.String())
 	return err

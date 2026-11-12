@@ -64,7 +64,8 @@ func addCommonFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers int
 }
 
 // addPhasesFlag registers -phases, for the commands that report where a
-// request's time went. A capacity search has no use for it.
+// request's time went: a run and a replay, and a capacity search, which says
+// where the time grew between the answer and the first rate that failed.
 func addPhasesFlag(fs *flag.FlagSet, r *requestFlags) {
 	r.phases = fs.Bool("phases", true, "split each request's latency into phases (queue, dns, connect, tls, send, wait, transfer); costs about 16 small allocations per request, -phases=false turns it off")
 }

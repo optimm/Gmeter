@@ -53,6 +53,22 @@ type Observation struct {
 	Observed  time.Duration // corrected latency at the SLO's quantile
 	ErrorRate float64
 	Reasons   []string // why the trial failed, or was not trusted; empty on a clean pass
+
+	// Phases is where the measured stage's time went, or nil if phases were not
+	// recorded or no request was answered.
+	Phases *TrialPhases
+}
+
+// TrialPhases is the mean time an answered request of a trial spent in each
+// phase, in milliseconds. A phase only some requests had (opening a connection:
+// dns, connect and tls together) counts as zero for the others, so the phases
+// add up to the mean corrected latency.
+type TrialPhases struct {
+	QueueMs    float64 `json:"queue_ms"`
+	ConnectMs  float64 `json:"connect_ms"` // dns + connect + tls
+	SendMs     float64 `json:"send_ms"`
+	WaitMs     float64 `json:"wait_ms"`
+	TransferMs float64 `json:"transfer_ms"`
 }
 
 // Evaluate judges one trial from the results of its measured stage (the
@@ -65,7 +81,7 @@ type Observation struct {
 // target stays a failure whatever the generator did, since corrected latency
 // is honest either way.
 func Evaluate(slo SLO, rate float64, st runner.StageResult, res *runner.Result) (Verdict, Observation) {
-	o := Observation{Rate: rate, Scheduled: st.Scheduled}
+	o := Observation{Rate: rate, Scheduled: st.Scheduled, Phases: trialPhases(st.Phases)}
 	if st.Scheduled == 0 {
 		o.Reasons = []string{"no requests were sent"}
 		return Fail, o
@@ -94,3 +110,49 @@ func Evaluate(slo SLO, rate float64, st runner.StageResult, res *runner.Result) 
 	}
 	return Pass, o
 }
+
+// trialPhases is the mean time per answered request in each phase of a stage,
+// or nil if it has no phases or no answered request.
+func trialPhases(totals []runner.PhaseTotal) *TrialPhases {
+	var answered uint64
+	for _, t := range totals {
+		if t.Phase == "queue" { // every answered request has one
+			answered = t.Requests
+		}
+	}
+	if answered == 0 {
+		return nil
+	}
+	p := &TrialPhases{}
+	for _, t := range totals {
+		ms := float64(t.Total) / float64(answered) / float64(time.Millisecond)
+		switch t.Phase {
+		case "queue":
+			p.QueueMs = ms
+		case "dns", "connect", "tls":
+			p.ConnectMs += ms
+		case "send":
+			p.SendMs = ms
+		case "wait":
+			p.WaitMs = ms
+		case "transfer":
+			p.TransferMs = ms
+		}
+	}
+	return p
+}
+
+// list is the phases in the order a request goes through them, with their names.
+func (p TrialPhases) list() [5]struct {
+	name string
+	ms   float64
+} {
+	type phase = struct {
+		name string
+		ms   float64
+	}
+	return [5]phase{{"queue", p.QueueMs}, {"connect", p.ConnectMs}, {"send", p.SendMs}, {"wait", p.WaitMs}, {"transfer", p.TransferMs}}
+}
+
+// afterSent is the mean time a request took once Gmeter had sent it.
+func (p TrialPhases) afterSent() float64 { return p.ConnectMs + p.SendMs + p.WaitMs + p.TransferMs }

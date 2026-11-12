@@ -31,6 +31,7 @@ func runFind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		confirm   = fs.Int("confirm", 2, "how many times to repeat the answer at the end, to see whether it holds")
 	)
 	rf := addRequestFlags(fs, "poisson", 200)
+	addPhasesFlag(fs, rf)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: gmeter find -slo p99=50ms [flags] URL\n\n"+
 			"Finds the highest request rate at which the latency target is still met: it doubles the\n"+

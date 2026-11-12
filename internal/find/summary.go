@@ -71,6 +71,9 @@ type TrialInfo struct {
 	ErrorRate  float64  `json:"error_rate"`
 	Scheduled  uint64   `json:"scheduled"`
 	Reasons    []string `json:"reasons"` // always a list
+	// Phases is where the measured part's time went, on average per answered
+	// request; absent if phases were not recorded or nothing was answered.
+	Phases *TrialPhases `json:"phases,omitempty"`
 }
 
 func (v Verdict) String() string {
@@ -112,7 +115,7 @@ func NewSummary(o Outcome, info RunInfo, slo SLO, interrupted bool) Summary {
 		s.Trials[i] = TrialInfo{
 			Index: i + 1, Phase: string(tr.Phase), RPS: tr.Rate, Verdict: tr.Verdict.String(),
 			ObservedMs: float64(ob.Observed) / float64(time.Millisecond), ErrorRate: ob.ErrorRate,
-			Scheduled: ob.Scheduled, Reasons: reasons,
+			Scheduled: ob.Scheduled, Reasons: reasons, Phases: ob.Phases,
 		}
 	}
 	return s
@@ -184,10 +187,74 @@ func (s Summary) WriteText(w io.Writer) error {
 				r.Confirmed, r.ConfirmRuns, r.MaxRPS)
 		}
 	}
+	s.writeGrowth(&b)
 	if r.GeneratorLimited {
 		b.WriteString("note    the lowest failing trial was limited by the load generator, not shown to be the server's: the server may sustain more than this, so run Gmeter on a quieter or larger machine\n")
 	}
 
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// writeGrowth says how each phase's mean time per request moved from the answer
+// to the lowest rate above it that failed, and which grew most: whether the
+// server took longer to answer, or the requests waited inside Gmeter. It writes
+// nothing unless there is such a pair of trials and both recorded phases.
+func (s Summary) writeGrowth(b *strings.Builder) {
+	r := s.Result
+	// Search never tries a rate twice except to confirm the answer, so the first
+	// trial at MaxRPS is the pass that made it the answer, and the one trial at
+	// NextFailRPS is the failure. Either is missing (a rate of 0) when there was
+	// no answer or nothing above it failed.
+	var pass, fail *TrialInfo
+	for i := range s.Trials {
+		tr := &s.Trials[i]
+		switch {
+		case pass == nil && tr.RPS == r.MaxRPS:
+			pass = tr
+		case tr.RPS == r.NextFailRPS:
+			fail = tr
+		}
+	}
+	if pass == nil || fail == nil || pass.Phases == nil || fail.Phases == nil {
+		return
+	}
+	ms := func(v float64) string { return report.FormatDuration(time.Duration(v * float64(time.Millisecond))) }
+	fmt.Fprintf(b, "\nwhere the time grew from %g rps (pass) to %g rps (%s), mean per answered request\n", pass.RPS, fail.RPS, strings.ToUpper(fail.Verdict))
+	before, after := pass.Phases.list(), fail.Phases.list()
+	most, grew := "", 0.0
+	moves := make([]string, len(after))
+	for i := range after {
+		d := after[i].ms - before[i].ms
+		sign := ""
+		if d > 0 {
+			sign = "+"
+		}
+		moves[i] = after[i].name + " " + sign + ms(d)
+		if d > grew {
+			most, grew = after[i].name, d
+		}
+	}
+	fmt.Fprintf(b, "  %s\n", strings.Join(moves, "   "))
+	switch most {
+	case "":
+		b.WriteString("  no phase grew on average: the failure is in the tail, not the typical request\n")
+		return
+	case "queue":
+		b.WriteString("  most of it is queue: requests waited inside Gmeter, for a free worker or a late timer, before being sent.\n" +
+			"  The server's own time grew less, so this may be Gmeter's limit rather than the server's: run again with\n" +
+			"  more -workers, on a quieter machine, to tell which\n")
+	case "wait":
+		b.WriteString("  most of it is wait: the server (and the network) took longer to answer\n")
+	case "connect":
+		b.WriteString("  most of it is connect: opening connections (dns, connect, tls) took longer\n")
+	default:
+		fmt.Fprintf(b, "  most of it is %s\n", most)
+	}
+	// Little's law: requests in flight = arrival rate × time each spends in flight.
+	inFlight := fail.RPS * fail.Phases.afterSent() / 1000
+	if s.Run.Workers > 0 && inFlight >= float64(s.Run.Workers) {
+		fmt.Fprintf(b, "  at %g rps about %.0f requests were in flight on average, more than the %d -workers: requests queued for a worker,\n"+
+			"  so run again with more -workers to tell whether the server or the worker limit is what failed\n", fail.RPS, inFlight, s.Run.Workers)
+	}
 }

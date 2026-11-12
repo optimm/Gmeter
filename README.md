@@ -185,7 +185,7 @@ know:
 - **Cost**: about 16 more small allocations (650 bytes) per request. On loopback a request took about 67µs with and
   without it, so any time difference is inside run-to-run noise. Reproduce with
   `go test -run '^$' -bench PhaseTrace -benchmem ./internal/runner`. `-phases=false` turns it off. `gmeter find`
-  does not record them.
+  records them for each trial (see [Where the time grew](#where-the-time-grew)).
 - They are saved in the JSON as `phases` (digests). The table above is for the whole run, with distributions;
   a replay also gets one per endpoint, but with means only (see [Per endpoint](#per-endpoint)), and `diff` compares
   both (see [Phases](#phases) under Comparing runs).
@@ -293,6 +293,35 @@ result  the highest rate meeting p99 ≤ 50ms is about 725 rps
 That took 70 seconds: each trial costs its warm-up and its measurement plus a one-second pause so that one trial's
 aftermath does not leak into the next. Progress lines go to stderr as it runs; `-json` saves every trial.
 
+### Where the time grew
+
+Each trial records the [phases](#where-the-time-goes) of its measured part (`-phases=false` turns that
+off). After the answer, the report compares the trial that made it the answer with the first rate above it that
+failed: the mean time per answered request in each phase, and which phase grew most. Two real runs against the same
+800 rps server, on a busier machine than the table above (so lower answers):
+
+```
+where the time grew from 700 rps (pass) to 725 rps (FAIL), mean per answered request
+  queue +259µs   connect +5µs   send +18µs   wait +37.7ms   transfer +785ns
+  most of it is wait: the server (and the network) took longer to answer
+```
+
+The same search with `-workers 4`, so that Gmeter rather than the server runs out of room first:
+
+```
+where the time grew from 500 rps (pass) to 525 rps (FAIL), mean per answered request
+  queue +92.8ms   connect 0ns   send +11µs   wait +1.2ms   transfer +23µs
+  most of it is queue: requests waited inside Gmeter, for a free worker or a late timer, before being sent.
+  The server's own time grew less, so this may be Gmeter's limit rather than the server's: run again with
+  more -workers, on a quieter machine, to tell which
+```
+
+The second answer, 500 rps, is lower than the server's real limit, and the phases are what show it. When the
+average number of requests in flight (rate × time per request once sent, by Little's law) exceeds `-workers`, the
+report says that too. These are means, while the target is a quantile: a failure that sits only in the tail can
+show no phase growing, and the report says so rather than naming one. `-json` keeps every trial's phases as
+`phases` (`queue_ms`, `connect_ms` for dns + connect + tls, `send_ms`, `wait_ms`, `transfer_ms`).
+
 ### How far to trust the answer
 
 The report says plainly when the answer needs a caveat, and these are the ones to look for:
@@ -326,7 +355,7 @@ interrupted), `2` bad usage.
 | `-confirm` | `2` | repeats of the answer at the end |
 
 `-workers`, `-timeout`, `-method`, `-H`, `-body`, `-spin`, `-arrivals` (default `poisson` here), `-seed`, `-json`,
-`-quiet`, `-insecure` and `-cacert` work as for a plain run. Each trial uses the seed plus its number, so a printed seed reproduces the search.
+`-quiet`, `-phases`, `-insecure` and `-cacert` work as for a plain run. Each trial uses the seed plus its number, so a printed seed reproduces the search.
 
 ## Replaying real traffic (`gmeter replay`)
 

@@ -75,13 +75,3 @@ func TestAReplaySplitsItsLatencyIntoPhasesToo(t *testing.T) {
 		t.Errorf("replay with -phases=false saved %v:\n%s", saved, stdout)
 	}
 }
-
-func TestFindDoesNotOfferPhases(t *testing.T) {
-	srv := okServer(t)
-
-	code, _, stderr := exec(t, "find", "-slo", "p99=50ms", "-phases=false", srv.URL)
-
-	if code != 2 || !strings.Contains(stderr, "phases") {
-		t.Errorf("exit %d, stderr %q, want a usage error naming -phases: a capacity search has no use for them", code, stderr)
-	}
-}

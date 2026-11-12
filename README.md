@@ -50,6 +50,7 @@ Flags must come before the URL.
 | `-H` | | extra header `"Key: Value"` (repeatable) |
 | `-body` | | request body; `@file` reads it from a file |
 | `-json` | | also save a JSON summary (timeline and full histograms included) to a path (`-` = only JSON, on stdout) |
+| `-phases` | `true` | split each request's latency into phases, see [Where the time goes](#where-the-time-goes); `-phases=false` turns it off |
 | `-quiet` | `false` | no progress output on stderr |
 
 Ctrl-C stops the run early and still prints the report for what ran. Exit code is `0` on success and `2` for
@@ -68,7 +69,8 @@ that window**:
 [  4.0s] 801 scheduled, 801 completed, 0 failed, 163 late | window: 200 rps, p50 416µs p99 2.7ms max 6.1ms
 ```
 
-The freeze is in the window ending at 3.0s. A run-wide p99 could not tell you *when*. Then the report:
+The freeze is in the window ending at 3.0s. A run-wide p99 could not tell you *when*. Then the report (recorded
+before the phase table below existed: a run now also prints that after the two latency lines):
 
 ```
 requests   1000 scheduled   1000 ok   0 bad status   0 failed   0 dropped
@@ -108,6 +110,62 @@ window ending at 3.0s, not in the ones in which they were due.)
 
 The bars are scaled from zero, so a small wobble stays small. When a run has more windows than fit, they are
 combined so that the worst p99 and the lowest rps survive.
+
+## Where the time goes
+
+A slow request comes with a reason. The report splits the corrected latency of every request that got a response
+into phases. The same replay twice against a toy server with four slots (`/search` holds one for 40ms, everything
+else for 2ms), first with `-workers 50`, then with `-workers 4`:
+
+```
+-workers 50
+  phase     requests       p50       p99       max   share
+  queue         3045      21µs     2.0ms    11.9ms    0.4%
+  connect         32     641µs     1.5ms     1.5ms    0.0%
+  send          3045      18µs     273µs    13.7ms    0.2%
+  wait          3045    10.8ms    86.8ms   121.9ms   99.2%
+  transfer      3045      17µs     153µs     870µs    0.1%
+
+-workers 4
+  phase     requests       p50       p99       max   share
+  queue         3045     5.1ms    84.0ms   112.9ms   59.8%
+  connect          4     520µs     652µs     652µs    0.0%
+  send          3045      17µs     137µs     3.2ms    0.1%
+  wait          3045     2.8ms    43.1ms    48.3ms   40.0%
+  transfer      3045      18µs     137µs     591µs    0.1%
+```
+
+With 50 workers 99% of the time is `wait`: every request is sent on time and the server is where they queue. With
+4 workers 60% is `queue`: requests waited inside Gmeter for a free worker, time a closed-loop tester would not
+have counted at all. Same server, same trace; the table says which side was the bottleneck.
+
+| Phase | What it is |
+|---|---|
+| `queue` | from the intended send time until Gmeter sent the request: waiting for a free worker, or a late timer |
+| `dns` | looking up the host name; only for a request that opened a connection to a name, never for an IP address |
+| `connect` | the TCP connection; only for a request that opened one |
+| `tls` | the TLS handshake; only for a request that opened an https connection |
+| `send` | the rest of the time before the server could answer: taking a connection from the pool and writing the request |
+| `wait` | from the request written to the first byte of the response: the server's time plus the network's |
+| `transfer` | from the first byte to the end of the body |
+
+The phases add up to each request's corrected latency exactly, and a test checks that over a whole run. Things to
+know:
+
+- **Connections are reused**, so only the first request on each has `dns`, `connect` and `tls`: 32 requests
+  connected with 50 workers and 4 with 4 workers. The `requests` column says how many had each phase, and
+  `share` is of all the time, so a connect that few requests pay shows about 0%. Read its p50 and p99 for how slow
+  connecting is.
+- **Timeouts and failed requests are not split**: there is no response to split. They are in the latency totals.
+- **`wait` is not only the server.** It includes the network round trip. On loopback it is all server.
+- **It is HTTP/1.1 only**, measured with the hooks of `net/http/httptrace`. A request that took an idle connection
+  gets no connection phases, even if a dial it started was still under way.
+- **Cost**: about 16 more small allocations (650 bytes) per request. On loopback a request took about 67µs with and
+  without it, so any time difference is inside run-to-run noise. Reproduce with
+  `go test -run '^$' -bench PhaseTrace -benchmem ./internal/runner`. `-phases=false` turns it off. `gmeter find`
+  does not record them.
+- They are saved in the JSON as `phases` (digests). They are for the whole run: not per endpoint, and `diff` does
+  not compare them yet.
 
 ## Load profiles: steps and ramps
 
@@ -492,7 +550,8 @@ how many requests were sent, the timing (`recorded` with its speed, or `fixed ra
 one digest per endpoint: its name, requests scheduled, failures, bad statuses, and corrected and service latency.)
 
 `version`, `run` (URL, method, workers, duration, profile, arrivals, seed, spin, start time), the totals,
-`generator`, `warnings`, `stages` (one digest per stage of the profile), the per-window `timeline`, and the
+`generator`, `warnings`, `stages` (one digest per stage of the profile), `phases` (one digest per phase), the
+per-window `timeline`, and the
 full latency `histograms` (sparse: only non-empty buckets). A password in the URL is redacted (`user:xxxxx@host`) in the JSON and everywhere Gmeter prints it, and request headers are never
 saved. A query string is kept as given, so don't put secrets in it. `diff` refuses files with a missing or
 different `version`, and histograms it cannot rebuild.
@@ -592,7 +651,8 @@ not the tails. Gmeter's own check still catches that case: the timer-lag and lat
   how many are reported; the runner only sees opaque labels.
 - **`internal/runner`**: scheduler, workers, an HTTP/1.1 client capped at `-workers` connections, live
   counters (atomics), per-stage and per-label results (a small lock per stage and per label, taken once per
-  response), and the generator-health measurements.
+  response), the generator-health measurements, and the per-request phase clock (`httptrace` hooks behind a
+  mutex, since the transport can fire one after the request returned).
 - **`internal/report`**: text and JSON output, the per-window timeline, the per-endpoint table, and run
   comparison (`diff`), including per endpoint.
 
@@ -632,6 +692,7 @@ the live windows pinpoint when a stall happened.
 - [x] **v2c**: `gmeter replay`: a traffic log (JSON Lines or an access log) at its recorded pace or a fixed rate
 - [x] **v2d**: a per-endpoint breakdown for replays (`-endpoints`)
 - [x] **v2e**: `gmeter diff` per endpoint (`-endpoint-threshold`)
-- [ ] **v2f**: per-phase timings (connect, TLS, first byte)
+- [x] **v2f**: per-phase timings (`-phases`): queue, dns, connect, tls, send, wait, transfer
+- [ ] **v2g**: phases in `gmeter diff` and per endpoint
 - [ ] **v3**: distributed mode with one controller driving several generators (merging histograms, not
       averaging percentiles), HTTP/2 and gRPC

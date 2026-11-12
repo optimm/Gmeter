@@ -20,8 +20,8 @@ import (
 	"github.com/optimm/Gmeter/internal/runner"
 )
 
-// progressEvery is a variable so tests can shorten it.
-var progressEvery = time.Second
+// sampleEvery is a variable so tests can shorten it.
+var sampleEvery = time.Second
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -88,7 +88,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if !*quiet {
 		fmt.Fprintf(stderr, "gmeter: %s %s at %g rps for %v, up to %d in flight\n",
 			cfg.Method, cfg.URL, cfg.Rate, cfg.Duration, cfg.Workers)
-		cfg.ProgressEvery = progressEvery
+		cfg.SampleEvery = sampleEvery
 		cfg.Progress = func(s runner.Snapshot) {
 			fmt.Fprintf(stderr, "[%5.1fs] %d scheduled, %d completed, %d failed, %d late | %s\n",
 				s.Elapsed.Seconds(), s.Scheduled, s.Completed, s.Failed, s.Late, windowText(s.Window))

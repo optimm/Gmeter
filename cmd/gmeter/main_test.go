@@ -93,9 +93,9 @@ func TestJSONDashWritesOnlyJSONToStdout(t *testing.T) {
 }
 
 func TestProgressGoesToStderrUnlessQuiet(t *testing.T) {
-	old := progressEvery
-	progressEvery = 100 * time.Millisecond
-	t.Cleanup(func() { progressEvery = old })
+	old := sampleEvery
+	sampleEvery = 100 * time.Millisecond
+	t.Cleanup(func() { sampleEvery = old })
 	srv := okServer(t)
 
 	_, _, stderr := exec(t, "-rate", "50", "-duration", "450ms", srv.URL)
@@ -171,9 +171,9 @@ func TestHelpExitsZero(t *testing.T) {
 }
 
 func TestProgressLineShowsTheLatestWindow(t *testing.T) {
-	old := progressEvery
-	progressEvery = 100 * time.Millisecond
-	t.Cleanup(func() { progressEvery = old })
+	old := sampleEvery
+	sampleEvery = 100 * time.Millisecond
+	t.Cleanup(func() { sampleEvery = old })
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(5 * time.Millisecond)
 	}))

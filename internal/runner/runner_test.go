@@ -237,7 +237,7 @@ func TestReportsProgressWhileRunning(t *testing.T) {
 	srv := okServer(t)
 	cfg := baseConfig(srv.URL)
 	cfg.Rate, cfg.Duration = 100, 350*time.Millisecond
-	cfg.ProgressEvery = 100 * time.Millisecond
+	cfg.SampleEvery = 100 * time.Millisecond
 
 	var mu sync.Mutex
 	var snaps []Snapshot
@@ -295,7 +295,7 @@ func TestProgressCarriesPerWindowLatencyStats(t *testing.T) {
 
 	cfg := baseConfig(srv.URL)
 	cfg.Rate, cfg.Duration, cfg.Workers = 100, 600*time.Millisecond, 20
-	cfg.ProgressEvery = 150 * time.Millisecond
+	cfg.SampleEvery = 150 * time.Millisecond
 	var mu sync.Mutex
 	var snaps []Snapshot
 	cfg.Progress = func(s Snapshot) {
@@ -354,7 +354,7 @@ func TestWindowsPinpointWhenAStallHappened(t *testing.T) {
 
 	cfg := baseConfig(srv.URL)
 	cfg.Rate, cfg.Duration, cfg.Workers = 200, 800*time.Millisecond, 100
-	cfg.ProgressEvery = 100 * time.Millisecond
+	cfg.SampleEvery = 100 * time.Millisecond
 	var mu sync.Mutex
 	var windows []Window
 	cfg.Progress = func(s Snapshot) {
@@ -423,7 +423,7 @@ func TestSaturatedWorkersShowUpAsLateDispatches(t *testing.T) {
 
 	cfg := baseConfig(srv.URL)
 	cfg.Rate, cfg.Duration, cfg.Workers = 100, 300*time.Millisecond, 1 // 30 requests, 1 slow worker
-	cfg.ProgressEvery = 100 * time.Millisecond
+	cfg.SampleEvery = 100 * time.Millisecond
 	var mu sync.Mutex
 	var lastLive uint64
 	cfg.Progress = func(s Snapshot) {

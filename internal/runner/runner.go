@@ -48,9 +48,9 @@ type Config struct {
 	Workers  int           // max requests in flight (== max connections)
 	Timeout  time.Duration // per request; default 30s
 
-	// Progress, if set, is called every ProgressEvery with live counters.
-	Progress      func(Snapshot)
-	ProgressEvery time.Duration
+	// Progress, if set, is called every SampleEvery with live counters.
+	Progress    func(Snapshot)
+	SampleEvery time.Duration
 }
 
 // Snapshot is a lock-free view of a run in progress.
@@ -279,13 +279,13 @@ func (c *counters) snapshot(start time.Time) Snapshot {
 // blocked inside a request and could not push anything, which is exactly when
 // the display must keep updating.
 func startProgress(cfg Config, live *counters, start time.Time, tallies []*tally) (stop func()) {
-	if cfg.Progress == nil || cfg.ProgressEvery <= 0 {
+	if cfg.Progress == nil || cfg.SampleEvery <= 0 {
 		return func() {}
 	}
 	done, exited := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(exited)
-		tick := time.NewTicker(cfg.ProgressEvery)
+		tick := time.NewTicker(cfg.SampleEvery)
 		defer tick.Stop()
 		prev, prevAt := hist.New(), start
 		for {

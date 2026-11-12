@@ -46,15 +46,7 @@ func New() *Histogram {
 // Record adds one sample. Negative durations are recorded as 0 and durations
 // above MaxValue are clamped to MaxValue.
 func (h *Histogram) Record(d time.Duration) {
-	var v uint64
-	switch {
-	case d < 0:
-		v = 0
-	case d > MaxValue:
-		v = uint64(MaxValue)
-	default:
-		v = uint64(d)
-	}
+	v := clamp(d)
 	h.counts[index(v)]++
 	h.total++
 	h.sum += v
@@ -124,6 +116,49 @@ func (h *Histogram) Merge(o *Histogram) {
 	h.max = max(h.max, o.max)
 }
 
+// Delta returns the samples that are in h but not in prev, where prev is an
+// earlier snapshot of the same growing stream of samples. It turns two
+// cumulative snapshots into "what happened in between", which is how a live
+// display gets per-second percentiles without resetting anything.
+//
+// Min and Max of the result are recovered from bucket edges instead of being
+// tracked, so they are accurate to ~0.1%; Max never exceeds h's exact Max.
+func (h *Histogram) Delta(prev *Histogram) *Histogram {
+	d := New()
+	first, last := -1, -1
+	for i, c := range h.counts {
+		p := prev.counts[i]
+		if c <= p {
+			continue
+		}
+		d.counts[i] = c - p
+		d.total += c - p
+		if first < 0 {
+			first = i
+		}
+		last = i
+	}
+	if d.total == 0 {
+		return d
+	}
+	d.sum = h.sum - min(prev.sum, h.sum)
+	d.min = max(lowest(first), h.min)
+	d.max = min(highest(last), h.max)
+	return d
+}
+
+// clamp converts a duration to a trackable non-negative value.
+func clamp(d time.Duration) uint64 {
+	switch {
+	case d < 0:
+		return 0
+	case d > MaxValue:
+		return uint64(MaxValue)
+	default:
+		return uint64(d)
+	}
+}
+
 // index maps a value to its bucket. Values below subCount map to themselves;
 // above that, the position is the power-of-two range plus the top sigBits
 // bits that follow the leading one.
@@ -135,12 +170,18 @@ func index(v uint64) int {
 	return (shift+1)*subCount + int(v>>shift) - subCount
 }
 
+// lowest returns the smallest value that maps to bucket i.
+func lowest(i int) uint64 {
+	if i < subCount {
+		return uint64(i)
+	}
+	return uint64(subCount+i%subCount) << (i/subCount - 1)
+}
+
 // highest returns the largest value that maps to bucket i.
 func highest(i int) uint64 {
 	if i < subCount {
 		return uint64(i)
 	}
-	shift := i/subCount - 1
-	low := uint64(subCount+i%subCount) << shift
-	return low + (1 << shift) - 1
+	return lowest(i) + (1 << (i/subCount - 1)) - 1
 }

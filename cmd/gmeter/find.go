@@ -97,6 +97,7 @@ func runFind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "gmeter: finding the highest rate for %s %s that meets %s, errors ≤ %g%%%s\n",
 			cfg.Method, shownURL, slo, *maxErrors, arrivalsText(arrival, seed))
 	}
+	rf.noteTLS(stderr)
 
 	started := time.Now().UTC()
 	trials := 0

@@ -117,6 +117,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			cfg.Method, shownURL, profileText(stages), arrivalsText(arrival, seed), cfg.Workers)
 		cfg.Progress = progressTo(stderr)
 	}
+	rf.noteTLS(stderr)
 
 	started := time.Now().UTC()
 	res, err := runner.Run(ctx, cfg)

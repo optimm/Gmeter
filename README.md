@@ -49,12 +49,34 @@ Flags must come before the URL.
 | `-method` | `GET` | HTTP method |
 | `-H` | | extra header `"Key: Value"` (repeatable) |
 | `-body` | | request body; `@file` reads it from a file |
+| `-insecure` | `false` | do not verify the server's TLS certificate (https only); says so on stderr |
+| `-cacert` | | PEM file with the certificate authorities to trust for https, instead of the system's |
 | `-json` | | also save a JSON summary (timeline and full histograms included) to a path (`-` = only JSON, on stdout) |
 | `-phases` | `true` | split each request's latency into phases, see [Where the time goes](#where-the-time-goes); `-phases=false` turns it off |
 | `-quiet` | `false` | no progress output on stderr |
 
 Ctrl-C stops the run early and still prints the report for what ran. Exit code is `0` on success and `2` for
 bad usage or configuration.
+
+### HTTPS with a private or self-signed certificate
+
+A staging host often has a certificate that no system root vouches for. Gmeter refuses it, and says why and what
+to do (a server with a self-signed certificate, 200 requests at 100 rps):
+
+```
+$ gmeter -rate 100 -duration 2s https://127.0.0.1:18443/
+requests   200 scheduled   0 ok   0 bad status   200 failed   0 dropped
+errors     tls: 200
+warning    200 of 200 requests failed in the TLS handshake (the server's certificate was refused, or it did not
+           speak TLS): trust its certificate authority with -cacert FILE, or skip verification with -insecure
+```
+
+`-cacert staging.pem` trusts exactly the authorities in that file (it replaces the system's, like curl's
+`--cacert`), so a server another authority vouches for is still refused. `-insecure` verifies nothing, and
+Gmeter says so on stderr (`gmeter: -insecure: the server's certificate is not verified`) so a result from a
+server nobody checked is not taken for one that was. The two cannot be combined. Both work with `find` and `replay`
+too. The `tls` row of the [phases](#where-the-time-goes) still shows the handshake (890µs for the one
+connection above).
 
 ## What it looks like
 
@@ -303,8 +325,8 @@ interrupted), `2` bad usage.
 | `-trial` / `-warmup` | `10s` / `2s` | measured time per trial, and the unjudged warm-up before it |
 | `-confirm` | `2` | repeats of the answer at the end |
 
-`-workers`, `-timeout`, `-method`, `-H`, `-body`, `-spin`, `-arrivals` (default `poisson` here), `-seed`, `-json` and
-`-quiet` work as for a plain run. Each trial uses the seed plus its number, so a printed seed reproduces the search.
+`-workers`, `-timeout`, `-method`, `-H`, `-body`, `-spin`, `-arrivals` (default `poisson` here), `-seed`, `-json`,
+`-quiet`, `-insecure` and `-cacert` work as for a plain run. Each trial uses the seed plus its number, so a printed seed reproduces the search.
 
 ## Replaying real traffic (`gmeter replay`)
 
@@ -333,7 +355,7 @@ are appended to it. A log can therefore never send a request to another host.
 | `-endpoints` | `20` | the most rows in the per-endpoint breakdown, 2 to 100; `0` leaves it out (see below) |
 | `-arrivals` / `-seed` | `poisson` | access logs and `-rate` only; see below |
 
-`-workers`, `-timeout`, `-spin`, `-H`, `-json` and `-quiet` work as for a plain run. `-H` headers go with every
+`-workers`, `-timeout`, `-spin`, `-H`, `-json`, `-quiet`, `-insecure` and `-cacert` work as for a plain run. `-H` headers go with every
 replayed request, which is how to supply credentials (an access log has no headers). Headers in a JSON Lines
 trace are sent too and replace a `-H` of the same name. No headers or bodies are saved in the results. Exit code
 is `0` when it ran, `1` if the report could not be written, and `2` for bad usage or an unreadable trace.
@@ -736,7 +758,7 @@ not the tails. Gmeter's own check still catches that case: the timer-lag and lat
 ### Choices worth knowing
 
 - Latency is recorded for every response (any status) and for timeouts. Other transport failures
-  (connection refused, DNS, reset) are counted but not recorded as latency, because a fast failure says
+  (connection refused, DNS, reset, TLS) are counted but not recorded as latency, because a fast failure says
   nothing about how quickly the server answers. Recording timeouts matters: dropping them would make a hung
   server look fast.
 - If the server is so slow that the backlog cannot drain, the scheduler gives up on undispatched requests once

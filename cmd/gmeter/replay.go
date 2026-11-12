@@ -178,6 +178,7 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			count(len(trace.Requests), "request"), filepath.Base(*file), shownURL, how, cfg.Workers)
 		cfg.Progress = progressTo(stderr)
 	}
+	rf.noteTLS(stderr)
 
 	started := time.Now().UTC()
 	res, err := runner.Run(ctx, cfg)

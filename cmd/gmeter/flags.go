@@ -1,10 +1,15 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -24,6 +29,8 @@ type requestFlags struct {
 	seed     *uint64
 	jsonOut  *string
 	quiet    *bool
+	insecure *bool
+	cacert   *string
 	headers  headerFlag
 	phases   *bool // nil for a command that does not offer -phases
 }
@@ -49,6 +56,8 @@ func addCommonFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers int
 		seed:     fs.Uint64("seed", 0, "seed for -arrivals poisson, to repeat the same arrival times (0 picks one, and reports it)"),
 		jsonOut:  fs.String("json", "", "also write a JSON summary to this path ('-' writes only the JSON, to stdout)"),
 		quiet:    fs.Bool("quiet", false, "no progress output on stderr"),
+		insecure: fs.Bool("insecure", false, "do not verify the server's TLS certificate (https only); the run then measures a server it has not checked"),
+		cacert:   fs.String("cacert", "", "PEM file with the certificate authorities to trust for https, instead of the system's (https only)"),
 	}
 	fs.Var(&r.headers, "H", `extra request header "Key: Value" (repeatable)`)
 	return r
@@ -88,6 +97,10 @@ func (r *requestFlags) base(url string) (runner.Config, error) {
 		}
 		payload = b
 	}
+	tlsConfig, err := r.tlsConfig()
+	if err != nil {
+		return runner.Config{}, err
+	}
 	return runner.Config{
 		URL:         url,
 		Method:      method,
@@ -97,6 +110,37 @@ func (r *requestFlags) base(url string) (runner.Config, error) {
 		Timeout:     *r.timeout,
 		Spin:        *r.spin,
 		Phases:      r.phases != nil && *r.phases,
+		TLS:         tlsConfig,
 		SampleEvery: sampleEvery, // the same windows whether or not progress is shown
 	}, nil
+}
+
+// tlsConfig builds the client TLS configuration the flags ask for, or nil for
+// the default: verify against the system's roots.
+func (r *requestFlags) tlsConfig() (*tls.Config, error) {
+	switch {
+	case *r.insecure && *r.cacert != "":
+		return nil, errors.New("-insecure and -cacert cannot be combined: -insecure trusts every certificate, so there is nothing for -cacert to add")
+	case *r.insecure:
+		return &tls.Config{InsecureSkipVerify: true}, nil // the user asked for it by name
+	case *r.cacert != "":
+		data, err := os.ReadFile(*r.cacert)
+		if err != nil {
+			return nil, fmt.Errorf("-cacert: %w", err)
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(data) {
+			return nil, fmt.Errorf("-cacert: no certificate found in %s (it must be PEM)", *r.cacert)
+		}
+		return &tls.Config{RootCAs: roots}, nil
+	}
+	return nil, nil
+}
+
+// noteTLS says on stderr that the server is not being verified, so a result
+// from a server nobody checked is not taken for one that was.
+func (r *requestFlags) noteTLS(stderr io.Writer) {
+	if *r.insecure && !*r.quiet {
+		fmt.Fprintln(stderr, "gmeter: -insecure: the server's certificate is not verified")
+	}
 }

@@ -56,6 +56,11 @@ type Summary struct {
 	// coping at.
 	Stages []StageSummary `json:"stages"`
 
+	// Phases splits the corrected latency of the requests that got a response
+	// into where each spent its time; the key is left out when phases were not
+	// recorded.
+	Phases []PhaseSummary `json:"phases,omitempty"`
+
 	// Endpoints has one entry per endpoint of a replayed trace, busiest first;
 	// the key is left out of a run that has none. Its figures add up to the
 	// totals above.
@@ -181,6 +186,7 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 		Version:   SchemaVersion,
 		Stages:    stageSummaries(res.Stages),
 		Endpoints: endpointSummaries(res.Labels),
+		Phases:    phaseSummaries(res.Phases),
 		Timeline:  points(res.Timeline),
 		Histograms: Histograms{
 			Corrected: res.Corrected.Dump(),
@@ -299,6 +305,7 @@ func (s Summary) WriteText(w io.Writer) error {
 	writeLatency(&b, s.Corrected)
 	b.WriteString("latency, service (from when the request was actually sent)\n")
 	writeLatency(&b, s.Service)
+	writePhases(&b, s.Phases)
 	writeStages(&b, s.Stages)
 	writeEndpoints(&b, s.Endpoints)
 	writeTimeline(&b, s.Timeline)

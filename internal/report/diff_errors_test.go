@@ -84,3 +84,15 @@ func TestDiffTableShowsTheErrorRateOfBothRuns(t *testing.T) {
 		t.Errorf("error rate row = %q, want %q", got, "error rate 1.0% 6.0% +5.0 points")
 	}
 }
+
+func TestErrorPercentsAreTheRatesOfBothRuns(t *testing.T) {
+	c := compareRuns(t, withOutcomes(1000, 5, 5), withOutcomes(500, 20, 10))
+
+	a, b, ok := c.ErrorPercents()
+	if !ok || math.Abs(a-1) > 1e-9 || math.Abs(b-6) > 1e-9 {
+		t.Errorf("ErrorPercents = %v, %v, %v, want 1, 6, true", a, b, ok)
+	}
+	if _, _, ok := compareRuns(t, withOutcomes(0, 0, 0), withOutcomes(10, 0, 0)).ErrorPercents(); ok {
+		t.Error("ErrorPercents is known although A sent nothing")
+	}
+}

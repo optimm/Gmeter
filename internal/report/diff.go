@@ -121,12 +121,16 @@ func (c Comparison) Regressed(thresholdPct float64) bool {
 // sent that failed or got a bad status, as in `gmeter find`. It is false when
 // either run sent nothing, so has no rate.
 func (c Comparison) ErrorRise() (points float64, ok bool) {
-	pa, okA := c.a.errorPct()
-	pb, okB := c.b.errorPct()
-	if !okA || !okB {
-		return 0, false
-	}
-	return pb - pa, true
+	a, b, ok := c.ErrorPercents()
+	return b - a, ok
+}
+
+// ErrorPercents are the error rates of A and B, in percent; false if either
+// run sent nothing.
+func (c Comparison) ErrorPercents() (a, b float64, ok bool) {
+	a, okA := c.a.errorPct()
+	b, okB := c.b.errorPct()
+	return a, b, okA && okB
 }
 
 // ErrorsRegressed reports whether B's error rate is more than thresholdPoints

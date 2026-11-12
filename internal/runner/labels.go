@@ -33,6 +33,12 @@ type LabelResult struct {
 	// distributions: a run's phases are about 1.8MB, and giving each of up to
 	// MaxLabels labels the same would take hundreds.
 	Phases []PhaseTotal
+	// Wait is the distribution of the wait phase of this label's answered
+	// requests (written to first byte: the server's time and the network's), so
+	// that its tail can be told apart from its mean. Nil unless Config.Phases was
+	// set. It is the one phase kept as a distribution, at about a quarter of a
+	// megabyte a label.
+	Wait *hist.Histogram
 
 	// LoggedCompared and LoggedDiffer are as in Result.Logged, for this label's
 	// requests only: the responses that had a logged status to compare with, and
@@ -93,6 +99,10 @@ func labelResults(labels []string, scheduled []uint64, tallies []partTally, phas
 		}
 		if phases {
 			r.Phases = t.phases.totals()
+			r.Wait = t.wait
+			if r.Wait == nil { // nothing of this label was answered
+				r.Wait = hist.New()
+			}
 		}
 		if r.Corrected == nil { // no response was ever recorded for this label
 			r.Corrected, r.Service = hist.New(), hist.New()

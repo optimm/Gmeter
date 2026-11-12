@@ -167,4 +167,7 @@ func TestALabelWithoutAResponseHasEmptyPhases(t *testing.T) {
 			t.Errorf("/drop %s = %d requests, %v: want empty", p.Phase, p.Requests, p.Total)
 		}
 	}
+	if drop.Wait == nil || drop.Wait.Count() != 0 {
+		t.Errorf("/drop wait = %v, want an empty distribution, as for its latencies", drop.Wait)
+	}
 }

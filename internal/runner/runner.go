@@ -669,7 +669,8 @@ type partTally struct {
 	mu                 sync.Mutex
 	corrected, service *hist.Histogram
 	failed, badStatus  uint64
-	phases             phaseSums // only when phases are on
+	phases             phaseSums       // only when phases are on
+	wait               *hist.Histogram // only a label's, and only when phases are on
 
 	loggedCompared, loggedDiffer uint64 // only a label's
 }
@@ -696,6 +697,18 @@ func (p *partTally) record(corrected, service time.Duration) {
 func (p *partTally) recordPhases(t phaseTimes) {
 	p.mu.Lock()
 	p.phases.add(t)
+	p.mu.Unlock()
+}
+
+// recordLabelPhases is recordPhases for a label, which also keeps the
+// distribution of its wait.
+func (p *partTally) recordLabelPhases(t phaseTimes) {
+	p.mu.Lock()
+	p.phases.add(t)
+	if p.wait == nil {
+		p.wait = hist.New()
+	}
+	p.wait.Record(t.wait)
 	p.mu.Unlock()
 }
 
@@ -810,7 +823,7 @@ func (w *worker) do(ctx context.Context, j job) {
 		w.phases.record(split)
 		w.stages[j.stage].recordPhases(split)
 		if l := w.label(j); l != nil {
-			l.recordPhases(split)
+			l.recordLabelPhases(split)
 		}
 	}
 	if status < 200 || status >= 400 {

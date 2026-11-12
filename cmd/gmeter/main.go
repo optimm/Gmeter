@@ -45,6 +45,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		duration = fs.Duration("duration", 10*time.Second, "how long to keep scheduling requests")
 		workers  = fs.Int("workers", 50, "max requests in flight, which is also the max number of connections")
 		timeout  = fs.Duration("timeout", 10*time.Second, "per-request timeout")
+		spin     = fs.Duration("spin", 200*time.Microsecond, "busy-wait this long before each request's due time instead of sleeping, for precise timing (0 = plain timer); capped at a quarter of the gap between requests, so it costs about a quarter of one core at most")
 		method   = fs.String("method", http.MethodGet, "HTTP method")
 		body     = fs.String("body", "", "request body; prefix with @ to read it from a file")
 		jsonOut  = fs.String("json", "", "also write a JSON summary to this path ('-' writes only the JSON, to stdout)")
@@ -89,6 +90,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Duration:    *duration,
 		Workers:     *workers,
 		Timeout:     *timeout,
+		Spin:        *spin,
 		SampleEvery: sampleEvery, // the same windows whether or not progress is shown
 	}
 	shownURL := redactURL(cfg.URL) // anything printed or saved uses this, never cfg.URL
@@ -118,6 +120,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Workers:         cfg.Workers,
 		DurationSeconds: cfg.Duration.Seconds(),
 		TimeoutSeconds:  cfg.Timeout.Seconds(),
+		SpinSeconds:     cfg.Spin.Seconds(),
 		StartedAt:       started.Format(time.RFC3339),
 	}
 	if *jsonOut == "-" {

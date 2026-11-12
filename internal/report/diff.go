@@ -137,6 +137,9 @@ func likeForLike(a, b Summary) []string {
 	if a.Run.DurationSeconds != b.Run.DurationSeconds {
 		differs("duration", fmt.Sprintf("%gs", a.Run.DurationSeconds), fmt.Sprintf("%gs", b.Run.DurationSeconds))
 	}
+	if a.Run.SpinSeconds != b.Run.SpinSeconds {
+		differs("pacing spin", spinText(a.Run.SpinSeconds), spinText(b.Run.SpinSeconds))
+	}
 	for _, r := range []struct {
 		name string
 		s    Summary
@@ -146,6 +149,15 @@ func likeForLike(a, b Summary) []string {
 		}
 	}
 	return notes
+}
+
+// spinText names a pacing spin window; zero means the plain timer was used,
+// which is also what a file from before the setting existed implies.
+func spinText(seconds float64) string {
+	if seconds == 0 {
+		return "off"
+	}
+	return FormatDuration(time.Duration(math.Round(seconds * 1e9)))
 }
 
 func runLine(s Summary) string {

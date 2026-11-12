@@ -146,6 +146,7 @@ func TestUsageErrorsExitWithCode2(t *testing.T) {
 		"unreadable body file": {[]string{"-body", "@/definitely/not/here", srv.URL}, "body"},
 		"zero rate":            {[]string{"-rate", "0", srv.URL}, "rate"},
 		"unknown flag":         {[]string{"-nope", srv.URL}, "nope"},
+		"negative spin":        {[]string{"-spin", "-1ms", srv.URL}, "must not be negative"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -207,6 +208,40 @@ func saveRun(t *testing.T, url string) string {
 		t.Fatalf("run against %s exited %d: %s", url, code, stderr)
 	}
 	return path
+}
+
+func savedSpin(t *testing.T, args ...string) float64 {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "run.json")
+	args = append([]string{"-rate", "50", "-duration", "200ms", "-quiet", "-json", path}, args...)
+	if code, _, stderr := exec(t, args...); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	raw, _ := os.ReadFile(path)
+	var got struct {
+		Run struct {
+			SpinSeconds float64 `json:"spin_seconds"`
+		} `json:"run"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	return got.Run.SpinSeconds
+}
+
+// The spin window changes what the latencies mean, so it is saved, and the
+// default (200µs) is the one that makes a plain run precise.
+func TestSpinDefaultsToTwoHundredMicrosecondsAndCanBeSet(t *testing.T) {
+	srv := okServer(t)
+	if got := savedSpin(t, srv.URL); got != 0.0002 {
+		t.Errorf("default spin saved as %v s, want 0.0002", got)
+	}
+	if got := savedSpin(t, "-spin", "1ms", srv.URL); got != 0.001 {
+		t.Errorf("-spin 1ms saved as %v s, want 0.001", got)
+	}
+	if got := savedSpin(t, "-spin", "0", srv.URL); got != 0 {
+		t.Errorf("-spin 0 saved as %v s, want 0 (plain timer)", got)
+	}
 }
 
 func TestSavedJSONRecordsWhatWasRun(t *testing.T) {

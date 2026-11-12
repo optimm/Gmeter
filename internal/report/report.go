@@ -68,7 +68,8 @@ type RunInfo struct {
 	Workers         int     `json:"workers"`
 	DurationSeconds float64 `json:"duration_seconds"` // how long requests were scheduled for
 	TimeoutSeconds  float64 `json:"timeout_seconds"`
-	StartedAt       string  `json:"started_at"` // RFC 3339, UTC
+	SpinSeconds     float64 `json:"spin_seconds"` // pacing busy-wait window; 0 = plain timer (also what older files imply)
+	StartedAt       string  `json:"started_at"`   // RFC 3339, UTC
 }
 
 // Point is one timeline window. Latencies are corrected, in milliseconds.

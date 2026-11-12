@@ -133,6 +133,25 @@ func TestCompareFlagsRunsThatAreNotLikeForLike(t *testing.T) {
 	}
 }
 
+// Spinning removes the timer's lateness from every request's latency, so a
+// run that spun and one that did not differ in what they measure.
+func TestCompareFlagsADifferentPacingSpin(t *testing.T) {
+	a := mkSummary(100*time.Millisecond, 2)
+	b := mkSummary(100*time.Millisecond, 2)
+	b.Run.SpinSeconds = 0.0002
+
+	c, _ := Compare(a, b)
+	notes := strings.Join(c.Notes, "\n")
+	for _, want := range []string{"spin", "off", "200µs"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("notes should mention %q:\n%s", want, notes)
+		}
+	}
+	if same, _ := Compare(b, b); len(same.Notes) != 0 {
+		t.Errorf("two runs with the same spin should have no notes, got %v", same.Notes)
+	}
+}
+
 func TestCompareRefusesAnUnusableHistogram(t *testing.T) {
 	a := mkSummary(100*time.Millisecond, 2)
 	b := mkSummary(100*time.Millisecond, 2)

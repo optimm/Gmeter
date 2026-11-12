@@ -90,8 +90,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			cfg.Method, cfg.URL, cfg.Rate, cfg.Duration, cfg.Workers)
 		cfg.ProgressEvery = progressEvery
 		cfg.Progress = func(s runner.Snapshot) {
-			fmt.Fprintf(stderr, "[%5.1fs] %d scheduled, %d completed, %d failed\n",
-				s.Elapsed.Seconds(), s.Scheduled, s.Completed, s.Failed)
+			fmt.Fprintf(stderr, "[%5.1fs] %d scheduled, %d completed, %d failed, %d late | %s\n",
+				s.Elapsed.Seconds(), s.Scheduled, s.Completed, s.Failed, s.Late, windowText(s.Window))
 		}
 	}
 
@@ -123,6 +123,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+// windowText formats the latest window: what the server is doing right now,
+// as opposed to the run-wide totals before it.
+func windowText(w runner.Window) string {
+	if w.Responses == 0 {
+		return "window: no completions"
+	}
+	return fmt.Sprintf("window: %.0f rps, p50 %s p99 %s max %s",
+		w.RPS, report.FormatDuration(w.P50), report.FormatDuration(w.P99), report.FormatDuration(w.Max))
 }
 
 // readBody returns the request body: the literal flag value, or the contents

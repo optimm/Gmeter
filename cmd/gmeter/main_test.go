@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -166,5 +167,25 @@ func TestHelpExitsZero(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "-rate") {
 		t.Fatalf("usage should list flags:\n%s", stderr)
+	}
+}
+
+func TestProgressLineShowsTheLatestWindow(t *testing.T) {
+	old := progressEvery
+	progressEvery = 100 * time.Millisecond
+	t.Cleanup(func() { progressEvery = old })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(5 * time.Millisecond)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, _, stderr := exec(t, "-rate", "100", "-duration", "450ms", srv.URL)
+
+	re := regexp.MustCompile(`window: \d+ rps, p50 \S+ p99 \S+ max \S+`)
+	if !re.MatchString(stderr) {
+		t.Fatalf("progress should show the window's rps and percentiles, got:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "late") {
+		t.Fatalf("progress should show the late count so saturation is visible live:\n%s", stderr)
 	}
 }

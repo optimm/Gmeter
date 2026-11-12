@@ -33,6 +33,11 @@ type LabelResult struct {
 	// distributions: a run's phases are about 1.8MB, and giving each of up to
 	// MaxLabels labels the same would take hundreds.
 	Phases []PhaseTotal
+
+	// LoggedCompared and LoggedDiffer are as in Result.Logged, for this label's
+	// requests only: the responses that had a logged status to compare with, and
+	// those of another class.
+	LoggedCompared, LoggedDiffer uint64
 }
 
 // indexLabels sets each request's label index and returns the distinct labels
@@ -78,8 +83,11 @@ func labelResults(labels []string, scheduled []uint64, tallies []partTally, phas
 			Scheduled: scheduled[i],
 			Failed:    t.failed,
 			BadStatus: t.badStatus,
-			Corrected: t.corrected,
-			Service:   t.service,
+
+			LoggedCompared: t.loggedCompared,
+			LoggedDiffer:   t.loggedDiffer,
+			Corrected:      t.corrected,
+			Service:        t.service,
 		}
 		if phases {
 			r.Phases = t.phases.totals()

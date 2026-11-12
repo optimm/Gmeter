@@ -17,6 +17,7 @@ package runner
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -123,6 +124,31 @@ type Request struct {
 	label int    // index of Label among the run's distinct labels, filled in by normalize
 }
 
+// LoggedStatuses is how the responses of a replay compare with what the log's
+// server answered (see Request.Logged). Only responses to requests that had a
+// logged status are compared, and only by class: a 204 where the log has a 200 is
+// the same answer, a 404 is not.
+type LoggedStatuses struct {
+	Compared uint64         // responses to requests that had a logged status
+	Changes  []StatusChange // those whose class differed, most common first
+}
+
+// Differ is how many compared responses were of another class than logged.
+func (l LoggedStatuses) Differ() uint64 {
+	var n uint64
+	for _, c := range l.Changes {
+		n += c.Count
+	}
+	return n
+}
+
+// StatusChange is a number of responses that were of class Got (2 is 2xx) where
+// the log has class Logged.
+type StatusChange struct {
+	Logged, Got int
+	Count       uint64
+}
+
 // Snapshot is a lock-free view of a run in progress.
 type Snapshot struct {
 	Elapsed   time.Duration
@@ -165,6 +191,9 @@ type Result struct {
 	// how fast the server answers.
 	Corrected *hist.Histogram
 	Service   *hist.Histogram
+
+	// Logged compares the responses with the statuses the traffic log recorded.
+	Logged LoggedStatuses
 
 	// Generator health: is Gmeter itself keeping time?
 	//
@@ -362,6 +391,7 @@ loop:
 		}
 		res.Stages = append(res.Stages, r)
 	}
+	changes := map[[2]int]uint64{}
 	for _, t := range tallies {
 		t.corrected.AddTo(res.Corrected)
 		t.service.AddTo(res.Service)
@@ -371,7 +401,17 @@ loop:
 		for kind, c := range t.errors {
 			res.Errors[kind] += c
 		}
+		res.Logged.Compared += t.loggedCompared
+		for pair, c := range t.loggedChanges {
+			changes[pair] += c
+		}
 	}
+	for pair, c := range changes {
+		res.Logged.Changes = append(res.Logged.Changes, StatusChange{Logged: pair[0], Got: pair[1], Count: c})
+	}
+	slices.SortFunc(res.Logged.Changes, func(a, b StatusChange) int {
+		return cmp.Or(cmp.Compare(b.Count, a.Count), cmp.Compare(a.Logged, b.Logged), cmp.Compare(a.Got, b.Got))
+	})
 	return res, nil
 }
 
@@ -594,6 +634,8 @@ type tally struct {
 	corrected, service *hist.Recorder
 	statuses           map[int]uint64
 	errors             map[string]uint64
+	loggedCompared     uint64
+	loggedChanges      map[[2]int]uint64 // {logged class, got class} -> responses, for those that differ
 }
 
 func newTally() *tally {
@@ -602,6 +644,8 @@ func newTally() *tally {
 		service:   hist.NewRecorder(),
 		statuses:  map[int]uint64{},
 		errors:    map[string]uint64{},
+
+		loggedChanges: map[[2]int]uint64{},
 	}
 }
 
@@ -620,6 +664,17 @@ type partTally struct {
 	corrected, service *hist.Histogram
 	failed, badStatus  uint64
 	phases             phaseSums // only a label's, and only when phases are on
+
+	loggedCompared, loggedDiffer uint64 // only a label's
+}
+
+func (p *partTally) compareLogged(differs bool) {
+	p.mu.Lock()
+	p.loggedCompared++
+	if differs {
+		p.loggedDiffer++
+	}
+	p.mu.Unlock()
 }
 
 func (p *partTally) record(corrected, service time.Duration) {
@@ -734,6 +789,16 @@ func (w *worker) do(ctx context.Context, j job) {
 	w.t.statuses[status]++
 	w.live.completed.Add(1)
 	w.record(j, intended, sent, finished)
+	if req := w.request(j); req != nil && req.Logged != 0 {
+		logged, got := req.Logged/100, status/100
+		w.t.loggedCompared++
+		if logged != got {
+			w.t.loggedChanges[[2]int{logged, got}]++
+		}
+		if l := w.label(j); l != nil {
+			l.compareLogged(logged != got)
+		}
+	}
 	if clock != nil {
 		split := clock.split(intended, sent, finished)
 		w.phases.record(split)
@@ -747,6 +812,14 @@ func (w *worker) do(ctx context.Context, j job) {
 			l.bad()
 		}
 	}
+}
+
+// request is the request j asks for, or nil if the run sends one fixed request.
+func (w *worker) request(j job) *Request {
+	if len(w.cfg.Requests) == 0 {
+		return nil
+	}
+	return &w.cfg.Requests[j.seq%uint64(len(w.cfg.Requests))]
 }
 
 // label is the tally of the label of j's request, or nil if the requests have

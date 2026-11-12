@@ -37,6 +37,7 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		rows     = fs.Int("endpoints", 20, "the most rows in the per-endpoint breakdown: the busiest endpoints, and the rest together as (other); 0 leaves it out, and with it every path from the report and the saved JSON")
 	)
 	rf := addCommonFlags(fs, "poisson", 50)
+	addPhasesFlag(fs, rf)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: gmeter replay -file TRACE [flags] BASE_URL\n\n"+
 			"Sends the requests of a traffic log to BASE_URL (scheme, host and optional path prefix; the\n"+

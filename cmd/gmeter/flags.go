@@ -25,6 +25,7 @@ type requestFlags struct {
 	jsonOut  *string
 	quiet    *bool
 	headers  headerFlag
+	phases   *bool // nil for a command that does not offer -phases
 }
 
 // addRequestFlags registers them on fs. The commands differ in the default
@@ -51,6 +52,12 @@ func addCommonFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers int
 	}
 	fs.Var(&r.headers, "H", `extra request header "Key: Value" (repeatable)`)
 	return r
+}
+
+// addPhasesFlag registers -phases, for the commands that report where a
+// request's time went. A capacity search has no use for it.
+func addPhasesFlag(fs *flag.FlagSet, r *requestFlags) {
+	r.phases = fs.Bool("phases", true, "split each request's latency into phases (queue, dns, connect, tls, send, wait, transfer); costs about 16 small allocations per request, -phases=false turns it off")
 }
 
 // arrival parses -arrivals and settles the seed: Poisson with no seed gets a
@@ -89,6 +96,7 @@ func (r *requestFlags) base(url string) (runner.Config, error) {
 		Workers:     *r.workers,
 		Timeout:     *r.timeout,
 		Spin:        *r.spin,
+		Phases:      r.phases != nil && *r.phases,
 		SampleEvery: sampleEvery, // the same windows whether or not progress is shown
 	}, nil
 }

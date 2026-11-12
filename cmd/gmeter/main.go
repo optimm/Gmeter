@@ -59,6 +59,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		stagesIn = fs.String("stages", "", `load profile instead of -rate and -duration: comma-separated DURATION@RATE (constant) or DURATION@FROM->TO (ramp), e.g. "30s@100,30s@200" or "10s@50,1m@50->500"`)
 	)
 	rf := addRequestFlags(fs, "even", 50)
+	addPhasesFlag(fs, rf)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: gmeter [flags] URL\n\nFlags must come before the URL.\n\n")
 		fs.PrintDefaults()

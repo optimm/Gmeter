@@ -286,3 +286,100 @@ func TestRejectsInvalidConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestProgressCarriesPerWindowLatencyStats(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(20 * time.Millisecond)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := baseConfig(srv.URL)
+	cfg.Rate, cfg.Duration, cfg.Workers = 100, 600*time.Millisecond, 20
+	cfg.ProgressEvery = 150 * time.Millisecond
+	var mu sync.Mutex
+	var snaps []Snapshot
+	cfg.Progress = func(s Snapshot) {
+		mu.Lock()
+		snaps = append(snaps, s)
+		mu.Unlock()
+	}
+
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	var windowed uint64
+	var sawLatency bool
+	for _, s := range snaps {
+		w := s.Window
+		windowed += w.Responses
+		if w.Interval < 100*time.Millisecond || w.Interval > 400*time.Millisecond {
+			t.Errorf("Window.Interval = %v, want ~150ms", w.Interval)
+		}
+		if w.Responses == 0 {
+			continue
+		}
+		sawLatency = true
+		if w.P50 < 20*time.Millisecond || w.P50 > 150*time.Millisecond {
+			t.Errorf("Window.P50 = %v, want 20ms..150ms for a 20ms handler", w.P50)
+		}
+		if !(w.P50 <= w.P99 && w.P99 <= w.Max) {
+			t.Errorf("window percentiles out of order: p50=%v p99=%v max=%v", w.P50, w.P99, w.Max)
+		}
+		if w.RPS <= 0 {
+			t.Errorf("Window.RPS = %v with %d responses", w.RPS, w.Responses)
+		}
+	}
+	if !sawLatency {
+		t.Fatal("no snapshot carried any windowed latency")
+	}
+	// Windows are disjoint slices of the run, so they can never add up to more than the whole.
+	if windowed > res.Corrected.Count() {
+		t.Fatalf("windows count %d samples but the run only has %d", windowed, res.Corrected.Count())
+	}
+}
+
+// A run-wide p99 cannot say *when* a stall happened. The windows must.
+func TestWindowsPinpointWhenAStallHappened(t *testing.T) {
+	begin := time.Now()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if el := time.Since(begin); el >= 200*time.Millisecond && el < 400*time.Millisecond {
+			time.Sleep(400*time.Millisecond - el) // freeze until t=400ms
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := baseConfig(srv.URL)
+	cfg.Rate, cfg.Duration, cfg.Workers = 200, 800*time.Millisecond, 100
+	cfg.ProgressEvery = 100 * time.Millisecond
+	var mu sync.Mutex
+	var windows []Window
+	cfg.Progress = func(s Snapshot) {
+		mu.Lock()
+		windows = append(windows, s.Window)
+		mu.Unlock()
+	}
+
+	if _, err := Run(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(windows) < 5 {
+		t.Fatalf("got %d windows, want at least 5", len(windows))
+	}
+	if first := windows[0].P99; first >= 80*time.Millisecond {
+		t.Errorf("first window (before the freeze) P99 = %v, want small", first)
+	}
+	var worst time.Duration
+	for _, w := range windows {
+		worst = max(worst, w.P99)
+	}
+	if worst < 100*time.Millisecond {
+		t.Errorf("worst window P99 = %v; the freeze must show up in some window", worst)
+	}
+}

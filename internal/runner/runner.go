@@ -53,12 +53,26 @@ type Config struct {
 	ProgressEvery time.Duration
 }
 
-// Snapshot is a cheap, lock-free view of a run in progress.
+// Snapshot is a lock-free view of a run in progress.
 type Snapshot struct {
 	Elapsed   time.Duration
 	Scheduled uint64 // requests handed to workers so far
 	Completed uint64 // got an HTTP response (any status)
 	Failed    uint64 // transport-level failures (timeouts, refused, ...)
+
+	// Window covers only the time since the previous snapshot.
+	Window Window
+}
+
+// Window is what happened between two consecutive snapshots. Latencies are
+// corrected (measured from each request's intended send time) and Max is
+// accurate to ~0.1%.
+type Window struct {
+	Interval  time.Duration // time since the previous snapshot
+	Responses uint64        // latency samples that completed in this window
+	RPS       float64       // Responses per second of Interval
+	P50, P99  time.Duration
+	Max       time.Duration
 }
 
 // Result is the outcome of a run.
@@ -101,14 +115,16 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	defer cancelSched()
 
 	var live counters
-	stopProgress := startProgress(cfg, &live, start)
-
-	jobs := make(chan time.Time, cfg.Workers)
 	tallies := make([]*tally, cfg.Workers)
-	var wg sync.WaitGroup
 	for i := range tallies {
 		tallies[i] = newTally()
-		w := &worker{client: client, cfg: cfg, live: &live, t: tallies[i]}
+	}
+	stopProgress := startProgress(cfg, &live, start, tallies)
+
+	jobs := make(chan time.Time, cfg.Workers)
+	var wg sync.WaitGroup
+	for _, t := range tallies {
+		w := &worker{client: client, cfg: cfg, live: &live, t: t}
 		wg.Go(func() { w.run(ctx, jobs) })
 	}
 
@@ -153,8 +169,8 @@ loop:
 		Service:   hist.New(),
 	}
 	for _, t := range tallies {
-		res.Corrected.Merge(t.corrected)
-		res.Service.Merge(t.service)
+		t.corrected.AddTo(res.Corrected)
+		t.service.AddTo(res.Service)
 		for code, c := range t.statuses {
 			res.Statuses[code] += c
 		}
@@ -232,7 +248,13 @@ func (c *counters) snapshot(start time.Time) Snapshot {
 
 // startProgress launches the progress reporter, if configured, and returns a
 // function that stops it and waits until its last callback has returned.
-func startProgress(cfg Config, live *counters, start time.Time) (stop func()) {
+//
+// Each tick it takes a cumulative snapshot of every worker's corrected-latency
+// Recorder and subtracts the previous tick's snapshot to get the window. It
+// pulls rather than having workers push: during a stall the workers are
+// blocked inside a request and could not push anything, which is exactly when
+// the display must keep updating.
+func startProgress(cfg Config, live *counters, start time.Time, tallies []*tally) (stop func()) {
 	if cfg.Progress == nil || cfg.ProgressEvery <= 0 {
 		return func() {}
 	}
@@ -241,10 +263,18 @@ func startProgress(cfg Config, live *counters, start time.Time) (stop func()) {
 		defer close(exited)
 		tick := time.NewTicker(cfg.ProgressEvery)
 		defer tick.Stop()
+		prev, prevAt := hist.New(), start
 		for {
 			select {
-			case <-tick.C:
-				cfg.Progress(live.snapshot(start))
+			case now := <-tick.C:
+				cur := hist.New()
+				for _, t := range tallies {
+					t.corrected.AddTo(cur)
+				}
+				snap := live.snapshot(start)
+				snap.Window = windowOf(cur.Delta(prev), now.Sub(prevAt))
+				prev, prevAt = cur, now
+				cfg.Progress(snap)
 			case <-done:
 				return
 			}
@@ -256,18 +286,33 @@ func startProgress(cfg Config, live *counters, start time.Time) (stop func()) {
 	}
 }
 
-// tally is owned by exactly one worker while the run is live, so it needs no
-// synchronisation; Run merges the tallies after the workers have exited.
+func windowOf(d *hist.Histogram, interval time.Duration) Window {
+	w := Window{
+		Interval:  interval,
+		Responses: d.Count(),
+		P50:       d.Quantile(0.50),
+		P99:       d.Quantile(0.99),
+		Max:       d.Max(),
+	}
+	if interval > 0 {
+		w.RPS = float64(d.Count()) / interval.Seconds()
+	}
+	return w
+}
+
+// tally is owned by exactly one worker while the run is live. Its histograms
+// are Recorders so the progress goroutine can read them mid-run; its maps are
+// plain because only Run touches them, after the workers have exited.
 type tally struct {
-	corrected, service *hist.Histogram
+	corrected, service *hist.Recorder
 	statuses           map[int]uint64
 	errors             map[string]uint64
 }
 
 func newTally() *tally {
 	return &tally{
-		corrected: hist.New(),
-		service:   hist.New(),
+		corrected: hist.NewRecorder(),
+		service:   hist.NewRecorder(),
 		statuses:  map[int]uint64{},
 		errors:    map[string]uint64{},
 	}

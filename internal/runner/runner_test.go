@@ -445,3 +445,91 @@ func TestSaturatedWorkersShowUpAsLateDispatches(t *testing.T) {
 		t.Fatal("Snapshot.Late stayed 0; saturation must be visible while the run is still going")
 	}
 }
+
+func sum(ws []Window, f func(Window) uint64) (total uint64) {
+	for _, w := range ws {
+		total += f(w)
+	}
+	return total
+}
+
+// The timeline is recorded whether or not anyone asked for progress, and its
+// windows must add up exactly to the whole run, so that nothing is lost between
+// the per-second view and the totals.
+func TestTimelineWindowsAddUpToTheWholeRun(t *testing.T) {
+	srv := okServer(t)
+	cfg := baseConfig(srv.URL) // 100 requests over 500ms
+	cfg.SampleEvery = 100 * time.Millisecond
+	// deliberately no Progress callback
+
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(res.Timeline) < 4 {
+		t.Fatalf("Timeline has %d windows, want at least 4 for a 500ms run sampled every 100ms", len(res.Timeline))
+	}
+	if got := sum(res.Timeline, func(w Window) uint64 { return w.Responses }); got != res.Corrected.Count() {
+		t.Errorf("windows hold %d responses, the run has %d", got, res.Corrected.Count())
+	}
+	if got := sum(res.Timeline, func(w Window) uint64 { return w.Scheduled }); got != res.Scheduled {
+		t.Errorf("windows hold %d scheduled requests, the run has %d", got, res.Scheduled)
+	}
+	for i := 1; i < len(res.Timeline); i++ {
+		if res.Timeline[i].End <= res.Timeline[i-1].End {
+			t.Fatalf("windows are not in time order: %v then %v", res.Timeline[i-1].End, res.Timeline[i].End)
+		}
+	}
+}
+
+func TestTimelineDefaultsToOneSecondWindowsAndKeepsTheTailAsAPartialWindow(t *testing.T) {
+	srv := okServer(t)
+	cfg := baseConfig(srv.URL)
+	cfg.Rate, cfg.Duration = 100, 300*time.Millisecond // shorter than one sample interval
+
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(res.Timeline) != 1 {
+		t.Fatalf("Timeline has %d windows, want exactly 1 (the whole run is under the 1s default)", len(res.Timeline))
+	}
+	w := res.Timeline[0]
+	if !w.Partial {
+		t.Error("the closing window ends early, so it must be marked Partial")
+	}
+	if w.Responses != res.Corrected.Count() {
+		t.Errorf("Responses = %d, want all %d", w.Responses, res.Corrected.Count())
+	}
+}
+
+func TestTimelineCountsFailuresPerWindow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := srv.URL
+	srv.Close() // nothing listening: every request fails
+
+	cfg := baseConfig(url)
+	cfg.SampleEvery = 100 * time.Millisecond
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var failedTotal uint64
+	for _, n := range res.Errors {
+		failedTotal += n
+	}
+	if got := sum(res.Timeline, func(w Window) uint64 { return w.Failed }); got != failedTotal || got == 0 {
+		t.Fatalf("windows hold %d failures, the run has %d", got, failedTotal)
+	}
+}
+
+func TestRejectsNegativeSampleInterval(t *testing.T) {
+	cfg := baseConfig("http://127.0.0.1:1")
+	cfg.SampleEvery = -time.Second
+	if _, err := Run(context.Background(), cfg); err == nil {
+		t.Fatal("Run succeeded, want a validation error")
+	}
+}

@@ -34,7 +34,10 @@ import (
 	"github.com/optimm/Gmeter/internal/pacer"
 )
 
-const defaultTimeout = 30 * time.Second
+const (
+	defaultTimeout     = 30 * time.Second
+	defaultSampleEvery = time.Second
+)
 
 // Config describes one load test.
 type Config struct {
@@ -48,9 +51,11 @@ type Config struct {
 	Workers  int           // max requests in flight (== max connections)
 	Timeout  time.Duration // per request; default 30s
 
-	// Progress, if set, is called every SampleEvery with live counters.
-	Progress    func(Snapshot)
+	// SampleEvery is the length of one timeline window (default 1s). The
+	// timeline is always recorded; Progress, if set, is also called once per
+	// window with live counters.
 	SampleEvery time.Duration
+	Progress    func(Snapshot)
 }
 
 // Snapshot is a lock-free view of a run in progress.
@@ -65,12 +70,16 @@ type Snapshot struct {
 	Window Window
 }
 
-// Window is what happened between two consecutive snapshots. Latencies are
+// Window is what happened between two consecutive samples. Latencies are
 // corrected (measured from each request's intended send time) and Max is
 // accurate to ~0.1%.
 type Window struct {
-	Interval  time.Duration // time since the previous snapshot
+	End       time.Duration // elapsed time at the end of this window
+	Interval  time.Duration // length of this window
+	Partial   bool          // the closing window of a run, shorter than SampleEvery
+	Scheduled uint64        // requests dispatched to workers in this window
 	Responses uint64        // latency samples that completed in this window
+	Failed    uint64        // transport failures in this window
 	RPS       float64       // Responses per second of Interval
 	P50, P99  time.Duration
 	Max       time.Duration
@@ -105,6 +114,11 @@ type Result struct {
 	// can pace. Late requests are still measured from their due time.
 	TimerLag *hist.Histogram
 	Late     uint64
+
+	// Timeline is one Window per SampleEvery, in time order, closed by a
+	// Partial window for the tail. The windows add up exactly to the totals
+	// above, so the per-second view and the summary can never disagree.
+	Timeline []Window
 }
 
 // Run executes the load test and blocks until it is finished or ctx is done.
@@ -134,7 +148,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	for i := range tallies {
 		tallies[i] = newTally()
 	}
-	stopProgress := startProgress(cfg, &live, start, tallies)
+	stopSampler := startSampler(cfg, &live, start, tallies)
 
 	jobs := make(chan time.Time, cfg.Workers)
 	var wg sync.WaitGroup
@@ -178,7 +192,7 @@ loop:
 
 	close(jobs)
 	wg.Wait()
-	stopProgress()
+	timeline := stopSampler() // after the workers: its closing window sees every sample
 
 	res := &Result{
 		Elapsed:   time.Since(start),
@@ -190,6 +204,7 @@ loop:
 		Service:   hist.New(),
 		TimerLag:  timerLag,
 		Late:      live.late.Load(),
+		Timeline:  timeline,
 	}
 	for _, t := range tallies {
 		t.corrected.AddTo(res.Corrected)
@@ -213,6 +228,12 @@ func (c Config) normalize() (Config, error) {
 		return c, fmt.Errorf("runner: timeout must not be negative, got %v", c.Timeout)
 	case c.Timeout == 0:
 		c.Timeout = defaultTimeout
+	}
+	switch {
+	case c.SampleEvery < 0:
+		return c, fmt.Errorf("runner: sample interval must not be negative, got %v", c.SampleEvery)
+	case c.SampleEvery == 0:
+		c.SampleEvery = defaultSampleEvery
 	}
 	if _, err := pacer.New(time.Time{}, c.Rate); err != nil {
 		return c, err
@@ -270,43 +291,65 @@ func (c *counters) snapshot(start time.Time) Snapshot {
 	}
 }
 
-// startProgress launches the progress reporter, if configured, and returns a
-// function that stops it and waits until its last callback has returned.
+// startSampler launches the goroutine that builds the timeline (and calls
+// cfg.Progress, if set) and returns a function that stops it, waits until its
+// last callback has returned, and hands back the timeline.
 //
 // Each tick it takes a cumulative snapshot of every worker's corrected-latency
 // Recorder and subtracts the previous tick's snapshot to get the window. It
 // pulls rather than having workers push: during a stall the workers are
 // blocked inside a request and could not push anything, which is exactly when
 // the display must keep updating.
-func startProgress(cfg Config, live *counters, start time.Time, tallies []*tally) (stop func()) {
-	if cfg.Progress == nil || cfg.SampleEvery <= 0 {
-		return func() {}
-	}
+//
+// stop must be called after the workers have exited. It then closes the run
+// with one more, Partial, window covering the tail since the last tick, which
+// is what makes the windows add up to the totals.
+func startSampler(cfg Config, live *counters, start time.Time, tallies []*tally) (stop func() []Window) {
 	done, exited := make(chan struct{}), make(chan struct{})
+	var timeline []Window // owned by the goroutine until exited is closed
 	go func() {
 		defer close(exited)
 		tick := time.NewTicker(cfg.SampleEvery)
 		defer tick.Stop()
+
 		prev, prevAt := hist.New(), start
+		var prevScheduled, prevFailed uint64
+		sample := func(now time.Time, partial bool) Window {
+			cur := hist.New()
+			for _, t := range tallies {
+				t.corrected.AddTo(cur)
+			}
+			scheduled, failed := live.scheduled.Load(), live.failed.Load()
+			w := windowOf(cur.Delta(prev), now.Sub(prevAt))
+			w.End = now.Sub(start)
+			w.Partial = partial
+			w.Scheduled, w.Failed = scheduled-prevScheduled, failed-prevFailed
+			prev, prevAt, prevScheduled, prevFailed = cur, now, scheduled, failed
+			return w
+		}
+
 		for {
 			select {
 			case now := <-tick.C:
-				cur := hist.New()
-				for _, t := range tallies {
-					t.corrected.AddTo(cur)
+				w := sample(now, false)
+				timeline = append(timeline, w)
+				if cfg.Progress != nil {
+					snap := live.snapshot(start)
+					snap.Window = w
+					cfg.Progress(snap)
 				}
-				snap := live.snapshot(start)
-				snap.Window = windowOf(cur.Delta(prev), now.Sub(prevAt))
-				prev, prevAt = cur, now
-				cfg.Progress(snap)
 			case <-done:
+				if w := sample(time.Now(), true); w.Scheduled+w.Responses+w.Failed > 0 {
+					timeline = append(timeline, w)
+				}
 				return
 			}
 		}
 	}()
-	return func() {
+	return func() []Window {
 		close(done)
 		<-exited
+		return timeline
 	}
 }
 

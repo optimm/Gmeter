@@ -3,6 +3,7 @@ package hist
 import (
 	"testing"
 	"time"
+	"unsafe"
 )
 
 // feed records the same skewed samples into any number of sinks.
@@ -139,5 +140,20 @@ func TestDeltaOfIdenticalSnapshotsIsEmpty(t *testing.T) {
 	d := b.Delta(a)
 	if d.Count() != 0 || d.Quantile(0.99) != 0 || d.Max() != 0 {
 		t.Fatalf("expected an empty delta, got count=%d p99=%v max=%v", d.Count(), d.Quantile(0.99), d.Max())
+	}
+}
+
+// The padding in Recorder is a measured fix: with neighbouring Recorders
+// sharing cache lines, parallel Record was ~2.2x slower (see
+// BenchmarkRecorderRecordParallel). A benchmark cannot guard that in CI, so
+// pin the layout instead: the fields every Record writes must have at least a
+// full cache line of padding on each side.
+func TestRecorderHotFieldsAreIsolatedOnTheirOwnCacheLines(t *testing.T) {
+	var r Recorder
+	if lead := unsafe.Offsetof(r.sum); lead < cacheLine {
+		t.Errorf("only %d bytes before the hot fields, want >= %d", lead, cacheLine)
+	}
+	if tail := unsafe.Sizeof(r) - unsafe.Offsetof(r.max) - unsafe.Sizeof(r.max); tail < cacheLine {
+		t.Errorf("only %d bytes after the hot fields, want >= %d", tail, cacheLine)
 	}
 }

@@ -23,9 +23,15 @@ import (
 // reflected in its min, max and sum (they may include one in-flight sample
 // that the counts do not yet show, which is harmless).
 type Recorder struct {
+	_             [cacheLine]byte
 	counts        []atomic.Uint64
 	sum, min, max atomic.Uint64
+	_             [cacheLine]byte
 }
+
+// cacheLine is the padding unit: Apple Silicon uses 128-byte lines, x86 uses
+// 64, so 128 is safe on both.
+const cacheLine = 128
 
 // NewRecorder returns an empty Recorder.
 func NewRecorder() *Recorder {

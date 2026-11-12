@@ -432,8 +432,8 @@ to answer "how many more of my requests got slow?", not just "how much slower is
 
 `diff` prints a note when the runs differ in URL, method, rate, workers, duration, load profile, arrival process
 (or Poisson seed) or pacing spin, or when either run's generator raised a warning. (Spin is in the list because it
-changes what the latencies contain: see below.) It compares the whole run; per-stage numbers are in each file's
-`stages`.
+changes what the latencies contain: see below.) The numbers above compare the whole run; per-stage numbers are in
+each file's `stages`, and replays also get a per-endpoint comparison (below).
 
 To gate a build, add `-threshold`:
 
@@ -443,7 +443,45 @@ gmeter diff -threshold 20 before.json after.json   # exit 1 if corrected p99 ros
 
 Exit codes: `0` compared (and within the threshold, if one was given), `1` the threshold was exceeded, `2` bad
 usage or an unreadable file. It looks only at p99. A single run per side cannot tell a real change from
-run-to-run noise, so treat small differences with suspicion and repeat the runs.
+run-to-run noise, so treat small differences with suspicion and repeat the runs. A threshold of `NaN` or
+`Inf` could never be exceeded, so it is refused instead of silently passing.
+
+### Per endpoint
+
+When both files are replays (see `gmeter replay`) that kept their endpoint breakdown, `diff` also compares the
+endpoints, matched by name, worst p99 change first. Real output: the same 10-second trace against the same
+server twice, the second time with `/search` taking 90ms instead of 40ms (the server has capacity to spare, so
+the other endpoints are not affected):
+
+```
+endpoints, worst p99 change first (corrected latency; errors are failures and bad statuses, A to B)
+  endpoint              req A   req B     p50 A     p50 B     p99 A     p99 B  p99 change     errors
+  GET /search             625     625    40.8ms    90.8ms    48.7ms    96.2ms      +97.6%        0→0
+  GET /orders/:id        1961    1961     2.7ms     2.7ms     8.3ms     8.5ms       +1.9%        0→0
+  GET /users/:id/cart     459     459     2.7ms     2.7ms     7.7ms     6.5ms      -15.4%        0→0
+```
+
+The `errors` column is failures plus bad statuses, so an endpoint that stopped answering shows up there even
+though it has no latency to compare. Endpoints only one run has are listed under the table.
+
+`-endpoint-threshold` gates on it, separately from `-threshold`, which keeps judging the whole run:
+
+```bash
+gmeter diff -endpoint-threshold 30 before.json after.json
+# REGRESSION: 1 endpoint's corrected p99 rose more than 30%:
+#   GET /search  +97.6%  (48.7ms -> 96.2ms)
+```
+
+- **Small endpoints are not judged.** The p99 of fewer than 100 requests is nearly their slowest request, so an
+  endpoint with fewer than 100 answered requests in either run is marked `*`, listed last and left out of the gate.
+  The `/users` row above moved by -15% with 459 requests: expect that much noise from a single run.
+- **A gate that judged nothing fails.** If neither file has a breakdown, or no endpoint has 100 requests in both,
+  `-endpoint-threshold` exits `2` and says why, instead of reporting that everything is fine.
+- **It only looks at p99.** An endpoint that began to fail shows in the `errors` column but does not trip the gate.
+- **A shared bottleneck moves every endpoint.** With `/search` at 90ms on a server of only four slots, the same
+  replay overloaded the server and every endpoint's p99 rose from 70-100ms to about 5.8s. The diff shows
+  that truthfully, and cannot say which endpoint caused it; the endpoints are only separable when the server is not
+  saturated.
 
 ### What the JSON contains
 
@@ -556,7 +594,7 @@ not the tails. Gmeter's own check still catches that case: the timer-lag and lat
   counters (atomics), per-stage and per-label results (a small lock per stage and per label, taken once per
   response), and the generator-health measurements.
 - **`internal/report`**: text and JSON output, the per-window timeline, the per-endpoint table, and run
-  comparison (`diff`).
+  comparison (`diff`), including per endpoint.
 
 ### Choices worth knowing
 
@@ -593,6 +631,7 @@ the live windows pinpoint when a stall happened.
 - [x] **v2b**: `gmeter find`: the highest rate that meets a latency target, with confirmation and caveats
 - [x] **v2c**: `gmeter replay`: a traffic log (JSON Lines or an access log) at its recorded pace or a fixed rate
 - [x] **v2d**: a per-endpoint breakdown for replays (`-endpoints`)
-- [ ] **v2e**: per-phase timings (connect, TLS, first byte), and `gmeter diff` per endpoint
+- [x] **v2e**: `gmeter diff` per endpoint (`-endpoint-threshold`)
+- [ ] **v2f**: per-phase timings (connect, TLS, first byte)
 - [ ] **v3**: distributed mode with one controller driving several generators (merging histograms, not
       averaging percentiles), HTTP/2 and gRPC

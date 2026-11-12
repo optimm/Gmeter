@@ -30,6 +30,26 @@ type EndpointRow struct {
 
 	// Few is set when A or B has fewer than MinEndpointSamples samples.
 	Few bool
+
+	// Moves is how much the time an answered request of the endpoint spent in each
+	// phase changed from A to B, in milliseconds (negative if it fell), one
+	// number for each of the phases in shownPhases: queue, connect (dns, connect
+	// and tls together), send, wait, transfer. Each run is averaged over its own
+	// answered requests. It is nil unless both runs recorded the endpoint's
+	// phases.
+	Moves []float64
+}
+
+// GrewMost is the phase in which an answered request of the endpoint spent the
+// most additional time in B, and how many milliseconds more; false if the
+// phases were not compared or none got slower.
+func (r EndpointRow) GrewMost() (phase string, ms float64, ok bool) {
+	for i, m := range r.Moves {
+		if m > ms {
+			phase, ms, ok = shownPhases[i], m, true
+		}
+	}
+	return phase, ms, ok
 }
 
 // compareEndpoints matches the endpoints of two runs by name. The rows are in
@@ -81,6 +101,14 @@ func endpointRow(a, b EndpointSummary) EndpointRow {
 		P50A: a.Corrected.P50Ms, P50B: b.Corrected.P50Ms,
 		P99A: a.Corrected.P99Ms, P99B: b.Corrected.P99Ms,
 		ErrorsA: a.Failed + a.BadStatus, ErrorsB: b.Failed + b.BadStatus,
+	}
+	if va, answeredA := perRequest(a.Phases); answeredA > 0 {
+		if vb, answeredB := perRequest(b.Phases); answeredB > 0 {
+			r.Moves = make([]float64, len(shownPhases))
+			for i := range r.Moves {
+				r.Moves[i] = vb[i] - va[i]
+			}
+		}
 	}
 	r.Few = r.SamplesA < MinEndpointSamples || r.SamplesB < MinEndpointSamples
 	r.P99ChangePct = pct(r.P99A, r.P99B)
@@ -174,4 +202,42 @@ func writeEndpointDiff(b *strings.Builder, c Comparison) {
 	}
 	only("A", c.OnlyA, c.a.Endpoints)
 	only("B", c.OnlyB, c.b.Endpoints)
+	writeEndpointMoves(b, c)
+}
+
+// writeEndpointMoves prints, for each endpoint both runs recorded the phases of,
+// how much the time an answered request spent in each phase changed.
+func writeEndpointMoves(b *strings.Builder, c Comparison) {
+	var rows []EndpointRow
+	width := len("endpoint")
+	for _, r := range c.Endpoints {
+		if r.Moves != nil {
+			rows = append(rows, r)
+			width = max(width, min(utf8.RuneCountInString(r.Endpoint), endpointWidth))
+		}
+	}
+	if len(rows) == 0 {
+		return
+	}
+	b.WriteString("\nendpoints, where the time moved (change in the mean time per answered request, B minus A; connect is dns + connect + tls)\n")
+	fmt.Fprintf(b, "  %-*s", width, "endpoint")
+	for _, name := range shownPhases {
+		fmt.Fprintf(b, "  %9s", name)
+	}
+	b.WriteString("\n")
+	few := false
+	for _, r := range rows {
+		mark := ""
+		if r.Few {
+			mark, few = " *", true
+		}
+		fmt.Fprintf(b, "  %-*s", width, shorten(r.Endpoint, endpointWidth))
+		for _, m := range r.Moves {
+			fmt.Fprintf(b, "  %9s", fmtSignedMs(m))
+		}
+		b.WriteString(mark + "\n")
+	}
+	if few {
+		fmt.Fprintf(b, "* fewer than %d requests answered in A or B: a mean of so few requests is a noisy estimate\n", MinEndpointSamples)
+	}
 }

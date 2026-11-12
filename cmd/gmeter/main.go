@@ -330,7 +330,11 @@ func judgeEndpoints(c report.Comparison, thresholdPct float64, w io.Writer) (reg
 			width = max(width, len(r.Endpoint))
 		}
 		for _, r := range regs {
-			fmt.Fprintf(w, "  %-*s  %+.1f%%  (%s -> %s)\n", width, r.Endpoint, r.P99ChangePct, report.FormatMs(r.P99A), report.FormatMs(r.P99B))
+			where := ""
+			if phase, ms, ok := r.GrewMost(); ok { // both runs recorded this endpoint's phases
+				where = fmt.Sprintf("  mean grew most in %s (+%s)", phase, report.FormatMs(ms))
+			}
+			fmt.Fprintf(w, "  %-*s  %+.1f%%  (%s -> %s)%s\n", width, r.Endpoint, r.P99ChangePct, report.FormatMs(r.P99A), report.FormatMs(r.P99B), where)
 		}
 		return true, nil
 	}

@@ -352,6 +352,10 @@ func judgeEndpoints(c report.Comparison, thresholdPct float64, w io.Writer) (reg
 			}
 			fmt.Fprintf(w, "  %-*s  %+.1f%%  (%s -> %s)%s\n", width, r.Endpoint, r.P99ChangePct, report.FormatMs(r.P99A), report.FormatMs(r.P99B), where)
 		}
+		if rose, judged, ok := c.SharedRise(); ok {
+			fmt.Fprintf(w, "  note: %d of %d judged endpoints' p99 rose by more than %g%% at once, which looks more like one shared cause than %d separate regressions (see the note at the top)\n",
+				rose, judged, report.SharedRisePct, rose)
+		}
 		return true, nil
 	}
 	detail := fmt.Sprintf("%d judged", judged)

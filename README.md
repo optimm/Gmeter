@@ -719,9 +719,22 @@ gmeter diff -endpoint-threshold 30 before.json after.json
   grew most. The tail can come from another phase than the average does: read the table above for the whole
   picture.
 - **A shared bottleneck moves every endpoint.** With `/search` at 90ms on a server of only four slots, the same
-  replay overloaded the server and every endpoint's p99 rose from 70-100ms to about 5.8s. The diff shows
-  that truthfully, and cannot say which endpoint caused it; the endpoints are only separable when the server is not
-  saturated.
+  replay overloaded the server and every endpoint's p99 rose from 70-100ms to about 5.8s. The diff cannot say which
+  endpoint caused it (the endpoints are only separable when the server is not saturated), so it says what it can:
+  when at least 3 endpoints are judged and at least 75% of them have a p99 more than 50% up, it adds a note, and the
+  gate adds a line under its list:
+
+  ```
+  note  3 of 3 judged endpoints' p99 rose by more than 50% at once: that looks more like one shared cause (a
+        saturated server, or a pool or dependency every endpoint uses) than 3 separate regressions, and a saturated
+        run cannot say which endpoint caused it; they are only separable when the server is not saturated
+  ```
+
+  This is a judgement about cause and not a measurement, and the three numbers were set by looking at four pairs of
+  saved runs of three endpoints each, so treat them as a starting point. In those, one slow endpoint moved 1 of 3
+  endpoints, moderate load effects 0 or 1 of 3, and the saturated server all 3 (by 5,600% to 8,200%). The note says
+  "looks more like", never "is", and a diff of a few endpoints or small ones (under 100 requests, which are not
+  judged) never gets it.
 
 ### What the JSON contains
 

@@ -204,6 +204,12 @@ type Result struct {
 // scheduler blocked, and the requests behind it milliseconds or more late.
 const lateTolerance = time.Millisecond
 
+// reachedLate reports whether the scheduler, finding a request at now that was
+// due at due, was behind schedule by enough to count it as late.
+func reachedLate(now, due time.Time) bool {
+	return now.Sub(due) > lateTolerance
+}
+
 // StageResult is what happened to the requests that were due during one stage
 // of the profile. Attribution is by due time: a request due in stage 1 that
 // the server only answered during stage 2 still counts for stage 1, because
@@ -287,7 +293,7 @@ loop:
 				break
 			}
 			timerLag.Record(time.Since(at))
-		} else if now.Sub(at) > lateTolerance {
+		} else if reachedLate(now, at) {
 			live.late.Add(1) // behind schedule when we got here
 		}
 		prev = at

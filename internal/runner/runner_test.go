@@ -457,6 +457,28 @@ func TestFastServerWithEnoughWorkersHasFewLateDispatches(t *testing.T) {
 // trouble: with an instant server and plenty of idle workers, the late count
 // must stay low even at a rate where most gaps are shorter than a timer can
 // resolve.
+// The rule itself, on synthetic times, so it is checked on every machine: the
+// end-to-end test below depends on how quiet the machine is.
+func TestARequestIsLateOnlyWhenReachedMoreThanTheToleranceAfterItsDueTime(t *testing.T) {
+	due := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name string
+		now  time.Time
+		want bool
+	}{
+		{"before it is due", due.Add(-time.Second), false},
+		{"exactly when due", due, false},
+		{"microseconds late", due.Add(3 * time.Microsecond), false},
+		{"exactly the tolerance late", due.Add(lateTolerance), false},
+		{"a nanosecond past the tolerance", due.Add(lateTolerance + time.Nanosecond), true},
+		{"seconds late", due.Add(2 * time.Second), true},
+	} {
+		if got := reachedLate(tc.now, due); got != tc.want {
+			t.Errorf("%s: reachedLate = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestMicrosecondLatenessOfPoissonArrivalsIsNotCountedAsLate(t *testing.T) {
 	srv := okServer(t)
 	cfg := baseConfig(srv.URL)
@@ -467,9 +489,26 @@ func TestMicrosecondLatenessOfPoissonArrivalsIsNotCountedAsLate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if frac := float64(res.Late) / float64(res.Scheduled); frac > 0.02 {
-		t.Fatalf("Late = %d of %d (%.1f%%); requests reached microseconds late must not count", res.Late, res.Scheduled, frac*100)
+	frac := float64(res.Late) / float64(res.Scheduled)
+	if frac <= 0.02 {
+		return
 	}
+	// Too many were late. If this run's own timer lag shows the machine stalled
+	// the scheduler for longer than the tolerance, they were late for real (that
+	// is what the counter is for) and this run cannot tell that from the bug
+	// below. Measured: an idle machine is 0.1% late with a timer lag p99.9 of about
+	// 0.2ms, runs over 1.5% late all had a p99.9 above 2ms, a saturated machine is
+	// 35-85% late, and the bug of counting every request that is already due is
+	// about 16% late. A single long stall piles up overdue requests without moving
+	// the p99.9, so the largest lag is checked as well.
+	if lag := res.TimerLag.Quantile(0.999); lag > lateTolerance {
+		t.Skipf("the machine was too busy to judge: %.1f%% late, but the scheduler's timer lag p99.9 was %v, over the %v tolerance", frac*100, lag, lateTolerance)
+	}
+	if lag := res.TimerLag.Max(); lag > 10*lateTolerance {
+		t.Skipf("the machine was too busy to judge: %.1f%% late, but the scheduler once woke %v late", frac*100, lag)
+	}
+	t.Fatalf("Late = %d of %d (%.1f%%) on a quiet machine (timer lag p99.9 %v, max %v); requests reached microseconds late must not count",
+		res.Late, res.Scheduled, frac*100, res.TimerLag.Quantile(0.999), res.TimerLag.Max())
 }
 
 func TestSaturatedWorkersShowUpAsLateDispatches(t *testing.T) {

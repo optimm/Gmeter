@@ -566,7 +566,13 @@ endpoints, status vs the log (responses of another class than the log's)
 - **Endpoint names are recognised by shape.** Identifiers are found by how they look, so a slug such as
   `/products/blue-shoes` or a name such as `/img/123.png` stays a different endpoint each time, and once there
   are more than `-endpoints` rows the least busy fall into `(other)`.
-- The whole trace is read into memory before the run starts.
+- **The whole trace is read into memory before the run starts**, because it has to be sorted by time (an access log
+  is in completion order) and its endpoints ranked before the first request goes out. Measured with `/usr/bin/time
+  -l` on a 1,000,000-line combined-format access log (147MB, 2,000 requests a second): about 140 bytes per request
+  stay in memory, and the process peaked at 470MB. Before this was measured, each request kept its whole log line
+  alive and the runner copied the trace, which peaked at 1.04GB. Memory grows with the number of requests, so a
+  10-million-line log needs a few GB: replay a slice of it (`head -n 2000000`), which is usually more than a test
+  needs anyway.
 
 ## Comparing runs
 

@@ -369,13 +369,16 @@ is `0` when it ran, `1` if the report could not be written, and `2` for bad usag
 ```
 
 `at` is when the request was made, in seconds from any fixed point (only the differences matter): give it to every
-request or to none. Unknown fields are an error, so a misspelt `header` does not silently send the wrong thing.
-Bodies are text. Without `at` the trace has no pace of its own, so `-rate` is required.
+request or to none. `status` is optional: what the server answered when the request was recorded, from 100 to 599,
+so the replay can say how many responses differ (see [Status against the log](#status-against-the-log)). Unknown
+fields are an error, so a misspelt `header` does not silently send the wrong thing. Bodies are text. Without `at`
+the trace has no pace of its own, so `-rate` is required.
 
 **Access log**: the common and combined log formats that nginx, Apache, HAProxy and most proxies write. Each line
 gives a method, a path and the second it was logged in. Lines that are not usable requests (garbage, a `"-"`
 request from a connection that sent nothing, a proxy-style absolute URL) are counted and reported, not fatal.
-An access log has no request bodies, so a replayed `POST` has none.
+An access log has no request bodies, so a replayed `POST` has none. Each line's status is kept (a `-` or a number that
+is not a status leaves that request with nothing to compare).
 
 ### What it does with the times
 
@@ -481,6 +484,37 @@ The names are paths from your trace, so they go into the saved JSON (`endpoints`
 but a secret in a path segment that is not an identifier would; `-endpoints 0` keeps every path out of the report
 and the file.
 
+### Status against the log
+
+A log records what the server answered, so the replay can check that the target answers the same way. An access log
+of 600 requests that were all `200`, replayed against a staging that has no orders with an id divisible by 4 (real
+output):
+
+```
+requests   600 scheduled   480 ok   120 bad status   0 failed   0 dropped
+status     200: 480   404: 120
+vs log     600 compared, 120 differ (20.0%): 2xx→4xx 120
+warning    120 of 600 responses (20%) were of a different class than the log recorded (2xx→4xx 120): the target may
+           not hold the data the log asked for, so these latencies may not be what production would see; check
+           before reading them
+...
+endpoints, status vs the log (responses of another class than the log's)
+  endpoint               differ    share
+  GET /orders/:id    120 of 480    25.0%
+```
+
+- **By class.** A `204` where the log has a `200` is the same answer; a `404` is not. Changes are named by class and
+  listed most common first (`2xx→4xx`), up to four, then a count of the rest.
+- **Only requests with a logged status are compared**, and only the ones that got a response: a timeout or a refused
+  connection has no status to compare. A JSON Lines trace may give `status` to some requests and not others.
+- **The warning is at 5%** of the compared responses. A few differing are normal (a record deleted since); the `vs log`
+  line shows the exact figure either way, and the section under it lists the endpoints that differ, the largest share
+  first, so a missing set of ids shows up as one endpoint and not as a vague overall figure.
+- **It does not change the latency.** The `404`s are still in the percentiles. The line says how much of the run they
+  are; reading it is up to you.
+- Saved in the JSON as `vs_log` (`compared`, `different`, and `changes` with `logged`, `got` and `count`), and for
+  each endpoint as `log_compared` and `log_different`; the keys are left out when nothing was compared.
+
 ### How far to trust a replay
 
 - **One-second logs hide short bursts.** The access-log row above recovers some of the burstiness (13.6ms against
@@ -488,8 +522,9 @@ and the file.
   bursts matter, record the times at millisecond resolution.
 - **Logged times are completion times.** A server writes the line when the request finishes, so the time is when
   it was answered, not when it arrived. Lines can also be slightly out of order, so the trace is sorted.
-- **Status codes are not compared with the logged ones.** A replayed id that does not exist in the target
-  environment returns `404`, which counts as a bad status. Check that count before reading the latency.
+- **The target may not answer as the log's server did.** A replayed id that does not exist in the target returns
+  `404`, usually faster than a real answer would be. The report counts those (see
+  [Status against the log](#status-against-the-log)) and warns at 5%.
 - **Cycling warms caches.** With `-rate`, a trace shorter than the run is sent over and over, and later passes
   are served from warmer caches than the first. The report says so when it happens (`the trace has 3 requests but
   the run sent 40, so it was replayed 13.3 times: ...`), and the warning is saved in the JSON. Use a trace at least
@@ -695,7 +730,9 @@ gmeter diff -endpoint-threshold 30 before.json after.json
 how many requests were sent, the timing (`recorded` with its speed, or `fixed rate`), and how many were skipped by
 `-methods` or could not be parsed. For a replay `run.method` lists the methods in the trace, and `endpoints` has
 one digest per endpoint: its name, requests scheduled, failures, bad statuses, corrected and service latency, and
-its `phases`: for each phase, how many requests had it, their mean time in it and its share of the endpoint's time.)
+its `phases`: for each phase, how many requests had it, their mean time in it and its share of the endpoint's time,
+and how many of its responses were compared with the log and differed. A replay whose trace has statuses also gets
+`vs_log` at the top level.)
 
 `version`, `run` (URL, method, workers, duration, profile, arrivals, seed, spin, start time), the totals,
 `generator`, `warnings`, `stages` (one digest per stage of the profile), `phases` (one digest per phase), the

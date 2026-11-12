@@ -217,6 +217,11 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 			"%d of %d requests (%.0f%%) were dispatched more than 1ms after their due time: every worker was busy (raise -workers, or the server is slow) or the generator was starved of CPU; their latency still counts from the due time",
 			s.Generator.Late, s.Scheduled, frac*100))
 	}
+	if n := res.Errors["tls"]; n > 0 {
+		s.Warnings = append(s.Warnings, fmt.Sprintf(
+			"%d of %d requests failed in the TLS handshake (the server's certificate was refused, or it did not speak TLS): trust its certificate authority with -cacert FILE, or skip verification with -insecure",
+			n, s.Scheduled))
+	}
 	return s
 }
 

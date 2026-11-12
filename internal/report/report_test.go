@@ -470,3 +470,21 @@ func TestAnAverageTargetRateIsRoundedForReading(t *testing.T) {
 		t.Errorf("a constant rate of 200 should print as 200, got:\n%s", out)
 	}
 }
+
+// "tls: 100" alone does not say what to do about it.
+func TestSummarizeExplainsTLSFailuresAndHowToGetPastThem(t *testing.T) {
+	res := sampleResult()
+	res.Errors = map[string]uint64{"tls": 40, "timeout": 5}
+
+	s := Summarize(res, 10)
+
+	if len(s.Warnings) != 1 {
+		t.Fatalf("want exactly one warning, got %v", s.Warnings)
+	}
+	w := s.Warnings[0]
+	for _, want := range []string{"40 of 105 requests", "TLS handshake", "-cacert", "-insecure"} {
+		if !strings.Contains(w, want) {
+			t.Errorf("the warning %q does not mention %q", w, want)
+		}
+	}
+}

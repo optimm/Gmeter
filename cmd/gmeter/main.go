@@ -232,8 +232,9 @@ func runDiff(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	threshold := fs.Float64("threshold", 0, "exit 1 if B's corrected p99 is more than this many percent above A's")
 	endpointThreshold := fs.Float64("endpoint-threshold", 0, "exit 1 if any endpoint's corrected p99 is more than this many percent higher in B than in A; only endpoints with at least 100 requests answered in both runs are judged, and it needs replay runs that have an endpoint breakdown")
+	errorThreshold := fs.Float64("error-threshold", 0, "exit 1 if B's error rate (failed requests plus bad statuses, as a share of those sent) is more than this many percentage points above A's")
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: gmeter diff [-threshold PERCENT] [-endpoint-threshold PERCENT] A.json B.json\n\n"+
+		fmt.Fprintf(stderr, "Usage: gmeter diff [-threshold PERCENT] [-endpoint-threshold PERCENT] [-error-threshold POINTS] A.json B.json\n\n"+
 			"Compares two summaries saved with -json. Flags must come before the files.\n\n")
 		fs.PrintDefaults()
 	}
@@ -243,10 +244,11 @@ func runDiff(args []string, stdout, stderr io.Writer) int {
 		}
 		return 2
 	}
-	var gated, endpointGated bool
+	var gated, endpointGated, errorGated bool
 	fs.Visit(func(f *flag.Flag) { // 0 is a meaningful threshold, so detect "was it given"
 		gated = gated || f.Name == "threshold"
 		endpointGated = endpointGated || f.Name == "endpoint-threshold"
+		errorGated = errorGated || f.Name == "error-threshold"
 	})
 	// Every comparison with NaN is false, and nothing is above +Inf: such a
 	// threshold could never fail, so a CI gate using it would always pass.
@@ -254,9 +256,14 @@ func runDiff(args []string, stdout, stderr io.Writer) int {
 		name  string
 		value float64
 		given bool
-	}{{"threshold", *threshold, gated}, {"endpoint-threshold", *endpointThreshold, endpointGated}} {
+		unit  string
+	}{
+		{"threshold", *threshold, gated, "percent"},
+		{"endpoint-threshold", *endpointThreshold, endpointGated, "percent"},
+		{"error-threshold", *errorThreshold, errorGated, "percentage points"},
+	} {
 		if th.given && (math.IsNaN(th.value) || math.IsInf(th.value, 0)) {
-			fmt.Fprintf(stderr, "gmeter diff: -%s must be a finite number of percent, got %v\n", th.name, th.value)
+			fmt.Fprintf(stderr, "gmeter diff: -%s must be a finite number of %s, got %v\n", th.name, th.unit, th.value)
 			return 2
 		}
 	}
@@ -294,6 +301,14 @@ func runDiff(args []string, stdout, stderr io.Writer) int {
 		} else {
 			fmt.Fprintf(stdout, "\nok: corrected p99 changed by %s, within the %g%% threshold\n", change, *threshold)
 		}
+	}
+	if errorGated {
+		bad, err := judgeErrors(cmp, *errorThreshold, stdout)
+		if err != nil {
+			fmt.Fprintf(stderr, "gmeter diff: -error-threshold: %v\n", err)
+			return 2
+		}
+		regressed = regressed || bad
 	}
 	if endpointGated {
 		bad, err := judgeEndpoints(cmp, *endpointThreshold, stdout)

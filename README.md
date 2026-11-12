@@ -551,10 +551,56 @@ To gate a build, add `-threshold`:
 gmeter diff -threshold 20 before.json after.json   # exit 1 if corrected p99 rose by more than 20%
 ```
 
-Exit codes: `0` compared (and within the threshold, if one was given), `1` the threshold was exceeded, `2` bad
-usage or an unreadable file. It looks only at p99. A single run per side cannot tell a real change from
-run-to-run noise, so treat small differences with suspicion and repeat the runs. A threshold of `NaN` or
-`Inf` could never be exceeded, so it is refused instead of silently passing.
+Exit codes: `0` compared (and within the threshold, if one was given), `1` a threshold was exceeded, `2` bad
+usage or an unreadable file. `-threshold` looks only at p99: for failures, see the next section. A single run per
+side cannot tell a real change from run-to-run noise, so treat small differences with suspicion and repeat the
+runs. A threshold of `NaN` or `Inf` could never be exceeded, so it is refused instead of silently passing.
+
+### Errors
+
+A p99 gate can pass a server that is broken. A bad status is recorded as latency like any response, and a server
+that answers `500` at once answers faster than one that does the work. A (30ms of work per request) against B (every
+request answered `500`):
+
+```
+$ gmeter diff -threshold 20 working.json broken.json
+error rate               0.0%       100.0% +100.0 points
+  p50                  31.1ms        719µs    -97.7%
+  p99                  36.5ms        7.7ms    -79.0%
+ok: corrected p99 changed by -79.0%, within the 20% threshold      # exit 0
+
+$ gmeter diff -threshold 20 -error-threshold 1 working.json broken.json
+ok: corrected p99 changed by -79.0%, within the 20% threshold
+REGRESSION: error rate rose from 0.0% to 100.0% (+100.0 points), over the 1-point threshold      # exit 1
+```
+
+`-error-threshold POINTS` exits `1` if B's error rate is more than that many **percentage points** above A's
+(a relative change is undefined from zero errors, so `1` means 0% may become 1%, or 4% become 5%). The error
+rate is failed requests plus bad statuses as a share of the requests sent, the same definition `gmeter find`
+uses. A fall never fails it, and `-error-threshold 0` fails on any rise.
+
+When the files have a per-endpoint breakdown (a replay), each endpoint is judged too, because a whole run can hide
+an endpoint with a small share of the traffic. A replay where `/search` is a fifth of the requests and began to
+fail while `/orders/:id` stayed fine (real output):
+
+```
+endpoint          req A   req B     p50 A     p50 B     p99 A     p99 B  p99 change     errors
+GET /search         120     120     5.0ms     5.2ms    11.3ms    10.8ms       -3.9%      0→120
+GET /orders/:id     480     480     5.0ms     5.2ms    13.8ms    12.5ms       -9.8%        0→0
+
+REGRESSION: error rate rose from 0.0% to 20.0% (+20.0 points), over the 1-point threshold
+REGRESSION: 1 endpoint's error rate rose more than 1 point:
+  GET /search  0.0% -> 100.0%  (+100.0 points)
+```
+
+`/search` has a *better* p99 while failing every request, which is what the p99 gate would have seen.
+
+- **Endpoints sent fewer than 100 requests in either run are not judged**, as for the p99, but counted by requests
+  sent and not by latency samples: an endpoint that fails every request has no samples, and is the case this
+  gate is for. The line says how many were judged, and says so if none could be.
+- **A gate with no rate to compare fails.** A run that sent no requests has no error rate, so `-error-threshold`
+  exits `2` and says why, instead of reporting that everything is fine.
+- A threshold of `NaN` or `Inf` is refused, as for the others.
 
 ### Phases
 
@@ -584,7 +630,8 @@ Time that moved from the server to the generator is a finding about the test set
 - **Noise is not named.** The line under the table names the phase whose time per request changed most, up or
   down, only if it changed by at least a tenth of A's mean latency. Otherwise it says that none did, instead of
   naming whichever differed most by chance.
-- **It is not a gate.** `-threshold` and `-endpoint-threshold` still judge the p99.
+- **It is not a gate.** `-threshold` and `-endpoint-threshold` still judge the p99, and `-error-threshold` the
+  error rate.
 - If only one file has phases, `diff` says so and compares none.
 
 ### Per endpoint
@@ -629,7 +676,8 @@ gmeter diff -endpoint-threshold 30 before.json after.json
   459 requests.
 - **A gate that judged nothing fails.** If neither file has a breakdown, or no endpoint has 100 requests in both,
   `-endpoint-threshold` exits `2` and says why, instead of reporting that everything is fine.
-- **It only looks at p99.** An endpoint that began to fail shows in the `errors` column but does not trip the gate.
+- **It only looks at p99.** An endpoint that began to fail has a better p99, not a worse one. Judge failures with
+  `-error-threshold`, which also looks at each endpoint (see [Errors](#errors)).
 - **"mean grew most in" is about the mean.** The gate judges the p99, and says where the endpoint's *mean* time
   grew most. The tail can come from another phase than the average does: read the table above for the whole
   picture.

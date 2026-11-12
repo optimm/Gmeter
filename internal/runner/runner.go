@@ -257,6 +257,10 @@ type StageResult struct {
 	// Corrected and Service are as in Result, for this stage's requests only.
 	Corrected *hist.Histogram
 	Service   *hist.Histogram
+	// Phases says where this stage's time went, one total per phase in
+	// PhaseNames order, as for LabelResult.Phases. Nil unless Config.Phases was
+	// set.
+	Phases []PhaseTotal
 }
 
 // Run executes the load test and blocks until it is finished or ctx is done.
@@ -385,6 +389,9 @@ loop:
 			BadStatus: st.badStatus,
 			Corrected: st.corrected,
 			Service:   st.service,
+		}
+		if cfg.Phases {
+			r.Phases = st.phases.totals()
 		}
 		if r.Corrected == nil { // no response was ever recorded in this stage
 			r.Corrected, r.Service = hist.New(), hist.New()
@@ -663,7 +670,7 @@ type partTally struct {
 	mu                 sync.Mutex
 	corrected, service *hist.Histogram
 	failed, badStatus  uint64
-	phases             phaseSums // only a label's, and only when phases are on
+	phases             phaseSums // only when phases are on
 
 	loggedCompared, loggedDiffer uint64 // only a label's
 }
@@ -802,6 +809,7 @@ func (w *worker) do(ctx context.Context, j job) {
 	if clock != nil {
 		split := clock.split(intended, sent, finished)
 		w.phases.record(split)
+		w.stages[j.stage].recordPhases(split)
 		if l := w.label(j); l != nil {
 			l.recordPhases(split)
 		}

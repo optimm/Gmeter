@@ -40,36 +40,38 @@ type LabelResult struct {
 	LoggedCompared, LoggedDiffer uint64
 }
 
-// indexLabels sets each request's label index and returns the distinct labels
-// in the order they first appear. Requests either all have a label or none do.
-func indexLabels(reqs []Request) ([]string, error) {
+// indexLabels returns the distinct labels of the requests in the order they
+// first appear, and the index among them of each request's label (MaxLabels
+// fits in a byte). Requests either all have a label or none do; the requests
+// themselves are not changed.
+func indexLabels(reqs []Request) ([]string, []uint8, error) {
 	if len(reqs) == 0 || reqs[0].Label == "" {
 		for i, r := range reqs {
 			if r.Label != "" {
-				return nil, fmt.Errorf("runner: request %d has a Label but request 1 has none: label every request or none", i+1)
+				return nil, nil, fmt.Errorf("runner: request %d has a Label but request 1 has none: label every request or none", i+1)
 			}
 		}
-		return nil, nil
+		return nil, nil, nil
 	}
 	index := map[string]int{}
 	var labels []string
-	for i := range reqs {
-		r := &reqs[i]
+	of := make([]uint8, len(reqs))
+	for i, r := range reqs {
 		if r.Label == "" {
-			return nil, fmt.Errorf("runner: request %d has no Label but request 1 does: label every request or none", i+1)
+			return nil, nil, fmt.Errorf("runner: request %d has no Label but request 1 does: label every request or none", i+1)
 		}
 		n, seen := index[r.Label]
 		if !seen {
 			n = len(labels)
+			if n == MaxLabels {
+				return nil, nil, fmt.Errorf("runner: the requests have more than the %d distinct labels a run reports on", MaxLabels)
+			}
 			index[r.Label] = n
 			labels = append(labels, r.Label)
 		}
-		r.label = n
+		of[i] = uint8(n)
 	}
-	if len(labels) > MaxLabels {
-		return nil, fmt.Errorf("runner: the requests have %d distinct labels, more than the %d a run reports on", len(labels), MaxLabels)
-	}
-	return labels, nil
+	return labels, of, nil
 }
 
 // labelResults gathers the per-label figures, busiest label first and equally

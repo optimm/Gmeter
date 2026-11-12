@@ -100,7 +100,9 @@ type Config struct {
 	SampleEvery time.Duration
 	Progress    func(Snapshot)
 
-	labels []string // the distinct Request labels in order of first use, filled in by normalize
+	labels  []string // the distinct Request labels in order of first use, filled in by normalize
+	labelOf []uint8  // the index in labels of each request's label, filled in by normalize
+	base    string   // URL without a trailing slash, that a request's Target is appended to
 }
 
 // Request is one request of a replayed trace.
@@ -119,9 +121,6 @@ type Request struct {
 	// distinct label separately. Give every request one or none, at most
 	// MaxLabels different ones.
 	Label string
-
-	url   string // Config.URL with Target appended, filled in by normalize
-	label int    // index of Label among the run's distinct labels, filled in by normalize
 }
 
 // LoggedStatuses is how the responses of a replay compare with what the log's
@@ -338,7 +337,7 @@ loop:
 		select {
 		case jobs <- job{at: at, stage: stage, seq: seq}:
 			if len(scheduledBy) > 0 {
-				scheduledBy[cfg.Requests[seq%uint64(len(cfg.Requests))].label]++
+				scheduledBy[cfg.labelOf[seq%uint64(len(cfg.Requests))]]++
 			}
 			seq++
 			live.scheduled.Add(1)
@@ -500,23 +499,23 @@ func (c Config) normalize() (Config, error) {
 		if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 			return c, fmt.Errorf("runner: with Requests the url is a base that targets are appended to, so it must not have a query or fragment, got %q", c.URL)
 		}
-		base := strings.TrimSuffix(c.URL, "/")
-		c.Requests = slices.Clone(c.Requests) // the caller's slice is not ours to modify
+		// The requests are used where they are, not copied, and a request's URL is
+		// put together when it is sent: a trace can have millions of requests.
+		c.base = strings.TrimSuffix(c.URL, "/")
 		for i := range c.Requests {
 			r := &c.Requests[i]
 			if !strings.HasPrefix(r.Target, "/") {
 				return c, fmt.Errorf("runner: request %d: target must be a path starting with \"/\", got %q", i+1, r.Target)
 			}
-			r.url = base + r.Target
 			method := r.Method
 			if method == "" {
 				method = c.Method
 			}
-			if _, err := http.NewRequest(method, r.url, nil); err != nil {
+			if _, err := http.NewRequest(method, c.base+r.Target, nil); err != nil {
 				return c, fmt.Errorf("runner: request %d: invalid request: %w", i+1, err)
 			}
 		}
-		if c.labels, err = indexLabels(c.Requests); err != nil {
+		if c.labels, c.labelOf, err = indexLabels(c.Requests); err != nil {
 			return c, err
 		}
 	}
@@ -736,7 +735,7 @@ func (w *worker) do(ctx context.Context, j job) {
 	method, target, extra, payload := w.cfg.Method, w.cfg.URL, http.Header(nil), w.cfg.Body
 	if n := uint64(len(w.cfg.Requests)); n > 0 {
 		r := &w.cfg.Requests[j.seq%n]
-		target, extra = r.url, r.Header
+		target, extra = w.cfg.base+r.Target, r.Header
 		if r.Method != "" {
 			method = r.Method
 		}
@@ -836,7 +835,7 @@ func (w *worker) label(j job) *partTally {
 	if len(w.labels) == 0 {
 		return nil
 	}
-	return &w.labels[w.cfg.Requests[j.seq%uint64(len(w.cfg.Requests))].label]
+	return &w.labels[w.cfg.labelOf[j.seq%uint64(len(w.cfg.Requests))]]
 }
 
 func (w *worker) record(j job, intended, sent, finished time.Time) {

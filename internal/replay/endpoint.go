@@ -80,11 +80,20 @@ func (t *Trace) LabelEndpoints(max int) error {
 	if max < 2 {
 		return fmt.Errorf("the endpoint breakdown needs room for at least 2 rows (the busiest endpoints, and the rest together), got %d", max)
 	}
+	// One string per endpoint, shared by its requests: a trace has millions of
+	// requests and a few dozen endpoints.
 	names := make([]string, len(t.Requests))
 	count := map[string]int{}
+	shared := map[string]string{}
 	for i, r := range t.Requests {
-		names[i] = Endpoint(r.Method, r.Target)
-		count[names[i]]++
+		name := Endpoint(r.Method, r.Target)
+		if s, ok := shared[name]; ok {
+			name = s
+		} else {
+			shared[name] = name
+		}
+		names[i] = name
+		count[name]++
 	}
 
 	keep := map[string]bool{}

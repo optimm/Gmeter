@@ -106,8 +106,8 @@ func (t *Trace) KeepMethods(methods ...string) (dropped int) {
 	for _, m := range methods {
 		keep[strings.ToUpper(m)] = true
 	}
-	reqs := t.Requests[:0:0]
-	var stamps []time.Duration
+	// In place: the kept requests move down over the dropped ones.
+	n := 0
 	for i, r := range t.Requests {
 		m := r.Method
 		if m == "" {
@@ -117,32 +117,49 @@ func (t *Trace) KeepMethods(methods ...string) (dropped int) {
 			dropped++
 			continue
 		}
-		reqs = append(reqs, r)
+		t.Requests[n] = r
 		if t.stamps != nil {
-			stamps = append(stamps, t.stamps[i])
+			t.stamps[n] = t.stamps[i]
 		}
+		n++
 	}
-	t.Requests = reqs
+	clear(t.Requests[n:]) // so the dropped requests' paths and bodies can be freed
+	t.Requests = t.Requests[:n]
 	if t.stamps != nil {
-		t.stamps = stamps
+		t.stamps = t.stamps[:n]
 	}
 	return dropped
 }
 
 // sortByTime puts the requests in time order, ties in the order they were read.
+// It moves the requests in place rather than building sorted copies: a trace
+// can have millions, and a log is usually in order already.
 func (t *Trace) sortByTime() {
-	if t.stamps == nil {
+	if t.stamps == nil || slices.IsSorted(t.stamps) {
 		return
 	}
-	order := make([]int, len(t.stamps))
+	order := make([]int, len(t.stamps)) // order[i]: the request that belongs at i
 	for i := range order {
 		order[i] = i
 	}
 	sort.SliceStable(order, func(a, b int) bool { return t.stamps[order[a]] < t.stamps[order[b]] })
-	reqs := make([]runner.Request, len(order))
-	stamps := make([]time.Duration, len(order))
-	for i, from := range order {
-		reqs[i], stamps[i] = t.Requests[from], t.stamps[from]
+	// Follow each cycle of the permutation, moving every request once; a done
+	// position is marked with -1.
+	for start := range order {
+		if order[start] < 0 {
+			continue
+		}
+		req, stamp := t.Requests[start], t.stamps[start]
+		i := start
+		for {
+			from := order[i]
+			order[i] = -1
+			if from == start {
+				t.Requests[i], t.stamps[i] = req, stamp
+				break
+			}
+			t.Requests[i], t.stamps[i] = t.Requests[from], t.stamps[from]
+			i = from
+		}
 	}
-	t.Requests, t.stamps = reqs, stamps
 }

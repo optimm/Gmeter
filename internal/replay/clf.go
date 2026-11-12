@@ -77,7 +77,9 @@ func parseCLFLine(line string) (runner.Request, time.Duration, bool) {
 	if len(f) < 2 || !isMethod(strings.ToUpper(f[0])) || !strings.HasPrefix(f[1], "/") {
 		return runner.Request{}, 0, false
 	}
-	req := runner.Request{Method: strings.ToUpper(f[0]), Target: f[1]}
+	// Copies, not substrings: a substring would keep the whole line in memory
+	// for as long as the request, and a line can be kilobytes of user agent.
+	req := runner.Request{Method: method(f[0]), Target: strings.Clone(f[1])}
 	if n, err := strconv.Atoi(m[3]); err == nil && validStatus(n) { // "-" and garbage leave it 0
 		req.Logged = n
 	}
@@ -86,3 +88,22 @@ func parseCLFLine(line string) (runner.Request, time.Duration, bool) {
 
 // validStatus reports whether n is an HTTP status code.
 func validStatus(n int) bool { return n >= 100 && n <= 599 }
+
+// commonMethods are shared by every request that uses one, rather than each
+// keeping its own copy.
+var commonMethods = map[string]string{}
+
+func init() {
+	for _, m := range []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "CONNECT", "TRACE"} {
+		commonMethods[m] = m
+	}
+}
+
+// method is m in upper case, in a string of its own.
+func method(m string) string {
+	m = strings.ToUpper(m)
+	if shared, ok := commonMethods[m]; ok {
+		return shared
+	}
+	return strings.Clone(m)
+}

@@ -24,6 +24,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"slices"
 	"strings"
@@ -80,6 +81,11 @@ type Config struct {
 	// per request, and never more than a quarter of the gap between requests,
 	// so about a quarter of one core at most; see pacer.WaitUntil and CapSpin.
 	Spin time.Duration
+
+	// Phases, if set, splits the corrected latency of every request that got a
+	// response into the phases in PhaseNames (see Result.Phases). It costs a few
+	// timestamps and a small allocation per request.
+	Phases bool
 
 	// SampleEvery is the length of one timeline window (default 1s). The
 	// timeline is always recorded; Progress, if set, is also called once per
@@ -176,6 +182,12 @@ type Result struct {
 	// when the requests carry none. Each total above is the sum of the same
 	// figure over the labels.
 	Labels []LabelResult
+
+	// Phases splits the corrected latency of the requests that got a response
+	// into the phases of PhaseNames, in that order; each phase's samples add up
+	// to that part of the total. Nil unless Config.Phases was set. Requests that
+	// timed out or failed are not in it.
+	Phases []PhaseResult
 }
 
 // lateTolerance is how far past its due time the scheduler may reach a request
@@ -232,12 +244,16 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 
 	stages := make([]partTally, len(cfg.Stages))
 	labels := make([]partTally, len(cfg.labels))
+	var phases *phaseTally
+	if cfg.Phases {
+		phases = newPhaseTally()
+	}
 	scheduledBy := make([]uint64, len(cfg.labels))                                             // per label; only this goroutine writes it
 	scheduledIn, droppedIn := make([]uint64, len(cfg.Stages)), make([]uint64, len(cfg.Stages)) // only this goroutine writes them
 	jobs := make(chan job, cfg.Workers)
 	var wg sync.WaitGroup
 	for _, t := range tallies {
-		w := &worker{client: client, cfg: cfg, live: &live, t: t, stages: stages, labels: labels}
+		w := &worker{client: client, cfg: cfg, live: &live, t: t, stages: stages, labels: labels, phases: phases}
 		wg.Go(func() { w.run(ctx, jobs) })
 	}
 
@@ -309,6 +325,9 @@ loop:
 		Late:      live.late.Load(),
 		Timeline:  timeline,
 		Labels:    labelResults(cfg.labels, scheduledBy, labels),
+	}
+	if phases != nil {
+		res.Phases = phases.results()
 	}
 	for i := range stages {
 		st := &stages[i] // the workers have exited: no lock needed
@@ -613,6 +632,7 @@ type worker struct {
 	t      *tally
 	stages []partTally
 	labels []partTally // empty unless the requests carry labels
+	phases *phaseTally // nil unless phases were asked for
 }
 
 func (w *worker) run(ctx context.Context, jobs <-chan job) {
@@ -640,6 +660,11 @@ func (w *worker) do(ctx context.Context, j job) {
 	var body io.Reader
 	if len(payload) > 0 {
 		body = bytes.NewReader(payload)
+	}
+	var clock *phaseClock
+	if w.phases != nil {
+		clock = newPhaseClock(time.Now)
+		reqCtx = httptrace.WithClientTrace(reqCtx, clock.trace())
 	}
 	req, err := http.NewRequestWithContext(reqCtx, method, target, body)
 	if err != nil { // validated up front; defensive only
@@ -684,6 +709,9 @@ func (w *worker) do(ctx context.Context, j job) {
 	w.t.statuses[status]++
 	w.live.completed.Add(1)
 	w.record(j, intended, sent, finished)
+	if clock != nil {
+		w.phases.record(clock.split(intended, sent, finished))
+	}
 	if status < 200 || status >= 400 {
 		w.stages[j.stage].bad()
 		if l := w.label(j); l != nil {

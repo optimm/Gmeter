@@ -68,6 +68,9 @@ func (h *Histogram) Min() time.Duration {
 // Max returns the exact largest sample, or 0 if the histogram is empty.
 func (h *Histogram) Max() time.Duration { return time.Duration(h.max) }
 
+// Sum returns the exact total of all samples.
+func (h *Histogram) Sum() time.Duration { return time.Duration(h.sum) }
+
 // Mean returns the exact arithmetic mean, or 0 if the histogram is empty.
 func (h *Histogram) Mean() time.Duration {
 	if h.total == 0 {

@@ -126,3 +126,16 @@ func TestOutOfRangeValuesAreClamped(t *testing.T) {
 		t.Fatalf("Max() = %v, want clamp to MaxValue %v", h.Max(), MaxValue)
 	}
 }
+
+func TestSumIsTheExactTotalOfTheSamples(t *testing.T) {
+	h := New()
+	if h.Sum() != 0 {
+		t.Errorf("empty histogram: Sum = %v, want 0", h.Sum())
+	}
+	for _, d := range []time.Duration{3 * time.Millisecond, 7 * time.Microsecond, 11 * time.Second, -5} {
+		h.Record(d) // a negative sample counts as 0
+	}
+	if want := 3*time.Millisecond + 7*time.Microsecond + 11*time.Second; h.Sum() != want {
+		t.Errorf("Sum = %v, want %v: exact, not rounded to a bucket", h.Sum(), want)
+	}
+}

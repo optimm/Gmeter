@@ -31,12 +31,19 @@ type requestFlags struct {
 // arrival process: a plain run keeps exact spacing, a capacity search wants
 // the bursts a real server sees.
 func addRequestFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers int) *requestFlags {
+	r := addCommonFlags(fs, defaultArrivals, defaultWorkers)
+	r.method = fs.String("method", http.MethodGet, "HTTP method")
+	r.body = fs.String("body", "", "request body; prefix with @ to read it from a file")
+	return r
+}
+
+// addCommonFlags registers everything but -method and -body, for a command
+// that takes what to send from somewhere else (a replayed trace).
+func addCommonFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers int) *requestFlags {
 	r := &requestFlags{
 		workers:  fs.Int("workers", defaultWorkers, "max requests in flight, which is also the max number of connections"),
 		timeout:  fs.Duration("timeout", 10*time.Second, "per-request timeout"),
 		spin:     fs.Duration("spin", 200*time.Microsecond, "busy-wait this long before each request's due time instead of sleeping, for precise timing (0 = plain timer); capped at a quarter of the gap between requests, so it costs about a quarter of one core at most"),
-		method:   fs.String("method", http.MethodGet, "HTTP method"),
-		body:     fs.String("body", "", "request body; prefix with @ to read it from a file"),
 		arrivals: fs.String("arrivals", defaultArrivals, "how requests are spread within the rate: even (exact spacing) or poisson (random bursts)"),
 		seed:     fs.Uint64("seed", 0, "seed for -arrivals poisson, to repeat the same arrival times (0 picks one, and reports it)"),
 		jsonOut:  fs.String("json", "", "also write a JSON summary to this path ('-' writes only the JSON, to stdout)"),
@@ -65,15 +72,20 @@ func (r *requestFlags) arrival() (pacer.Arrivals, uint64, error) {
 
 // base is the runner config for url without a load profile.
 func (r *requestFlags) base(url string) (runner.Config, error) {
-	body, err := readBody(*r.body)
-	if err != nil {
-		return runner.Config{}, fmt.Errorf("cannot read -body: %w", err)
+	method, payload := http.MethodGet, []byte(nil)
+	if r.method != nil { // a replay has neither flag
+		method = strings.ToUpper(*r.method)
+		b, err := readBody(*r.body)
+		if err != nil {
+			return runner.Config{}, fmt.Errorf("cannot read -body: %w", err)
+		}
+		payload = b
 	}
 	return runner.Config{
 		URL:         url,
-		Method:      strings.ToUpper(*r.method),
+		Method:      method,
 		Header:      http.Header(r.headers),
-		Body:        body,
+		Body:        payload,
 		Workers:     *r.workers,
 		Timeout:     *r.timeout,
 		Spin:        *r.spin,

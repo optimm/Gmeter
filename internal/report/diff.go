@@ -151,6 +151,9 @@ func likeForLike(a, b Summary) []string {
 	case aa == "poisson" && a.Run.Seed != b.Run.Seed:
 		notes = append(notes, fmt.Sprintf("Poisson seed differs (A: %d, B: %d): the runs saw different bursts, so expect more run-to-run noise than usual", a.Run.Seed, b.Run.Seed))
 	}
+	if ra, rb := replayText(a.Run.Replay), replayText(b.Run.Replay); ra != rb {
+		differs("replay", ra, rb)
+	}
 	if a.Run.SpinSeconds != b.Run.SpinSeconds {
 		differs("pacing spin", spinText(a.Run.SpinSeconds), spinText(b.Run.SpinSeconds))
 	}
@@ -172,6 +175,18 @@ func arrivalsOf(s Summary) string {
 		return "even"
 	}
 	return s.Run.Arrivals
+}
+
+// replayText describes what a run replayed, for comparing two runs: "none" for
+// a run that sent one request over and over.
+func replayText(r *ReplayInfo) string {
+	if r == nil {
+		return "none"
+	}
+	if r.Timing == "recorded" {
+		return fmt.Sprintf("%s, %d requests, recorded timing at %gx", r.Source, r.Requests, r.Speed)
+	}
+	return fmt.Sprintf("%s, %d requests, fixed rate", r.Source, r.Requests)
 }
 
 // spinText names a pacing spin window; zero means the plain timer was used,

@@ -91,6 +91,22 @@ type RunInfo struct {
 	Arrivals        string  `json:"arrivals"`     // "even" or "poisson"; empty in older files, which were all even
 	Seed            uint64  `json:"seed"`         // Poisson arrivals only: the seed that reproduces the arrival times
 	StartedAt       string  `json:"started_at"`   // RFC 3339, UTC
+
+	// Replay is set when the run replayed a traffic log instead of sending one
+	// request over and over. In that case Method lists the methods in the trace.
+	Replay *ReplayInfo `json:"replay,omitempty"`
+}
+
+// ReplayInfo says what was replayed. Request bodies and headers from the trace
+// are never recorded.
+type ReplayInfo struct {
+	Source   string  `json:"source"`             // the trace's file name, without its directory
+	Format   string  `json:"format"`             // "jsonl" or "clf"
+	Requests int     `json:"requests"`           // requests in the trace after the method filter
+	Timing   string  `json:"timing"`             // "recorded" (the trace's own times) or "fixed rate"
+	Speed    float64 `json:"speed,omitempty"`    // recorded timing only: how much faster than recorded
+	Skipped  int     `json:"skipped,omitempty"`  // requests left out because their method was not allowed
+	Unparsed int     `json:"unparsed,omitempty"` // access-log lines that were not usable requests
 }
 
 // Point is one timeline window. Latencies are corrected, in milliseconds.

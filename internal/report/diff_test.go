@@ -253,3 +253,32 @@ func TestComparisonTextNamesTheFilesAndShowsTheNumbers(t *testing.T) {
 		}
 	}
 }
+
+// A replay of a traffic log and a hammer on one URL measure different things,
+// and two replays of different traces or at different speeds do too.
+func TestCompareFlagsDifferentReplays(t *testing.T) {
+	plain := mkSummary(100*time.Millisecond, 2)
+	replayOf := func(source string, requests int, timing string, speed float64) Summary {
+		s := mkSummary(100*time.Millisecond, 2)
+		s.Run.Replay = &ReplayInfo{Source: source, Format: "jsonl", Requests: requests, Timing: timing, Speed: speed}
+		return s
+	}
+	base := replayOf("monday.jsonl", 1200, "recorded", 1)
+
+	if got := notesOf(t, plain, base); !strings.Contains(got, "replay") || !strings.Contains(got, "monday.jsonl") {
+		t.Errorf("a plain run against a replay should be flagged, naming the trace:\n%s", got)
+	}
+	if got := notesOf(t, base, replayOf("monday.jsonl", 1200, "recorded", 1)); got != "" {
+		t.Errorf("the same replay twice should have no notes, got:\n%s", got)
+	}
+	for name, other := range map[string]Summary{
+		"another trace":    replayOf("tuesday.jsonl", 1200, "recorded", 1),
+		"a different size": replayOf("monday.jsonl", 900, "recorded", 1),
+		"another speed":    replayOf("monday.jsonl", 1200, "recorded", 2),
+		"a fixed rate":     replayOf("monday.jsonl", 1200, "fixed rate", 0),
+	} {
+		if got := notesOf(t, base, other); !strings.Contains(got, "replay") {
+			t.Errorf("%s should be flagged:\n%s", name, got)
+		}
+	}
+}

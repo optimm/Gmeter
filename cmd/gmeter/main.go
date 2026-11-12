@@ -46,6 +46,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "find" {
 		return runFind(ctx, args[1:], stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "replay" {
+		return runReplay(ctx, args[1:], stdout, stderr)
+	}
 
 	fs := flag.NewFlagSet("gmeter", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -110,10 +113,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if !*rf.quiet {
 		fmt.Fprintf(stderr, "gmeter: %s %s%s%s, up to %d in flight\n",
 			cfg.Method, shownURL, profileText(stages), arrivalsText(arrival, seed), cfg.Workers)
-		cfg.Progress = func(s runner.Snapshot) {
-			fmt.Fprintf(stderr, "[%5.1fs] %d scheduled, %d completed, %d failed, %d late | %s\n",
-				s.Elapsed.Seconds(), s.Scheduled, s.Completed, s.Failed, s.Late, windowText(s.Window))
-		}
+		cfg.Progress = progressTo(stderr)
 	}
 
 	started := time.Now().UTC()
@@ -139,7 +139,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		SpinSeconds:     cfg.Spin.Seconds(),
 		StartedAt:       started.Format(time.RFC3339),
 	}
-	if *rf.jsonOut == "-" {
+	return emit(summary, *rf.jsonOut, stdout, stderr)
+}
+
+// progressTo returns the live progress line printer for a run.
+func progressTo(stderr io.Writer) func(runner.Snapshot) {
+	return func(s runner.Snapshot) {
+		fmt.Fprintf(stderr, "[%5.1fs] %d scheduled, %d completed, %d failed, %d late | %s\n",
+			s.Elapsed.Seconds(), s.Scheduled, s.Completed, s.Failed, s.Late, windowText(s.Window))
+	}
+}
+
+// emit writes the finished run's report as -json asks: the text report (and a
+// JSON file too if a path was given), or only the JSON on stdout for "-". It
+// returns the exit code.
+func emit(summary report.Summary, jsonOut string, stdout, stderr io.Writer) int {
+	if jsonOut == "-" {
 		if err := summary.WriteJSON(stdout); err != nil {
 			fmt.Fprintf(stderr, "gmeter: writing JSON: %v\n", err)
 			return 1
@@ -150,9 +165,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "gmeter: writing report: %v\n", err)
 		return 1
 	}
-	if *rf.jsonOut != "" {
-		if err := writeJSONFile(*rf.jsonOut, summary); err != nil {
-			fmt.Fprintf(stderr, "gmeter: writing %s: %v\n", *rf.jsonOut, err)
+	if jsonOut != "" {
+		if err := writeJSONFile(jsonOut, summary); err != nil {
+			fmt.Fprintf(stderr, "gmeter: writing %s: %v\n", jsonOut, err)
 			return 1
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -33,6 +34,10 @@ func main() {
 // run is main without the process-global parts. It returns the exit code:
 // 0 success, 2 bad usage or configuration, 1 failure while running.
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "diff" { // a URL always has a scheme, so this cannot be one
+		return runDiff(args[1:], stdout, stderr)
+	}
+
 	fs := flag.NewFlagSet("gmeter", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var (
@@ -67,7 +72,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "gmeter: expected exactly one URL but got %d arguments (flags must come before the URL)\n", n)
 		return 2
 	}
-	url := fs.Arg(0)
+	target := fs.Arg(0)
 
 	reqBody, err := readBody(*body)
 	if err != nil {
@@ -76,28 +81,30 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	cfg := runner.Config{
-		URL:      url,
-		Method:   strings.ToUpper(*method),
-		Header:   http.Header(headers),
-		Body:     reqBody,
-		Rate:     *rate,
-		Duration: *duration,
-		Workers:  *workers,
-		Timeout:  *timeout,
+		URL:         target,
+		Method:      strings.ToUpper(*method),
+		Header:      http.Header(headers),
+		Body:        reqBody,
+		Rate:        *rate,
+		Duration:    *duration,
+		Workers:     *workers,
+		Timeout:     *timeout,
+		SampleEvery: sampleEvery, // the same windows whether or not progress is shown
 	}
+	shownURL := redactURL(cfg.URL) // anything printed or saved uses this, never cfg.URL
 	if !*quiet {
 		fmt.Fprintf(stderr, "gmeter: %s %s at %g rps for %v, up to %d in flight\n",
-			cfg.Method, cfg.URL, cfg.Rate, cfg.Duration, cfg.Workers)
-		cfg.SampleEvery = sampleEvery
+			cfg.Method, shownURL, cfg.Rate, cfg.Duration, cfg.Workers)
 		cfg.Progress = func(s runner.Snapshot) {
 			fmt.Fprintf(stderr, "[%5.1fs] %d scheduled, %d completed, %d failed, %d late | %s\n",
 				s.Elapsed.Seconds(), s.Scheduled, s.Completed, s.Failed, s.Late, windowText(s.Window))
 		}
 	}
 
+	started := time.Now().UTC()
 	res, err := runner.Run(ctx, cfg)
 	if err != nil {
-		fmt.Fprintf(stderr, "gmeter: %v\n", err)
+		fmt.Fprintf(stderr, "gmeter: %s\n", strings.ReplaceAll(err.Error(), cfg.URL, shownURL))
 		return 2
 	}
 	if ctx.Err() != nil {
@@ -105,6 +112,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	summary := report.Summarize(res, cfg.Rate)
+	summary.Run = report.RunInfo{
+		URL:             shownURL,
+		Method:          cfg.Method,
+		Workers:         cfg.Workers,
+		DurationSeconds: cfg.Duration.Seconds(),
+		TimeoutSeconds:  cfg.Timeout.Seconds(),
+		StartedAt:       started.Format(time.RFC3339),
+	}
 	if *jsonOut == "-" {
 		if err := summary.WriteJSON(stdout); err != nil {
 			fmt.Fprintf(stderr, "gmeter: writing JSON: %v\n", err)
@@ -123,6 +138,97 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+// redactURL hides a password embedded in the URL (user:pass@host). It is what
+// gets printed and saved: a load-test summary is the kind of file that ends up
+// in a CI log, a ticket or a repo. Query strings are kept as given, because
+// they are often part of what makes two runs comparable.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "(unparseable url)"
+	}
+	return u.Redacted()
+}
+
+// runDiff implements `gmeter diff [-threshold PERCENT] A.json B.json`. Exit
+// code: 0 compared (and within the threshold, if one was given), 1 the
+// threshold was exceeded, 2 bad usage or an unreadable file.
+func runDiff(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("gmeter diff", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	threshold := fs.Float64("threshold", 0, "exit 1 if B's corrected p99 is more than this many percent above A's")
+	fs.Usage = func() {
+		fmt.Fprintf(stderr, "Usage: gmeter diff [-threshold PERCENT] A.json B.json\n\n"+
+			"Compares two summaries saved with -json. Flags must come before the files.\n\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	gated := false
+	fs.Visit(func(f *flag.Flag) { gated = gated || f.Name == "threshold" }) // 0 is a meaningful threshold, so detect "was it given"
+	if fs.NArg() != 2 {
+		fmt.Fprintf(stderr, "gmeter diff: need exactly two summary files, got %d\n", fs.NArg())
+		fs.Usage()
+		return 2
+	}
+
+	var runs [2]report.Summary
+	for i := range runs {
+		s, err := loadSummary(fs.Arg(i))
+		if err != nil {
+			fmt.Fprintf(stderr, "gmeter diff: %v\n", err)
+			return 2
+		}
+		runs[i] = s
+	}
+	cmp, err := report.Compare(runs[0], runs[1])
+	if err != nil {
+		fmt.Fprintf(stderr, "gmeter diff: %v\n", err)
+		return 2
+	}
+	if err := cmp.WriteText(stdout, fs.Arg(0), fs.Arg(1)); err != nil {
+		fmt.Fprintf(stderr, "gmeter diff: writing report: %v\n", err)
+		return 1
+	}
+
+	if gated {
+		change := p99Change(cmp)
+		if cmp.Regressed(*threshold) {
+			fmt.Fprintf(stdout, "\nREGRESSION: corrected p99 changed by %s, over the %g%% threshold\n", change, *threshold)
+			return 1
+		}
+		fmt.Fprintf(stdout, "\nok: corrected p99 changed by %s, within the %g%% threshold\n", change, *threshold)
+	}
+	return 0
+}
+
+func loadSummary(path string) (report.Summary, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return report.Summary{}, err
+	}
+	defer f.Close()
+	s, err := report.ReadSummary(f)
+	if err != nil {
+		return report.Summary{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return s, nil
+}
+
+// p99Change returns the p99 row's change exactly as the table shows it.
+func p99Change(c report.Comparison) string {
+	for _, r := range c.Latency {
+		if r.Label == "p99" {
+			return r.Change
+		}
+	}
+	return "n/a"
 }
 
 // windowText formats the latest window: what the server is doing right now,

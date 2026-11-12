@@ -59,6 +59,7 @@ type Snapshot struct {
 	Scheduled uint64 // requests handed to workers so far
 	Completed uint64 // got an HTTP response (any status)
 	Failed    uint64 // transport-level failures (timeouts, refused, ...)
+	Late      uint64 // requests the scheduler reached after their due time (see Result.Late)
 
 	// Window covers only the time since the previous snapshot.
 	Window Window
@@ -90,6 +91,20 @@ type Result struct {
 	// how fast the server answers.
 	Corrected *hist.Histogram
 	Service   *hist.Histogram
+
+	// Generator health: is Gmeter itself keeping time?
+	//
+	// TimerLag is how far past its due time the scheduler woke up, for the
+	// requests it actually had to sleep for. It isolates timer and OS
+	// scheduling overshoot, plus GC pauses in this process.
+	//
+	// Late counts requests the scheduler reached when they were already
+	// overdue, so it had no chance to sleep. Either every worker was busy (the
+	// scheduler was blocked handing off the previous request: raise -workers,
+	// or the server is slow) or the rate is finer than this machine's timers
+	// can pace. Late requests are still measured from their due time.
+	TimerLag *hist.Histogram
+	Late     uint64
 }
 
 // Run executes the load test and blocks until it is finished or ctx is done.
@@ -131,6 +146,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// Scheduler. Blocking on a full channel is deliberate: the schedule keeps
 	// its place on the clock, so requests that had to wait are measured from
 	// when they were due, not from when a worker became free.
+	timerLag := hist.New() // written only by this goroutine
 	var n uint64
 loop:
 	for ; ; n++ {
@@ -138,8 +154,13 @@ loop:
 		if at.Sub(start) >= cfg.Duration {
 			break
 		}
-		if pacer.SleepUntil(schedCtx, at) != nil {
-			break
+		if time.Now().Before(at) {
+			if pacer.SleepUntil(schedCtx, at) != nil {
+				break
+			}
+			timerLag.Record(time.Since(at))
+		} else {
+			live.late.Add(1) // already behind schedule when we got here
 		}
 		select {
 		case jobs <- at:
@@ -167,6 +188,8 @@ loop:
 		Errors:    map[string]uint64{},
 		Corrected: hist.New(),
 		Service:   hist.New(),
+		TimerLag:  timerLag,
+		Late:      live.late.Load(),
 	}
 	for _, t := range tallies {
 		t.corrected.AddTo(res.Corrected)
@@ -234,7 +257,7 @@ func newClient(conns int) *http.Client {
 
 // counters are the only state shared between goroutines while a run is live.
 type counters struct {
-	scheduled, completed, failed atomic.Uint64
+	scheduled, completed, failed, late atomic.Uint64
 }
 
 func (c *counters) snapshot(start time.Time) Snapshot {
@@ -243,6 +266,7 @@ func (c *counters) snapshot(start time.Time) Snapshot {
 		Scheduled: c.scheduled.Load(),
 		Completed: c.completed.Load(),
 		Failed:    c.failed.Load(),
+		Late:      c.late.Load(),
 	}
 }
 

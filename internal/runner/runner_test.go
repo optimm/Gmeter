@@ -383,3 +383,65 @@ func TestWindowsPinpointWhenAStallHappened(t *testing.T) {
 		t.Errorf("worst window P99 = %v; the freeze must show up in some window", worst)
 	}
 }
+
+func TestRecordsTimerLagForRequestsItHadToWaitFor(t *testing.T) {
+	srv := okServer(t)
+
+	res, err := Run(context.Background(), baseConfig(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.TimerLag.Count() == 0 {
+		t.Fatal("TimerLag has no samples; the scheduler sleeps before almost every request")
+	}
+	// An idle machine wakes a timer within microseconds. 20ms means the generator itself is struggling.
+	if p := res.TimerLag.Quantile(0.5); p > 20*time.Millisecond {
+		t.Fatalf("median timer lag = %v, want well under 20ms", p)
+	}
+}
+
+func TestFastServerWithEnoughWorkersHasFewLateDispatches(t *testing.T) {
+	srv := okServer(t)
+
+	res, err := Run(context.Background(), baseConfig(srv.URL)) // 100 requests, 8 workers
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Late > 10 {
+		t.Fatalf("Late = %d of %d; a fast server with idle workers should almost never leave the scheduler behind", res.Late, res.Scheduled)
+	}
+}
+
+// When every worker is busy the scheduler blocks, so later requests are
+// already overdue by the time it reaches them. That is saturation, and it has
+// to be visible both live and in the result.
+func TestSaturatedWorkersShowUpAsLateDispatches(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(30 * time.Millisecond)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := baseConfig(srv.URL)
+	cfg.Rate, cfg.Duration, cfg.Workers = 100, 300*time.Millisecond, 1 // 30 requests, 1 slow worker
+	cfg.ProgressEvery = 100 * time.Millisecond
+	var mu sync.Mutex
+	var lastLive uint64
+	cfg.Progress = func(s Snapshot) {
+		mu.Lock()
+		lastLive = s.Late
+		mu.Unlock()
+	}
+
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Late < 15 {
+		t.Fatalf("Late = %d of %d, want more than half to be late with one 30ms worker at 100 rps", res.Late, res.Scheduled)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if lastLive == 0 {
+		t.Fatal("Snapshot.Late stayed 0; saturation must be visible while the run is still going")
+	}
+}

@@ -34,6 +34,10 @@ type Comparison struct {
 	Endpoints    []EndpointRow
 	OnlyA, OnlyB []string
 
+	// Phases compares where the time of the requests that got a response went,
+	// in the order a request goes through the phases (see runner.PhaseNames).
+	Phases []PhaseRow
+
 	a, b Summary
 }
 
@@ -75,6 +79,16 @@ func Compare(a, b Summary) (Comparison, error) {
 			has = "B"
 		}
 		c.Notes = append(c.Notes, fmt.Sprintf("only %s has a per-endpoint breakdown, so endpoints are not compared", has))
+	}
+	switch pa, pb := len(a.Phases) > 0, len(b.Phases) > 0; {
+	case pa && pb:
+		c.Phases = comparePhases(a.Phases, b.Phases)
+	case pa != pb:
+		has := "A"
+		if pb {
+			has = "B"
+		}
+		c.Notes = append(c.Notes, fmt.Sprintf("only %s has phase timings, so phases are not compared", has))
 	}
 	c.Rows = []Row{
 		row("achieved rps", a.AchievedRPS, b.AchievedRPS, func(v float64) string { return fmt.Sprintf("%.1f", v) }),
@@ -125,6 +139,7 @@ func (c Comparison) WriteText(w io.Writer, nameA, nameB string) error {
 		fmt.Fprintf(&b, "  slower than A's p%.4g (%s): %.1f%%   (at most %.1f%% if nothing changed)\n",
 			s.Quantile*100, FormatDuration(s.Value), s.Share*100, (1-s.Quantile)*100)
 	}
+	writePhaseDiff(&b, c)
 	writeEndpointDiff(&b, c)
 
 	_, err := io.WriteString(w, b.String())

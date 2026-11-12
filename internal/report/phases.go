@@ -126,22 +126,39 @@ func shownIndex(phase string) int {
 	return 4 // transfer
 }
 
-// perRequest is the time an answered request of this endpoint spent in each of
-// shownPhases, on average: a phase only some requests had counts as zero for
-// the rest, so the columns add up to the mean latency of the answered requests.
-// answered is how many requests that is; it is zero, and so are the times, if
-// there are no phases.
-func perRequest(phases []PhaseMean) (v [len(shownPhases)]float64, answered uint64) {
+// answeredBy is how many requests the phases are of: every request that got a
+// response has a queue phase. It is zero if there are no phases.
+func answeredBy(phases []PhaseMean) uint64 {
 	for _, p := range phases {
-		if p.Phase == "queue" { // every answered request has one
-			answered = p.Count
+		if p.Phase == "queue" {
+			return p.Count
 		}
 	}
+	return 0
+}
+
+// perRequestMs is the time a request of the answered ones spent in this phase,
+// on average. A phase only some requests had counts as zero for the rest, so
+// across the phases these add up to the mean latency of the answered requests.
+func (p PhaseMean) perRequestMs(answered uint64) float64 {
 	if answered == 0 {
-		return v, 0
+		return 0
 	}
+	return float64(p.Count) * p.MeanMs / float64(answered)
+}
+
+// perRequest is the time an answered request of this endpoint spent in each of
+// shownPhases, on average (see PhaseMean.perRequestMs); answered is how many
+// requests that is. Both are zero if there are no phases.
+func perRequest(phases []PhaseMean) (v [len(shownPhases)]float64, answered uint64) {
+	answered = answeredBy(phases)
 	for _, p := range phases {
-		v[shownIndex(p.Phase)] += float64(p.Count) * p.MeanMs / float64(answered)
+		v[shownIndex(p.Phase)] += p.perRequestMs(answered)
 	}
 	return v, answered
+}
+
+// mean is the run's phase seen as an endpoint's: its count, mean and share.
+func (p PhaseSummary) mean() PhaseMean {
+	return PhaseMean{Phase: p.Phase, Count: p.Count, MeanMs: p.MeanMs, SharePct: p.SharePct}
 }

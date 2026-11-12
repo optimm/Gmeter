@@ -51,6 +51,14 @@ type Config struct {
 	Workers  int           // max requests in flight (== max connections)
 	Timeout  time.Duration // per request; default 30s
 
+	// Spin is how long before each request's due time the scheduler stops
+	// sleeping and busy-waits instead. Zero uses a plain timer, which on some
+	// systems (macOS especially) wakes milliseconds late, and that lateness
+	// counts as request latency. The cost is up to Spin of one CPU core's time
+	// per request, and never more than a quarter of the gap between requests,
+	// so about a quarter of one core at most; see pacer.WaitUntil and CapSpin.
+	Spin time.Duration
+
 	// SampleEvery is the length of one timeline window (default 1s). The
 	// timeline is always recorded; Progress, if set, is also called once per
 	// window with live counters.
@@ -169,7 +177,11 @@ loop:
 			break
 		}
 		if time.Now().Before(at) {
-			if pacer.SleepUntil(schedCtx, at) != nil {
+			var gap time.Duration // to the previous request; the first one is due at the start
+			if n > 0 {
+				gap = at.Sub(sched.At(n - 1))
+			}
+			if pacer.WaitUntil(schedCtx, at, pacer.CapSpin(cfg.Spin, gap)) != nil {
 				break
 			}
 			timerLag.Record(time.Since(at))
@@ -234,6 +246,9 @@ func (c Config) normalize() (Config, error) {
 		return c, fmt.Errorf("runner: sample interval must not be negative, got %v", c.SampleEvery)
 	case c.SampleEvery == 0:
 		c.SampleEvery = defaultSampleEvery
+	}
+	if c.Spin < 0 {
+		return c, fmt.Errorf("runner: spin must not be negative, got %v", c.Spin)
 	}
 	if _, err := pacer.New(time.Time{}, c.Rate); err != nil {
 		return c, err

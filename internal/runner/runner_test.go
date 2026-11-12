@@ -275,6 +275,7 @@ func TestRejectsInvalidConfig(t *testing.T) {
 		"empty url":        func(c *Config) { c.URL = "" },
 		"non-http scheme":  func(c *Config) { c.URL = "ftp://example.com/x" },
 		"negative timeout": func(c *Config) { c.Timeout = -time.Second },
+		"negative spin":    func(c *Config) { c.Spin = -time.Microsecond },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -397,6 +398,28 @@ func TestRecordsTimerLagForRequestsItHadToWaitFor(t *testing.T) {
 	// An idle machine wakes a timer within microseconds. 20ms means the generator itself is struggling.
 	if p := res.TimerLag.Quantile(0.5); p > 20*time.Millisecond {
 		t.Fatalf("median timer lag = %v, want well under 20ms", p)
+	}
+}
+
+// Without spinning, a timer wakes late by an amount the OS picks (about 2ms at
+// the median on macOS for a 100 rps schedule), and all of it is charged to the
+// request as latency. The scheduler must use the spin window to remove it.
+func TestSpinMakesTheSchedulerWakeOnTime(t *testing.T) {
+	srv := okServer(t)
+	cfg := baseConfig(srv.URL)
+	cfg.Rate = 100 // one every 10ms: long enough sleeps for a timer to overshoot
+	cfg.Duration = time.Second
+	cfg.Spin = 200 * time.Microsecond
+
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.TimerLag.Count() == 0 {
+		t.Fatal("TimerLag has no samples")
+	}
+	if p := res.TimerLag.Quantile(0.5); p > 250*time.Microsecond {
+		t.Fatalf("median timer lag with Spin = %v, want < 250µs", p)
 	}
 }
 

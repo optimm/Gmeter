@@ -73,6 +73,11 @@ func Compare(a, b Summary) (Comparison, error) {
 	switch ea, eb := len(a.Endpoints) > 0, len(b.Endpoints) > 0; {
 	case ea && eb:
 		c.Endpoints, c.OnlyA, c.OnlyB = compareEndpoints(a.Endpoints, b.Endpoints)
+		if rose, judged, ok := c.SharedRise(); ok {
+			c.Notes = append(c.Notes, fmt.Sprintf(
+				"%d of %d judged endpoints' p99 rose by more than %g%% at once: that looks more like one shared cause (a saturated server, or a pool or dependency every endpoint uses) than %d separate regressions, and a saturated run cannot say which endpoint caused it; they are only separable when the server is not saturated",
+				rose, judged, SharedRisePct, rose))
+		}
 	case ea != eb:
 		has := "A"
 		if eb {

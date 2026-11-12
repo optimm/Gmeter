@@ -172,6 +172,36 @@ func (c Comparison) EndpointsErrorGated() int {
 	return n
 }
 
+// SharedRisePct, SharedRiseFraction and SharedRiseMinEndpoints say when a diff
+// looks like one shared cause moving every endpoint, not one endpoint's own
+// regression: at least SharedRiseMinEndpoints endpoints judged, and at least
+// SharedRiseFraction of them with a p99 more than SharedRisePct percent up. They
+// are a judgement, not a measurement: in three saved pairs a single slow
+// endpoint moved 1 of 3 endpoints, moderate load effects 0 or 1 of 3, and a
+// saturated server all 3 (by 5,600 to 8,200%).
+const (
+	SharedRisePct          = 50.0
+	SharedRiseFraction     = 0.75
+	SharedRiseMinEndpoints = 3
+)
+
+// SharedRise is how many of the endpoints the p99 gate can judge rose by more
+// than SharedRisePct percent, and how many it judged; ok is whether that looks
+// like one shared cause (see SharedRisePct).
+func (c Comparison) SharedRise() (rose, judged int, ok bool) {
+	for _, r := range c.Endpoints {
+		if r.Few || math.IsNaN(r.P99ChangePct) {
+			continue
+		}
+		judged++
+		if r.P99ChangePct > SharedRisePct {
+			rose++
+		}
+	}
+	ok = judged >= SharedRiseMinEndpoints && float64(rose) >= SharedRiseFraction*float64(judged)
+	return rose, judged, ok
+}
+
 // EndpointsGated is how many endpoints EndpointRegressions can judge. Zero means
 // a gate on endpoints would pass whatever happened, which is not the same as
 // the endpoints being fine.

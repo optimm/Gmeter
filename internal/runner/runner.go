@@ -324,7 +324,7 @@ loop:
 		TimerLag:  timerLag,
 		Late:      live.late.Load(),
 		Timeline:  timeline,
-		Labels:    labelResults(cfg.labels, scheduledBy, labels),
+		Labels:    labelResults(cfg.labels, scheduledBy, labels, cfg.Phases),
 	}
 	if phases != nil {
 		res.Phases = phases.results()
@@ -601,6 +601,7 @@ type partTally struct {
 	mu                 sync.Mutex
 	corrected, service *hist.Histogram
 	failed, badStatus  uint64
+	phases             phaseSums // only a label's, and only when phases are on
 }
 
 func (p *partTally) record(corrected, service time.Duration) {
@@ -610,6 +611,12 @@ func (p *partTally) record(corrected, service time.Duration) {
 	}
 	p.corrected.Record(corrected)
 	p.service.Record(service)
+	p.mu.Unlock()
+}
+
+func (p *partTally) recordPhases(t phaseTimes) {
+	p.mu.Lock()
+	p.phases.add(t)
 	p.mu.Unlock()
 }
 
@@ -710,7 +717,11 @@ func (w *worker) do(ctx context.Context, j job) {
 	w.live.completed.Add(1)
 	w.record(j, intended, sent, finished)
 	if clock != nil {
-		w.phases.record(clock.split(intended, sent, finished))
+		split := clock.split(intended, sent, finished)
+		w.phases.record(split)
+		if l := w.label(j); l != nil {
+			l.recordPhases(split)
+		}
 	}
 	if status < 200 || status >= 400 {
 		w.stages[j.stage].bad()

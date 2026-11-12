@@ -28,6 +28,11 @@ type LabelResult struct {
 	// label's latency also reflects what it waited behind, not just its own cost.
 	Corrected *hist.Histogram
 	Service   *hist.Histogram
+	// Phases says where this label's time went, one entry per phase in PhaseNames
+	// order. It is nil unless Config.Phases was set. Only totals are kept, not
+	// distributions: a run's phases are about 1.8MB, and giving each of up to
+	// MaxLabels labels the same would take hundreds.
+	Phases []PhaseTotal
 }
 
 // indexLabels sets each request's label index and returns the distinct labels
@@ -64,7 +69,7 @@ func indexLabels(reqs []Request) ([]string, error) {
 
 // labelResults gathers the per-label figures, busiest label first and equally
 // busy ones in label order. The workers must have exited.
-func labelResults(labels []string, scheduled []uint64, tallies []partTally) []LabelResult {
+func labelResults(labels []string, scheduled []uint64, tallies []partTally, phases bool) []LabelResult {
 	out := make([]LabelResult, len(labels))
 	for i, name := range labels {
 		t := &tallies[i]
@@ -75,6 +80,9 @@ func labelResults(labels []string, scheduled []uint64, tallies []partTally) []La
 			BadStatus: t.badStatus,
 			Corrected: t.corrected,
 			Service:   t.service,
+		}
+		if phases {
+			r.Phases = t.phases.totals()
 		}
 		if r.Corrected == nil { // no response was ever recorded for this label
 			r.Corrected, r.Service = hist.New(), hist.New()

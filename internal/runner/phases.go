@@ -173,6 +173,45 @@ func (t *phaseTally) record(p phaseTimes) {
 	t.mu.Unlock()
 }
 
+// PhaseTotal is the time a set of requests (one label's) spent in one phase,
+// added up. Unlike PhaseResult it keeps no distribution, only the total, which
+// is all that is needed to say where a label's time went and costs a few bytes
+// instead of a quarter of a megabyte.
+type PhaseTotal struct {
+	Phase string
+	// Requests is how many requests had the phase, as for PhaseResult.Samples.
+	Requests uint64
+	// Total is the time they spent in it. Over all phases the totals add up to
+	// the label's corrected latencies, added up.
+	Total time.Duration
+}
+
+// phaseSums accumulates PhaseTotals, a phase at a time; it has no lock of its
+// own.
+type phaseSums struct {
+	requests [numPhases]uint64
+	total    [numPhases]time.Duration
+}
+
+// add records one request, counting a connection phase only if it happened, as
+// phaseTally.record does.
+func (s *phaseSums) add(p phaseTimes) {
+	for i, d := range p.list() {
+		if d > 0 || !optionalPhase(i) {
+			s.requests[i]++
+			s.total[i] += d
+		}
+	}
+}
+
+func (s *phaseSums) totals() []PhaseTotal {
+	out := make([]PhaseTotal, numPhases)
+	for i, name := range PhaseNames {
+		out[i] = PhaseTotal{Phase: name, Requests: s.requests[i], Total: s.total[i]}
+	}
+	return out
+}
+
 // optionalPhase reports whether phase i happens only to some requests.
 func optionalPhase(i int) bool { return i >= 1 && i <= 3 } // dns, connect, tls
 

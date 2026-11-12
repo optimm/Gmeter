@@ -25,6 +25,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -54,6 +56,20 @@ type Config struct {
 	Arrivals pacer.Arrivals // how requests are spread within the rate: Even (the default) or Poisson
 	Seed     uint64         // random seed for Poisson arrivals; the same seed gives the same arrival times
 
+	// Offsets replaces the profile with recorded times: request i is due
+	// Offsets[i] after the start (non-negative, in order). Use it to replay a
+	// traffic log with its own timing. It excludes Rate, Duration, Stages,
+	// Arrivals and Seed, since the arrival times are already decided.
+	Offsets []time.Duration
+
+	// Requests, if set, says what to send instead of URL, Method, Header and
+	// Body alone: the i-th request of the schedule sends Requests[i mod
+	// len(Requests)], so a trace shorter than the schedule is replayed over and
+	// over. URL then names the server (and an optional path prefix) that the
+	// requests' targets are appended to. Method, Header and Body are the
+	// defaults for what a request does not say itself.
+	Requests []Request
+
 	Workers int           // max requests in flight (== max connections)
 	Timeout time.Duration // per request; default 30s
 
@@ -70,6 +86,16 @@ type Config struct {
 	// window with live counters.
 	SampleEvery time.Duration
 	Progress    func(Snapshot)
+}
+
+// Request is one request of a replayed trace.
+type Request struct {
+	Method string      // empty uses Config.Method
+	Target string      // path and query, starting with "/", appended to Config.URL
+	Header http.Header // added to Config.Header; a name given here replaces the global value
+	Body   []byte      // empty uses Config.Body
+
+	url string // Config.URL with Target appended, filled in by normalize
 }
 
 // Snapshot is a lock-free view of a run in progress.
@@ -173,7 +199,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	defer client.CloseIdleConnections()
 
 	start := time.Now()
-	sched, err := pacer.New(start, cfg.Stages, cfg.Arrivals, cfg.Seed)
+	sched, err := newSource(start, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -206,6 +232,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	timerLag := hist.New() // written only by this goroutine
 	var dropped uint64
 	var prev time.Time // when the previous request was due
+	var seq uint64     // index in the schedule of the request being handled
 loop:
 	for {
 		at, stage, ok := sched.Next()
@@ -228,7 +255,8 @@ loop:
 		}
 		prev = at
 		select {
-		case jobs <- job{at: at, stage: stage}:
+		case jobs <- job{at: at, stage: stage, seq: seq}:
+			seq++
 			live.scheduled.Add(1)
 			scheduledIn[stage]++
 		case <-schedCtx.Done():
@@ -292,6 +320,19 @@ loop:
 	return res, nil
 }
 
+// source is where due times come from: a computed Schedule or a recorded Replay.
+type source interface {
+	Next() (at time.Time, stage int, ok bool)
+	Duration() time.Duration
+}
+
+func newSource(start time.Time, cfg Config) (source, error) {
+	if len(cfg.Offsets) > 0 {
+		return pacer.NewReplay(start, cfg.Offsets)
+	}
+	return pacer.New(start, cfg.Stages, cfg.Arrivals, cfg.Seed)
+}
+
 func (c Config) normalize() (Config, error) {
 	if c.Method == "" {
 		c.Method = http.MethodGet
@@ -312,13 +353,33 @@ func (c Config) normalize() (Config, error) {
 		return c, fmt.Errorf("runner: spin must not be negative, got %v", c.Spin)
 	}
 	switch {
+	case len(c.Offsets) > 0:
+		if len(c.Stages) > 0 || c.Rate != 0 || c.Duration != 0 {
+			return c, fmt.Errorf("runner: Offsets already say when requests are due: do not also set Rate, Duration or Stages")
+		}
+		if c.Arrivals != pacer.Even || c.Seed != 0 {
+			return c, fmt.Errorf("runner: Offsets already fix the arrival times: Arrivals and Seed have no effect with them")
+		}
+		replay, err := pacer.NewReplay(time.Time{}, c.Offsets)
+		if err != nil {
+			return c, err
+		}
+		span := replay.Duration()
+		if span <= 0 {
+			return c, fmt.Errorf("runner: the Offsets span no time (every request is due at once): use Rate and Duration instead")
+		}
+		// One stage that describes the replay, for reporting: its average rate.
+		rate := float64(replay.Len()) / span.Seconds()
+		c.Stages = pacer.ConstantRate(rate, span)
 	case len(c.Stages) > 0 && (c.Rate != 0 || c.Duration != 0):
 		return c, fmt.Errorf("runner: set either Rate and Duration or Stages, not both")
 	case len(c.Stages) == 0:
 		c.Stages = pacer.ConstantRate(c.Rate, c.Duration)
 	}
-	if _, err := pacer.New(time.Time{}, c.Stages, c.Arrivals, c.Seed); err != nil {
-		return c, err
+	if len(c.Offsets) == 0 {
+		if _, err := pacer.New(time.Time{}, c.Stages, c.Arrivals, c.Seed); err != nil {
+			return c, err
+		}
 	}
 	if c.Workers < 1 {
 		return c, fmt.Errorf("runner: workers must be at least 1, got %d", c.Workers)
@@ -332,6 +393,27 @@ func (c Config) normalize() (Config, error) {
 	}
 	if _, err := http.NewRequest(c.Method, c.URL, nil); err != nil {
 		return c, fmt.Errorf("runner: invalid request: %w", err)
+	}
+	if len(c.Requests) > 0 {
+		if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+			return c, fmt.Errorf("runner: with Requests the url is a base that targets are appended to, so it must not have a query or fragment, got %q", c.URL)
+		}
+		base := strings.TrimSuffix(c.URL, "/")
+		c.Requests = slices.Clone(c.Requests) // the caller's slice is not ours to modify
+		for i := range c.Requests {
+			r := &c.Requests[i]
+			if !strings.HasPrefix(r.Target, "/") {
+				return c, fmt.Errorf("runner: request %d: target must be a path starting with \"/\", got %q", i+1, r.Target)
+			}
+			r.url = base + r.Target
+			method := r.Method
+			if method == "" {
+				method = c.Method
+			}
+			if _, err := http.NewRequest(method, r.url, nil); err != nil {
+				return c, fmt.Errorf("runner: request %d: invalid request: %w", i+1, err)
+			}
+		}
 	}
 	return c, nil
 }
@@ -468,6 +550,7 @@ func newTally() *tally {
 type job struct {
 	at    time.Time // when it was due: latency is measured from here
 	stage int       // the stage of the profile it was due in
+	seq   uint64    // its index in the schedule: which of the Requests to send
 }
 
 // stageTally is one stage's share of the results. Every worker records into
@@ -498,16 +581,38 @@ func (w *worker) do(ctx context.Context, j job) {
 	reqCtx, cancel := context.WithTimeout(ctx, w.cfg.Timeout)
 	defer cancel()
 
-	var body io.Reader
-	if len(w.cfg.Body) > 0 {
-		body = bytes.NewReader(w.cfg.Body)
+	method, target, extra, payload := w.cfg.Method, w.cfg.URL, http.Header(nil), w.cfg.Body
+	if n := uint64(len(w.cfg.Requests)); n > 0 {
+		r := &w.cfg.Requests[j.seq%n]
+		target, extra = r.url, r.Header
+		if r.Method != "" {
+			method = r.Method
+		}
+		if len(r.Body) > 0 {
+			payload = r.Body
+		}
 	}
-	req, err := http.NewRequestWithContext(reqCtx, w.cfg.Method, w.cfg.URL, body)
+	var body io.Reader
+	if len(payload) > 0 {
+		body = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(reqCtx, method, target, body)
 	if err != nil { // validated up front; defensive only
 		w.fail("other", j.stage)
 		return
 	}
 	req.Header = w.cfg.Header.Clone()
+	if len(extra) > 0 {
+		if req.Header == nil {
+			req.Header = http.Header{}
+		}
+		for name, values := range extra {
+			req.Header.Del(name) // a header the request names replaces the global one
+			for _, v := range values {
+				req.Header.Add(name, v)
+			}
+		}
+	}
 
 	sent := time.Now()
 	resp, err := w.client.Do(req)

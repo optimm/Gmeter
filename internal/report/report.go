@@ -66,6 +66,10 @@ type Summary struct {
 	// totals above.
 	Endpoints []EndpointSummary `json:"endpoints,omitempty"`
 
+	// VsLog says how the responses of a replay compare with the statuses its
+	// traffic log recorded; the key is left out when no request had one.
+	VsLog *VsLog `json:"vs_log,omitempty"`
+
 	// Timeline has one point per sample window; its points add up to the totals
 	// above. Histograms holds the full latency distributions, which is what
 	// makes a saved run comparable and mergeable later.
@@ -217,6 +221,10 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 			"%d of %d requests (%.0f%%) were dispatched more than 1ms after their due time: every worker was busy (raise -workers, or the server is slow) or the generator was starved of CPU; their latency still counts from the due time",
 			s.Generator.Late, s.Scheduled, frac*100))
 	}
+	s.VsLog = vsLog(res.Logged)
+	if w := s.VsLog.warning(); w != "" {
+		s.Warnings = append(s.Warnings, w)
+	}
 	if n := res.Errors["tls"]; n > 0 {
 		s.Warnings = append(s.Warnings, fmt.Sprintf(
 			"%d of %d requests failed in the TLS handshake (the server's certificate was refused, or it did not speak TLS): trust its certificate authority with -cacert FILE, or skip verification with -insecure",
@@ -298,6 +306,7 @@ func (s Summary) WriteText(w io.Writer) error {
 		}
 		fmt.Fprintf(&b, "errors     %s\n", strings.Join(parts, "   "))
 	}
+	writeVsLog(&b, s.VsLog)
 	fmt.Fprintf(&b, "generator  timer lag p99 %s, max %s   late %d (%.1f%%)\n",
 		FormatDuration(time.Duration(s.Generator.TimerLagP99Ms*float64(time.Millisecond))),
 		FormatDuration(time.Duration(s.Generator.TimerLagMaxMs*float64(time.Millisecond))),
@@ -314,6 +323,7 @@ func (s Summary) WriteText(w io.Writer) error {
 	writeStages(&b, s.Stages)
 	writeEndpoints(&b, s.Endpoints)
 	writeEndpointPhases(&b, s.Endpoints)
+	writeEndpointVsLog(&b, s.Endpoints)
 	writeTimeline(&b, s.Timeline)
 
 	_, err := io.WriteString(w, b.String())

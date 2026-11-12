@@ -23,6 +23,11 @@ type EndpointSummary struct {
 	// through them; the key is left out when phases were not recorded or nothing
 	// was answered.
 	Phases []PhaseMean `json:"phases,omitempty"`
+
+	// LogCompared and LogDifferent are the responses that had a logged status to
+	// compare with and those of another class (see VsLog); left out when none had.
+	LogCompared  uint64 `json:"log_compared,omitempty"`
+	LogDifferent uint64 `json:"log_different,omitempty"`
 }
 
 // endpointSummaries digests the per-label results, or returns nil when the run
@@ -41,6 +46,9 @@ func endpointSummaries(labels []runner.LabelResult) []EndpointSummary {
 			Corrected: digest(l.Corrected),
 			Service:   digest(l.Service),
 			Phases:    phaseMeans(l.Phases),
+
+			LogCompared:  l.LoggedCompared,
+			LogDifferent: l.LoggedDiffer,
 		}
 	}
 	return out

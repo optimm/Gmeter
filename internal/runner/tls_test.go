@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync"
 	"testing"
 )
 
@@ -97,8 +98,13 @@ func TestSkippingVerificationLetsRequestsToAnUntrustedServerThrough(t *testing.T
 // A TLS configuration must not bring HTTP/2 back: the phases depend on a
 // connection serving one request at a time.
 func TestATLSConfigurationStaysOnHTTP11(t *testing.T) {
-	var proto string
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { proto = r.Proto }))
+	var mu sync.Mutex
+	var protos []string
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		protos = append(protos, r.Proto)
+		mu.Unlock()
+	}))
 	srv.EnableHTTP2 = true
 	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
 	srv.StartTLS()
@@ -110,8 +116,15 @@ func TestATLSConfigurationStaysOnHTTP11(t *testing.T) {
 	if _, err := Run(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	if proto != "HTTP/1.1" {
-		t.Errorf("the server saw %s, want HTTP/1.1 although it offers HTTP/2", proto)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(protos) == 0 {
+		t.Fatal("the server saw no request")
+	}
+	for _, p := range protos {
+		if p != "HTTP/1.1" {
+			t.Fatalf("the server saw %s, want HTTP/1.1 although it offers HTTP/2", p)
+		}
 	}
 }
 

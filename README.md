@@ -29,6 +29,9 @@ gmeter -rate 600 -duration 60s -arrivals poisson http://localhost:8080/health
 
 # what is the most it can take while keeping p99 under 50ms?
 gmeter find -slo p99=50ms http://localhost:8080/health
+
+# send the requests of a real traffic log, at the pace they were recorded
+gmeter replay -file access.log http://staging:8080
 ```
 
 Flags must come before the URL.
@@ -244,6 +247,104 @@ interrupted), `2` bad usage.
 `-workers`, `-timeout`, `-method`, `-H`, `-body`, `-spin`, `-arrivals` (default `poisson` here), `-seed`, `-json` and
 `-quiet` work as for a plain run. Each trial uses the seed plus its number, so a printed seed reproduces the search.
 
+## Replaying real traffic (`gmeter replay`)
+
+One URL at a steady rate is rarely what production sees. `gmeter replay` takes a log of real requests and sends
+them, each one when it was recorded, so the real mix of endpoints and the real bursts reach the server. It is
+still open loop: every request is due at its recorded time whatever the server is doing, and latency is
+measured from that time.
+
+```bash
+gmeter replay -file traffic.jsonl http://staging:8080            # at the recorded pace
+gmeter replay -file access.log -speed 2 http://staging:8080      # twice as fast as recorded
+gmeter replay -file traffic.jsonl -rate 500 -duration 2m http://staging:8080   # ignore the times, 500 rps
+```
+
+The URL is only the server (scheme, host, and an optional path prefix such as `http://host/api`); the log's paths
+are appended to it. A log can therefore never send a request to another host.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-file` | | the traffic to replay (required) |
+| `-format` | `auto` | `jsonl`, `clf` (an access log) or `auto`: a first character of `{` means JSON Lines |
+| `-speed` | `1` | recorded timing only: `2` replays twice as fast as recorded, `0.5` half as fast |
+| `-rate` | | send at this constant rate instead of at the recorded times; the trace is cycled in order |
+| `-duration` | one pass | with `-rate`: how long to keep sending; by default each request is sent once |
+| `-methods` | `GET,HEAD` | which methods to replay, or `all` (see below) |
+| `-arrivals` / `-seed` | `poisson` | access logs and `-rate` only; see below |
+
+`-workers`, `-timeout`, `-spin`, `-H`, `-json` and `-quiet` work as for a plain run. `-H` headers go with every
+replayed request, which is how to supply credentials (an access log has no headers). Headers in a JSON Lines
+trace are sent too and replace a `-H` of the same name. No headers or bodies are saved in the results. Exit code
+is `0` when it ran, `1` if the report could not be written, and `2` for bad usage or an unreadable trace.
+
+### Trace formats
+
+**JSON Lines**: one object per line. Only `path` is required.
+
+```json
+{"at": 0.25, "method": "POST", "path": "/orders?id=7", "headers": {"Content-Type": "application/json"}, "body": "{\"qty\":2}"}
+```
+
+`at` is when the request was made, in seconds from any fixed point (only the differences matter): give it to every
+request or to none. Unknown fields are an error, so a misspelt `header` does not silently send the wrong thing.
+Bodies are text. Without `at` the trace has no pace of its own, so `-rate` is required.
+
+**Access log**: the common and combined log formats that nginx, Apache, HAProxy and most proxies write. Each line
+gives a method, a path and the second it was logged in. Lines that are not usable requests (garbage, a `"-"`
+request from a connection that sent nothing, a proxy-style absolute URL) are counted and reported, not fatal.
+An access log has no request bodies, so a replayed `POST` has none.
+
+### What it does with the times
+
+- **Recorded timing** (the default) sends request *i* at its recorded time, relative to the first one.
+- **An access log only knows the second** a request was logged in. What survives is how many requests there were in
+  each second, so Gmeter spreads them inside it: `-arrivals poisson` (the default) places them at random points,
+  which is what independent clients look like given only a count, and `-seed` repeats it; `-arrivals even` spaces
+  them exactly. Exact JSON Lines times need no spreading, so setting either flag for them is an error.
+- **`-rate`** discards the times and sends the trace in order at a constant rate, cycling if the run is longer
+  than the trace. `-arrivals` and `-seed` then work as in a plain run.
+
+### It will not write to your server unless you say so
+
+A replay sends whatever the log says. A log full of `POST`, `PUT` and `DELETE` would create, change and delete
+things on the server under test, so the default `-methods GET,HEAD` leaves those requests out, says how many it
+skipped, and records that in the JSON. Pass `-methods all` or a list such as `-methods GET,POST` when that is
+what you want, against an environment where it is safe. The skipped requests' times go with them, so the
+replayed load is the filtered load.
+
+### What the pace changes
+
+The same 4000 requests (10 seconds; every second 800ms at 200 rps and then a 200ms burst at 1200 rps, 400 rps on
+average) against a toy server that handles about 800 rps:
+
+| How the requests were sent | p50 | p99 |
+|---|---|---|
+| flat 400 rps, evenly spaced | 5.2ms | 5.4ms |
+| flat 400 rps, Poisson | 5.4ms | 9.4ms |
+| the same traffic as an access log (one-second times), spread as Poisson | 5.7ms | 13.6ms |
+| the same traffic as JSON Lines, recorded times | 31.5ms | 121.1ms |
+
+Single runs on a laptop that was also running other things, so trust the ordering and the rough size of the gaps, not the
+exact numbers. The point is the last row: the average rate is far below what the server can do, and the p99 is
+still more than 20 times the flat run's, because the bursts queue. `gmeter diff` notes when two runs replayed different
+traces, speeds or timings, since they are not like-for-like.
+
+### How far to trust a replay
+
+- **One-second logs hide short bursts.** The access-log row above recovers some of the burstiness (13.6ms against
+  5.4ms) but not the 200ms bursts, which are only visible in the millisecond times of the JSON Lines trace. If the
+  bursts matter, record the times at millisecond resolution.
+- **Logged times are completion times.** A server writes the line when the request finishes, so the time is when
+  it was answered, not when it arrived. Lines can also be slightly out of order, so the trace is sorted.
+- **Status codes are not compared with the logged ones.** A replayed id that does not exist in the target
+  environment returns `404`, which counts as a bad status. Check that count before reading the latency.
+- **Cycling warms caches.** With `-rate`, a trace shorter than the run is sent over and over, and later passes
+  are served from warmer caches than the first. Use a trace at least as long as the run.
+- **There is no per-endpoint breakdown yet.** Latency is for the whole mix. A burst larger than `-workers` in
+  flight shows up as late dispatches in the generator line.
+- The whole trace is read into memory before the run starts.
+
 ## Comparing runs
 
 Save each run with `-json`, then compare them:
@@ -299,7 +400,10 @@ run-to-run noise, so treat small differences with suspicion and repeat the runs.
 
 ### What the JSON contains
 
-(For a plain run. `gmeter find -json` saves the target, the result with its caveats as flags, and every trial.)
+(For a plain run. `gmeter find -json` saves the target, the result with its caveats as flags, and every trial.
+`gmeter replay -json` saves the same, and `run.replay` says what was replayed: the trace's file name, its format,
+how many requests were sent, the timing (`recorded` with its speed, or `fixed rate`), and how many were skipped by
+`-methods` or could not be parsed. For a replay `run.method` lists the methods in the trace.)
 
 `version`, `run` (URL, method, workers, duration, profile, arrivals, seed, spin, start time), the totals,
 `generator`, `warnings`, `stages` (one digest per stage of the profile), the per-window `timeline`, and the
@@ -395,6 +499,10 @@ not the tails. Gmeter's own check still catches that case: the timer-lag and lat
 - **False sharing, measured.** Recorders are padded to 128-byte cache lines. On a 10-core Apple Silicon Mac,
   8 goroutines each recording into their own Recorder took 2.0-3.1 ns/op unpadded and 0.92-0.93 ns/op padded
   (five runs each). Reproduce with `go test -run '^$' -bench RecorderRecordParallel -cpu 8 ./internal/hist`.
+- **`internal/replay`**: reads a traffic log (JSON Lines or an access log) into requests and, if it has times,
+  into the offsets at which each is due. The runner takes those as `Offsets` instead of a profile, and the
+  requests as `Requests`, cycled by schedule index. Access-log seconds are spread before the schedule is built,
+  so the scheduler never needs to know where its times came from.
 - **`internal/runner`**: scheduler, workers, an HTTP/1.1 client capped at `-workers` connections, live
   counters (atomics), per-stage results (a small lock per stage, taken once per response), and the
   generator-health measurements.
@@ -433,6 +541,7 @@ the live windows pinpoint when a stall happened.
 - [x] **v1c**: precise pacing: sleep, then busy-wait the last stretch (`-spin`), bounded in CPU cost
 - [x] **v2a**: load profiles (steps, ramps, pauses), Poisson arrivals with a reproducible seed, per-stage results
 - [x] **v2b**: `gmeter find`: the highest rate that meets a latency target, with confirmation and caveats
-- [ ] **v2c**: traffic replay from a log file, per-phase timings (connect, TLS, first byte)
+- [x] **v2c**: `gmeter replay`: a traffic log (JSON Lines or an access log) at its recorded pace or a fixed rate
+- [ ] **v2d**: per-phase timings (connect, TLS, first byte), and a per-endpoint breakdown for replays
 - [ ] **v3**: distributed mode with one controller driving several generators (merging histograms, not
       averaging percentiles), HTTP/2 and gRPC

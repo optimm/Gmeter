@@ -177,3 +177,14 @@ func (g segment) timeAt(x float64) time.Duration {
 	disc := max(g.a*g.a+2*g.b*x, 0)
 	return time.Duration(2 * x * 1e9 / (g.a + math.Sqrt(disc)))
 }
+
+// Totals returns how long a profile lasts and how many requests it schedules
+// on average. Unlike New it does not validate anything, so it is for showing a
+// profile that has not been run yet.
+func Totals(stages []Stage) (duration time.Duration, expected float64) {
+	for _, st := range stages {
+		duration += st.Duration
+		expected += (st.From + st.To) / 2 * st.Duration.Seconds()
+	}
+	return duration, expected
+}

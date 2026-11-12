@@ -121,11 +121,11 @@ type Result struct {
 	// requests it actually had to sleep for. It isolates timer and OS
 	// scheduling overshoot, plus GC pauses in this process.
 	//
-	// Late counts requests the scheduler reached when they were already
-	// overdue, so it had no chance to sleep. Either every worker was busy (the
-	// scheduler was blocked handing off the previous request: raise -workers,
-	// or the server is slow) or the rate is finer than this machine's timers
-	// can pace. Late requests are still measured from their due time.
+	// Late counts requests the scheduler reached more than a millisecond after
+	// their due time, so it had no chance to sleep. Either every worker was
+	// busy (the scheduler was blocked handing off the previous request: raise
+	// -workers, or the server is slow) or the generator was starved of CPU.
+	// Late requests are still measured from their due time.
 	TimerLag *hist.Histogram
 	Late     uint64
 
@@ -138,6 +138,14 @@ type Result struct {
 	// is the sum of the same figure over the stages.
 	Stages []StageResult
 }
+
+// lateTolerance is how far past its due time the scheduler may reach a request
+// before it counts as late. Without it, random arrivals would trip the count on
+// a healthy generator: two requests a few microseconds apart leave the second
+// one overdue by microseconds when the scheduler finishes the first. Real
+// saturation is far above this: a worker stuck in a slow request leaves the
+// scheduler blocked, and the requests behind it milliseconds or more late.
+const lateTolerance = time.Millisecond
 
 // StageResult is what happened to the requests that were due during one stage
 // of the profile. Attribution is by due time: a request due in stage 1 that
@@ -203,7 +211,7 @@ loop:
 		if !ok {
 			break
 		}
-		if time.Now().Before(at) {
+		if now := time.Now(); now.Before(at) {
 			var gap time.Duration // to the previous request; the first one is due at the start
 			if !prev.IsZero() {
 				gap = at.Sub(prev)
@@ -214,8 +222,8 @@ loop:
 				break
 			}
 			timerLag.Record(time.Since(at))
-		} else {
-			live.late.Add(1) // already behind schedule when we got here
+		} else if now.Sub(at) > lateTolerance {
+			live.late.Add(1) // behind schedule when we got here
 		}
 		prev = at
 		select {

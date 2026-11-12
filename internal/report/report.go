@@ -50,11 +50,29 @@ type Summary struct {
 	Generator Generator `json:"generator"`
 	Warnings  []string  `json:"warnings"`
 
+	// Stages has one entry per stage of the load profile (a single one for a
+	// constant rate), always a list. Latencies are attributed by when each
+	// request was due, so a step test shows which step a server stopped
+	// coping at.
+	Stages []StageSummary `json:"stages"`
+
 	// Timeline has one point per sample window; its points add up to the totals
 	// above. Histograms holds the full latency distributions, which is what
 	// makes a saved run comparable and mergeable later.
 	Timeline   []Point    `json:"timeline"`
 	Histograms Histograms `json:"histograms"`
+}
+
+// StageSummary is one stage of the load profile.
+type StageSummary struct {
+	Profile         string  `json:"profile"` // e.g. "30s@100" or "1m@100->500"
+	DurationSeconds float64 `json:"duration_seconds"`
+	TargetRPS       float64 `json:"target_rps"` // the stage's average rate
+	Scheduled       uint64  `json:"scheduled"`
+	Dropped         uint64  `json:"dropped"`
+	Failed          uint64  `json:"failed"`
+	Corrected       Latency `json:"latency_corrected"`
+	Service         Latency `json:"latency_service"`
 }
 
 // SchemaVersion is bumped whenever the JSON layout changes incompatibly.
@@ -66,9 +84,12 @@ type RunInfo struct {
 	URL             string  `json:"url"`
 	Method          string  `json:"method"`
 	Workers         int     `json:"workers"`
-	DurationSeconds float64 `json:"duration_seconds"` // how long requests were scheduled for
+	DurationSeconds float64 `json:"duration_seconds"` // how long requests were scheduled for, in total
 	TimeoutSeconds  float64 `json:"timeout_seconds"`
 	SpinSeconds     float64 `json:"spin_seconds"` // pacing busy-wait window; 0 = plain timer (also what older files imply)
+	Profile         string  `json:"profile"`      // the load profile as stages, e.g. "30s@100,30s@200"; empty in older files
+	Arrivals        string  `json:"arrivals"`     // "even" or "poisson"; empty in older files, which were all even
+	Seed            uint64  `json:"seed"`         // Poisson arrivals only: the seed that reproduces the arrival times
 	StartedAt       string  `json:"started_at"`   // RFC 3339, UTC
 }
 
@@ -96,7 +117,7 @@ type Histograms struct {
 type Generator struct {
 	TimerLagP99Ms float64 `json:"timer_lag_p99_ms"`
 	TimerLagMaxMs float64 `json:"timer_lag_max_ms"`
-	Late          uint64  `json:"late_dispatches"` // reached after their due time
+	Late          uint64  `json:"late_dispatches"` // reached more than 1ms after their due time
 }
 
 // Thresholds beyond which a run gets a warning. Timers on an idle machine wake
@@ -136,6 +157,7 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 		},
 		Warnings: []string{},
 		Version:  SchemaVersion,
+		Stages:   stageSummaries(res.Stages),
 		Timeline: points(res.Timeline),
 		Histograms: Histograms{
 			Corrected: res.Corrected.Dump(),
@@ -163,10 +185,27 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 	}
 	if frac := s.lateFraction(); frac > lateWarnFraction {
 		s.Warnings = append(s.Warnings, fmt.Sprintf(
-			"%d of %d requests (%.0f%%) were dispatched after their due time: every worker was busy (raise -workers, or the server is slow) or the rate is finer than this machine's timers can pace; their latency still counts from the due time",
+			"%d of %d requests (%.0f%%) were dispatched more than 1ms after their due time: every worker was busy (raise -workers, or the server is slow) or the generator was starved of CPU; their latency still counts from the due time",
 			s.Generator.Late, s.Scheduled, frac*100))
 	}
 	return s
+}
+
+func stageSummaries(stages []runner.StageResult) []StageSummary {
+	out := make([]StageSummary, len(stages)) // never nil, so the JSON is [] and not null
+	for i, st := range stages {
+		out[i] = StageSummary{
+			Profile:         st.Stage.String(),
+			DurationSeconds: st.Stage.Duration.Seconds(),
+			TargetRPS:       (st.Stage.From + st.Stage.To) / 2,
+			Scheduled:       st.Scheduled,
+			Dropped:         st.Dropped,
+			Failed:          st.Failed,
+			Corrected:       digest(st.Corrected),
+			Service:         digest(st.Service),
+		}
+	}
+	return out
 }
 
 func (s Summary) lateFraction() float64 {
@@ -204,7 +243,11 @@ func (s Summary) WriteText(w io.Writer) error {
 
 	fmt.Fprintf(&b, "requests   %d scheduled   %d ok   %d bad status   %d failed   %d dropped\n",
 		s.Scheduled, s.OK, s.BadStatus, s.Failed, s.Dropped)
-	fmt.Fprintf(&b, "achieved   %.1f rps (target %g) over %.2fs\n", s.AchievedRPS, s.TargetRPS, s.ElapsedSeconds)
+	average := ""
+	if len(s.Stages) > 1 {
+		average = " on average" // the rate changes during the run
+	}
+	fmt.Fprintf(&b, "achieved   %.1f rps (target %.6g%s) over %.2fs\n", s.AchievedRPS, s.TargetRPS, average, s.ElapsedSeconds)
 	if len(s.Statuses) > 0 {
 		codes := sortedKeys(s.Statuses)
 		parts := make([]string, len(codes))
@@ -233,10 +276,35 @@ func (s Summary) WriteText(w io.Writer) error {
 	writeLatency(&b, s.Corrected)
 	b.WriteString("latency, service (from when the request was actually sent)\n")
 	writeLatency(&b, s.Service)
+	writeStages(&b, s.Stages)
 	writeTimeline(&b, s.Timeline)
 
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// writeStages prints one row per stage. A single stage would only repeat the
+// run's own numbers, so a constant-rate run prints nothing here.
+func writeStages(b *strings.Builder, stages []StageSummary) {
+	if len(stages) < 2 {
+		return
+	}
+	width := len("stage")
+	for _, st := range stages {
+		width = max(width, len(st.Profile))
+	}
+	d := func(m float64) string { return FormatDuration(time.Duration(m * float64(time.Millisecond))) }
+
+	b.WriteString("\nstages (corrected latency, by when each request was due)\n")
+	fmt.Fprintf(b, "  %2s  %-*s  %9s  %6s  %9s  %9s  %9s  %9s\n", "#", width, "stage", "scheduled", "failed", "p50", "p90", "p99", "max")
+	for i, st := range stages {
+		l := st.Corrected
+		p50, p90, p99, worst := "-", "-", "-", "-"
+		if l.Count > 0 {
+			p50, p90, p99, worst = d(l.P50Ms), d(l.P90Ms), d(l.P99Ms), d(l.MaxMs)
+		}
+		fmt.Fprintf(b, "  %2d  %-*s  %9d  %6d  %9s  %9s  %9s  %9s\n", i+1, width, st.Profile, st.Scheduled, st.Failed, p50, p90, p99, worst)
+	}
 }
 
 func writeLatency(b *strings.Builder, l Latency) {

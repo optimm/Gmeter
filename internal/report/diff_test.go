@@ -152,6 +152,81 @@ func TestCompareFlagsADifferentPacingSpin(t *testing.T) {
 	}
 }
 
+func notesOf(t *testing.T, a, b Summary) string {
+	t.Helper()
+	c, err := Compare(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(c.Notes, "\n")
+}
+
+// Evenly spaced and Poisson arrivals at the same average rate do not queue the
+// same way, so a run of each is not a like-for-like comparison.
+func TestCompareFlagsDifferentArrivalProcessesAndSeeds(t *testing.T) {
+	even := mkSummary(100*time.Millisecond, 2)
+	even.Run.Arrivals = "even"
+	poisson := mkSummary(100*time.Millisecond, 2)
+	poisson.Run.Arrivals, poisson.Run.Seed = "poisson", 7
+
+	notes := notesOf(t, even, poisson)
+	for _, want := range []string{"arrivals", "even", "poisson"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("notes should mention %q:\n%s", want, notes)
+		}
+	}
+
+	// Files written before the setting existed were all evenly spaced.
+	old := mkSummary(100*time.Millisecond, 2)
+	if got := notesOf(t, old, even); got != "" {
+		t.Errorf("an old file (no arrivals recorded) and an even run should not differ, got:\n%s", got)
+	}
+
+	// The same process with a different seed sees different bursts.
+	other := poisson
+	other.Run.Seed = 8
+	if got := notesOf(t, poisson, other); !strings.Contains(got, "seed") {
+		t.Errorf("poisson runs with different seeds should be noted:\n%s", got)
+	}
+	if got := notesOf(t, poisson, poisson); got != "" {
+		t.Errorf("identical poisson runs should have no notes, got:\n%s", got)
+	}
+	// The seed means nothing for evenly spaced arrivals.
+	evenOther := even
+	evenOther.Run.Seed = 99
+	if got := notesOf(t, even, evenOther); got != "" {
+		t.Errorf("seeds of even runs should be ignored, got:\n%s", got)
+	}
+}
+
+func TestCompareFlagsADifferentLoadProfileOnlyWhenTheSummariesDoNotAlreadySayso(t *testing.T) {
+	step := mkSummary(100*time.Millisecond, 2) // 10s@100 then 10s@200: 20s, 150 rps on average
+	step.Run.Profile, step.Run.DurationSeconds, step.TargetRPS = "10s@100,10s@200", 20, 150
+	flat := mkSummary(100*time.Millisecond, 2) // 20s at 150 rps: the same duration and the same average
+	flat.Run.Profile, flat.Run.DurationSeconds, flat.TargetRPS = "20s@150", 20, 150
+
+	got := notesOf(t, step, flat)
+	if !strings.Contains(got, "profile") || !strings.Contains(got, "10s@100,10s@200") || !strings.Contains(got, "20s@150") {
+		t.Errorf("a step and a flat run with the same average should be told apart:\n%s", got)
+	}
+
+	// When the rate or the duration already differ, that is the note; the
+	// profile would only say it twice.
+	faster := flat
+	faster.TargetRPS = 300
+	faster.Run.Profile = "20s@300"
+	if got := notesOf(t, flat, faster); strings.Contains(got, "profile") {
+		t.Errorf("the rate difference is already noted, so the profile need not be:\n%s", got)
+	}
+
+	// A file from before profiles existed has none to compare.
+	old := mkSummary(100*time.Millisecond, 2)
+	old.TargetRPS, old.Run.DurationSeconds = 150, 20
+	if got := notesOf(t, old, flat); strings.Contains(got, "profile") {
+		t.Errorf("a file without a profile cannot differ in it, got:\n%s", got)
+	}
+}
+
 func TestCompareRefusesAnUnusableHistogram(t *testing.T) {
 	a := mkSummary(100*time.Millisecond, 2)
 	b := mkSummary(100*time.Millisecond, 2)

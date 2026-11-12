@@ -295,3 +295,16 @@ func TestPoissonFollowsAChangingRate(t *testing.T) {
 		t.Fatalf("requests per stage = %v, want about [1000 3000]", perStage)
 	}
 }
+
+func TestTotalsAreTheLengthAndAverageRateOfAProfile(t *testing.T) {
+	d, n := Totals([]Stage{
+		{Duration: 10 * time.Second, From: 0, To: 100},  // 500 requests
+		{Duration: 5 * time.Second, From: 100, To: 100}, // 500 requests
+	})
+	if d != 15*time.Second || math.Abs(n-1000) > 1e-9 {
+		t.Fatalf("Totals = %v, %v, want 15s and 1000", d, n)
+	}
+	if d, n := Totals(nil); d != 0 || n != 0 {
+		t.Fatalf("Totals(nil) = %v, %v, want zeros", d, n)
+	}
+}

@@ -128,14 +128,28 @@ func likeForLike(a, b Summary) []string {
 	if a.Run.Method != b.Run.Method {
 		differs("method", a.Run.Method, b.Run.Method)
 	}
+	rateOrDuration := false // whether the notes below already say the load differs
 	if a.TargetRPS != b.TargetRPS {
-		differs("target rate", fmt.Sprintf("%g rps", a.TargetRPS), fmt.Sprintf("%g rps", b.TargetRPS))
+		differs("target rate", fmt.Sprintf("%.6g rps", a.TargetRPS), fmt.Sprintf("%.6g rps", b.TargetRPS))
+		rateOrDuration = true
 	}
 	if a.Run.Workers != b.Run.Workers {
 		differs("workers", a.Run.Workers, b.Run.Workers)
 	}
 	if a.Run.DurationSeconds != b.Run.DurationSeconds {
 		differs("duration", fmt.Sprintf("%gs", a.Run.DurationSeconds), fmt.Sprintf("%gs", b.Run.DurationSeconds))
+		rateOrDuration = true
+	}
+	// A step and a flat run can share a duration and an average rate. A file
+	// from before profiles were recorded has none, so there is nothing to compare.
+	if a.Run.Profile != "" && b.Run.Profile != "" && a.Run.Profile != b.Run.Profile && !rateOrDuration {
+		differs("load profile", a.Run.Profile, b.Run.Profile)
+	}
+	switch aa, ab := arrivalsOf(a), arrivalsOf(b); {
+	case aa != ab:
+		differs("arrivals", aa, ab)
+	case aa == "poisson" && a.Run.Seed != b.Run.Seed:
+		notes = append(notes, fmt.Sprintf("Poisson seed differs (A: %d, B: %d): the runs saw different bursts, so expect more run-to-run noise than usual", a.Run.Seed, b.Run.Seed))
 	}
 	if a.Run.SpinSeconds != b.Run.SpinSeconds {
 		differs("pacing spin", spinText(a.Run.SpinSeconds), spinText(b.Run.SpinSeconds))
@@ -149,6 +163,15 @@ func likeForLike(a, b Summary) []string {
 		}
 	}
 	return notes
+}
+
+// arrivalsOf is a run's arrival process. Files from before it was recorded were
+// all evenly spaced.
+func arrivalsOf(s Summary) string {
+	if s.Run.Arrivals == "" {
+		return "even"
+	}
+	return s.Run.Arrivals
 }
 
 // spinText names a pacing spin window; zero means the plain timer was used,

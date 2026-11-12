@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/optimm/Gmeter/internal/hist"
+	"github.com/optimm/Gmeter/internal/pacer"
 	"github.com/optimm/Gmeter/internal/runner"
 )
 
@@ -363,5 +364,109 @@ func TestTextReportSkipsTheTimelineForRunsTooShortToPlot(t *testing.T) {
 	Summarize(res, 10).WriteText(&buf)
 	if strings.Contains(buf.String(), "timeline") {
 		t.Fatalf("a single window is not a timeline:\n%s", buf.String())
+	}
+}
+
+// stagedResult is a two-step run: 5s at 10 rps with every response at 2ms,
+// then 10s at 15 rps with every response at 80ms (the server fell over at the
+// step). The run's totals are the sum of the stages.
+func stagedResult() *runner.Result {
+	stage := func(st pacer.Stage, n int, lat time.Duration, failed uint64) runner.StageResult {
+		c, sv := hist.New(), hist.New()
+		for range n {
+			c.Record(lat)
+			sv.Record(lat)
+		}
+		return runner.StageResult{Stage: st, Scheduled: uint64(n) + failed, Failed: failed, Corrected: c, Service: sv}
+	}
+	s1 := stage(pacer.Stage{Duration: 5 * time.Second, From: 10, To: 10}, 50, 2*time.Millisecond, 0)
+	s2 := stage(pacer.Stage{Duration: 10 * time.Second, From: 15, To: 15}, 148, 80*time.Millisecond, 2)
+
+	corrected, service, lag := hist.New(), hist.New(), hist.New()
+	for _, st := range []runner.StageResult{s1, s2} {
+		corrected.Merge(st.Corrected)
+		service.Merge(st.Service)
+	}
+	return &runner.Result{
+		Elapsed: 15 * time.Second, Scheduled: s1.Scheduled + s2.Scheduled,
+		Statuses: map[int]uint64{200: 198}, Errors: map[string]uint64{"timeout": 2},
+		Corrected: corrected, Service: service, TimerLag: lag,
+		Stages: []runner.StageResult{s1, s2},
+	}
+}
+
+func TestSummarizeBreaksTheRunDownByStage(t *testing.T) {
+	s := Summarize(stagedResult(), 13.33)
+	if len(s.Stages) != 2 {
+		t.Fatalf("%d stages, want 2", len(s.Stages))
+	}
+	a, b := s.Stages[0], s.Stages[1]
+	if a.Profile != "5s@10" || b.Profile != "10s@15" {
+		t.Errorf("profiles %q and %q, want 5s@10 and 10s@15", a.Profile, b.Profile)
+	}
+	if a.DurationSeconds != 5 || b.DurationSeconds != 10 || a.TargetRPS != 10 || b.TargetRPS != 15 {
+		t.Errorf("durations/targets = %v %v / %v %v, want 5 10 / 10 15", a.DurationSeconds, b.DurationSeconds, a.TargetRPS, b.TargetRPS)
+	}
+	if a.Scheduled != 50 || b.Scheduled != 150 || b.Failed != 2 {
+		t.Errorf("scheduled/failed = %d %d / %d, want 50 150 / 2", a.Scheduled, b.Scheduled, b.Failed)
+	}
+	if a.Corrected.P99Ms < 1.9 || a.Corrected.P99Ms > 2.1 {
+		t.Errorf("stage 1 p99 = %vms, want about 2", a.Corrected.P99Ms)
+	}
+	if b.Corrected.P50Ms < 79 || b.Corrected.P50Ms > 81 || b.Service.P50Ms < 79 || b.Service.P50Ms > 81 {
+		t.Errorf("stage 2 p50 corrected/service = %v/%vms, want about 80", b.Corrected.P50Ms, b.Service.P50Ms)
+	}
+}
+
+func TestTextReportShowsAStageTableForSeveralStagesOnly(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Summarize(stagedResult(), 13.33).WriteText(&buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"stages", "5s@10", "10s@15", "on average"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report is missing %q:\n%s", want, out)
+		}
+	}
+
+	// A constant rate is one stage: a table with one row would only repeat the
+	// run's own numbers.
+	one := sampleResult()
+	one.Stages = stagedResult().Stages[:1]
+	buf.Reset()
+	if err := Summarize(one, 10).WriteText(&buf); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "stages") || strings.Contains(buf.String(), "on average") {
+		t.Errorf("a single-stage run should not print a stage table:\n%s", buf.String())
+	}
+}
+
+func TestJSONAlwaysHasAStagesArray(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Summarize(sampleResult(), 10).WriteJSON(&buf); err != nil { // no stages recorded
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"stages": []`) {
+		t.Errorf("stages should encode as [] and not null:\n%s", buf.String())
+	}
+}
+
+func TestAnAverageTargetRateIsRoundedForReading(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Summarize(stagedResult(), 2000.0/3).WriteText(&buf); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); !strings.Contains(out, "target 666.667 on average") {
+		t.Errorf("want the target shown as 666.667, got:\n%s", out)
+	}
+
+	buf.Reset() // an ordinary constant rate still prints as written
+	if err := Summarize(sampleResult(), 200).WriteText(&buf); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); !strings.Contains(out, "(target 200)") {
+		t.Errorf("a constant rate of 200 should print as 200, got:\n%s", out)
 	}
 }

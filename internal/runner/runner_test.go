@@ -452,6 +452,26 @@ func TestFastServerWithEnoughWorkersHasFewLateDispatches(t *testing.T) {
 // When every worker is busy the scheduler blocks, so later requests are
 // already overdue by the time it reaches them. That is saturation, and it has
 // to be visible both live and in the result.
+// Random arrivals put requests a few microseconds apart, so the scheduler often
+// reaches one that is already due, by microseconds. That is not a generator in
+// trouble: with an instant server and plenty of idle workers, the late count
+// must stay low even at a rate where most gaps are shorter than a timer can
+// resolve.
+func TestMicrosecondLatenessOfPoissonArrivalsIsNotCountedAsLate(t *testing.T) {
+	srv := okServer(t)
+	cfg := baseConfig(srv.URL)
+	cfg.Rate, cfg.Duration, cfg.Workers = 5000, time.Second, 64
+	cfg.Arrivals, cfg.Seed = pacer.Poisson, 3
+
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frac := float64(res.Late) / float64(res.Scheduled); frac > 0.02 {
+		t.Fatalf("Late = %d of %d (%.1f%%); requests reached microseconds late must not count", res.Late, res.Scheduled, frac*100)
+	}
+}
+
 func TestSaturatedWorkersShowUpAsLateDispatches(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(30 * time.Millisecond)

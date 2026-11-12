@@ -247,6 +247,9 @@ func fmtPct(p float64) string {
 
 func fmtCount(v float64) string { return fmt.Sprintf("%.0f", v) }
 
-func fmtMs(v float64) string {
+func fmtMs(v float64) string { return FormatMs(v) }
+
+// FormatMs formats a latency given in milliseconds as FormatDuration would.
+func FormatMs(v float64) string {
 	return FormatDuration(time.Duration(v * float64(time.Millisecond)))
 }

@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -228,8 +229,9 @@ func runDiff(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("gmeter diff", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	threshold := fs.Float64("threshold", 0, "exit 1 if B's corrected p99 is more than this many percent above A's")
+	endpointThreshold := fs.Float64("endpoint-threshold", 0, "exit 1 if any endpoint's corrected p99 is more than this many percent higher in B than in A; only endpoints with at least 100 requests answered in both runs are judged, and it needs replay runs that have an endpoint breakdown")
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: gmeter diff [-threshold PERCENT] A.json B.json\n\n"+
+		fmt.Fprintf(stderr, "Usage: gmeter diff [-threshold PERCENT] [-endpoint-threshold PERCENT] A.json B.json\n\n"+
 			"Compares two summaries saved with -json. Flags must come before the files.\n\n")
 		fs.PrintDefaults()
 	}
@@ -239,8 +241,23 @@ func runDiff(args []string, stdout, stderr io.Writer) int {
 		}
 		return 2
 	}
-	gated := false
-	fs.Visit(func(f *flag.Flag) { gated = gated || f.Name == "threshold" }) // 0 is a meaningful threshold, so detect "was it given"
+	var gated, endpointGated bool
+	fs.Visit(func(f *flag.Flag) { // 0 is a meaningful threshold, so detect "was it given"
+		gated = gated || f.Name == "threshold"
+		endpointGated = endpointGated || f.Name == "endpoint-threshold"
+	})
+	// Every comparison with NaN is false, and nothing is above +Inf: such a
+	// threshold could never fail, so a CI gate using it would always pass.
+	for _, th := range []struct {
+		name  string
+		value float64
+		given bool
+	}{{"threshold", *threshold, gated}, {"endpoint-threshold", *endpointThreshold, endpointGated}} {
+		if th.given && (math.IsNaN(th.value) || math.IsInf(th.value, 0)) {
+			fmt.Fprintf(stderr, "gmeter diff: -%s must be a finite number of percent, got %v\n", th.name, th.value)
+			return 2
+		}
+	}
 	if fs.NArg() != 2 {
 		fmt.Fprintf(stderr, "gmeter diff: need exactly two summary files, got %d\n", fs.NArg())
 		fs.Usage()
@@ -266,15 +283,62 @@ func runDiff(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	regressed := false
 	if gated {
 		change := p99Change(cmp)
 		if cmp.Regressed(*threshold) {
 			fmt.Fprintf(stdout, "\nREGRESSION: corrected p99 changed by %s, over the %g%% threshold\n", change, *threshold)
-			return 1
+			regressed = true
+		} else {
+			fmt.Fprintf(stdout, "\nok: corrected p99 changed by %s, within the %g%% threshold\n", change, *threshold)
 		}
-		fmt.Fprintf(stdout, "\nok: corrected p99 changed by %s, within the %g%% threshold\n", change, *threshold)
+	}
+	if endpointGated {
+		bad, err := judgeEndpoints(cmp, *endpointThreshold, stdout)
+		if err != nil {
+			fmt.Fprintf(stderr, "gmeter diff: -endpoint-threshold: %v\n", err)
+			return 2
+		}
+		regressed = regressed || bad
+	}
+	if regressed {
+		return 1
 	}
 	return 0
+}
+
+// judgeEndpoints prints whether any endpoint's p99 rose by more than
+// thresholdPct and reports whether one did. It is an error when no endpoint can
+// be judged: a gate that looked at nothing must not say everything is fine.
+func judgeEndpoints(c report.Comparison, thresholdPct float64, w io.Writer) (regressed bool, err error) {
+	judged := c.EndpointsGated()
+	switch {
+	case len(c.Endpoints) == 0:
+		return false, fmt.Errorf("both files need a per-endpoint breakdown, which a replay run saves unless it was given -endpoints 0")
+	case judged == 0:
+		return false, fmt.Errorf("no endpoint has at least %d requests answered in both runs, so none can be judged", report.MinEndpointSamples)
+	}
+	if regs := c.EndpointRegressions(thresholdPct); len(regs) > 0 {
+		noun := "endpoints'"
+		if len(regs) == 1 {
+			noun = "endpoint's"
+		}
+		fmt.Fprintf(w, "\nREGRESSION: %d %s corrected p99 rose more than %g%%:\n", len(regs), noun, thresholdPct)
+		width := 0
+		for _, r := range regs {
+			width = max(width, len(r.Endpoint))
+		}
+		for _, r := range regs {
+			fmt.Fprintf(w, "  %-*s  %+.1f%%  (%s -> %s)\n", width, r.Endpoint, r.P99ChangePct, report.FormatMs(r.P99A), report.FormatMs(r.P99B))
+		}
+		return true, nil
+	}
+	detail := fmt.Sprintf("%d judged", judged)
+	if skipped := len(c.Endpoints) - judged; skipped > 0 {
+		detail += fmt.Sprintf(", %d not judged", skipped)
+	}
+	fmt.Fprintf(w, "\nok: no endpoint's corrected p99 rose more than %g%% (%s)\n", thresholdPct, detail)
+	return false, nil
 }
 
 func loadSummary(path string) (report.Summary, error) {

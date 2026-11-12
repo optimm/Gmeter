@@ -94,6 +94,7 @@ func Compare(a, b Summary) (Comparison, error) {
 		row("achieved rps", a.AchievedRPS, b.AchievedRPS, func(v float64) string { return fmt.Sprintf("%.1f", v) }),
 		row("failed", float64(a.Failed), float64(b.Failed), fmtCount),
 		row("bad status", float64(a.BadStatus), float64(b.BadStatus), fmtCount),
+		c.errorRateRow(),
 	}
 	c.Latency = []Row{
 		row("p50", a.Corrected.P50Ms, b.Corrected.P50Ms, fmtMs),
@@ -113,6 +114,35 @@ func Compare(a, b Summary) (Comparison, error) {
 // above A's. It deliberately looks only at p99: one number to gate a build on.
 func (c Comparison) Regressed(thresholdPct float64) bool {
 	return !math.IsNaN(c.P99ChangePct) && c.P99ChangePct > thresholdPct
+}
+
+// ErrorRise is how much B's error rate is above A's, in percentage points (a
+// fall is negative). The error rate of a run is the share of the requests it
+// sent that failed or got a bad status, as in `gmeter find`. It is false when
+// either run sent nothing, so has no rate.
+func (c Comparison) ErrorRise() (points float64, ok bool) {
+	pa, okA := c.a.errorPct()
+	pb, okB := c.b.errorPct()
+	if !okA || !okB {
+		return 0, false
+	}
+	return pb - pa, true
+}
+
+// ErrorsRegressed reports whether B's error rate is more than thresholdPoints
+// percentage points above A's.
+func (c Comparison) ErrorsRegressed(thresholdPoints float64) bool {
+	rise, ok := c.ErrorRise()
+	return ok && rise > thresholdPoints
+}
+
+// errorPct is the share of the requests sent that failed or got a bad status,
+// in percent; false if none were sent.
+func (s Summary) errorPct() (float64, bool) {
+	if s.Scheduled == 0 {
+		return 0, false
+	}
+	return float64(s.Failed+s.BadStatus) * 100 / float64(s.Scheduled), true
 }
 
 // WriteText prints the comparison; nameA and nameB label the two runs.
@@ -267,4 +297,20 @@ func fmtMs(v float64) string { return FormatMs(v) }
 // FormatMs formats a latency given in milliseconds as FormatDuration would.
 func FormatMs(v float64) string {
 	return FormatDuration(time.Duration(v * float64(time.Millisecond)))
+}
+
+// errorRateRow is the error rate of both runs and the change in percentage
+// points, which unlike a relative change is defined when A has no errors.
+func (c Comparison) errorRateRow() Row {
+	show := func(s Summary) string {
+		if p, ok := s.errorPct(); ok {
+			return fmt.Sprintf("%.1f%%", p)
+		}
+		return "n/a"
+	}
+	r := Row{Label: "error rate", A: show(c.a), B: show(c.b), Change: "n/a"}
+	if rise, ok := c.ErrorRise(); ok {
+		r.Change = fmt.Sprintf("%+.1f points", rise)
+	}
+	return r
 }

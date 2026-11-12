@@ -109,6 +109,11 @@ type Request struct {
 	Header http.Header // added to Config.Header; a name given here replaces the global value
 	Body   []byte      // empty uses Config.Body
 
+	// Logged is the HTTP status the traffic log recorded for this request, or 0
+	// if it did not say. A response whose status class differs from it is counted
+	// in Result.Logged.
+	Logged int
+
 	// Label, if set, groups requests in the results: Result.Labels reports each
 	// distinct label separately. Give every request one or none, at most
 	// MaxLabels different ones.

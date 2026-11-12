@@ -5,17 +5,20 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/optimm/Gmeter/internal/runner"
 )
 
-// clfLine picks the timestamp and the quoted request out of a common or
-// combined log format line:
+// clfLine picks the timestamp, the quoted request and the status out of a
+// common or combined log format line:
 //
 //	host ident user [10/Oct/2023:13:55:36 -0700] "GET /path HTTP/1.1" 200 2326 ...
-var clfLine = regexp.MustCompile(`^\S+ \S+ \S+ \[([^\]]+)\] "([^"]*)"`)
+//
+// The status is optional: a line without a usable one is still a request.
+var clfLine = regexp.MustCompile(`^\S+ \S+ \S+ \[([^\]]+)\] "([^"]*)"(?: (\S+))?`)
 
 const clfTime = "02/Jan/2006:15:04:05 -0700"
 
@@ -74,5 +77,12 @@ func parseCLFLine(line string) (runner.Request, time.Duration, bool) {
 	if len(f) < 2 || !isMethod(strings.ToUpper(f[0])) || !strings.HasPrefix(f[1], "/") {
 		return runner.Request{}, 0, false
 	}
-	return runner.Request{Method: strings.ToUpper(f[0]), Target: f[1]}, time.Duration(when.Unix()) * time.Second, true
+	req := runner.Request{Method: strings.ToUpper(f[0]), Target: f[1]}
+	if n, err := strconv.Atoi(m[3]); err == nil && validStatus(n) { // "-" and garbage leave it 0
+		req.Logged = n
+	}
+	return req, time.Duration(when.Unix()) * time.Second, true
 }
+
+// validStatus reports whether n is an HTTP status code.
+func validStatus(n int) bool { return n >= 100 && n <= 599 }

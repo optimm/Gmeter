@@ -24,13 +24,15 @@ type jsonLine struct {
 	Path    string            `json:"path"`    // path and query, starting with "/"
 	Headers map[string]string `json:"headers"` // sent in addition to any given on the command line
 	Body    string            `json:"body"`
+	Status  *int              `json:"status"` // what the server answered when this was recorded; optional
 }
 
 // ParseJSONL reads a trace of one JSON object per line:
 //
 //	{"at": 0.25, "method": "POST", "path": "/orders?id=7", "headers": {"Content-Type": "application/json"}, "body": "{\"qty\":2}"}
 //
-// Only "path" is required. "at" is the time the request was made, in seconds
+// Only "path" is required. "status" is what the server answered when the request
+// was recorded, so the replay can say how many responses differ. "at" is the time the request was made, in seconds
 // from any fixed point: give it to every request or to none. Unknown fields are
 // an error, so that a misspelt one ("url", "header") does not silently send the
 // wrong thing.
@@ -100,6 +102,12 @@ func (l jsonLine) request() (runner.Request, error) {
 	}
 	if l.Body != "" {
 		req.Body = []byte(l.Body)
+	}
+	if l.Status != nil {
+		if !validStatus(*l.Status) {
+			return runner.Request{}, fmt.Errorf(`"status" must be an HTTP status code from 100 to 599, got %d`, *l.Status)
+		}
+		req.Logged = *l.Status
 	}
 	if len(l.Headers) > 0 {
 		req.Header = http.Header{}

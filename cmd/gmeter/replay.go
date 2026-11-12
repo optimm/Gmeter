@@ -34,6 +34,7 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		rate     = fs.Float64("rate", 0, "send at this constant rate, in requests per second, instead of at the recorded times; the trace is cycled in order")
 		duration = fs.Duration("duration", 0, "with -rate: how long to keep sending, cycling through the trace (default: send each request once)")
 		methods  = fs.String("methods", "GET,HEAD", `which methods to replay, comma separated, or "all": a replay sends whatever the trace says, so the default leaves out requests that would write`)
+		rows     = fs.Int("endpoints", 20, "the most rows in the per-endpoint breakdown: the busiest endpoints, and the rest together as (other); 0 leaves it out, and with it every path from the report and the saved JSON")
 	)
 	rf := addCommonFlags(fs, "poisson", 50)
 	fs.Usage = func() {
@@ -83,6 +84,9 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	case fixedRate && set["duration"] && *duration <= 0:
 		return usage("-duration must be positive, got %v", *duration)
 	}
+	if *rows != 0 && (*rows < 2 || *rows > runner.MaxLabels) {
+		return usage("-endpoints must be 0 (no breakdown) or between 2 and %d, got %d", runner.MaxLabels, *rows)
+	}
 	allowed, err := parseMethods(*methods)
 	if err != nil {
 		return usage("-methods: %v", err)
@@ -111,6 +115,11 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	if len(trace.Requests) == 0 {
 		return usage("every request in %s has a method outside -methods (%s): nothing to replay; pass -methods all to include them", filepath.Base(*file), *methods)
+	}
+	if *rows > 0 {
+		if err := trace.LabelEndpoints(*rows); err != nil { // after the filter: rank what will be sent
+			return usage("-endpoints: %v", err)
+		}
 	}
 	if !*rf.quiet {
 		if trace.Unparsed > 0 {

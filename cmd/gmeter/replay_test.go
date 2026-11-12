@@ -265,6 +265,9 @@ func TestReplayUsageErrors(t *testing.T) {
 		"malformed trace":                  {[]string{"-file", broken, "-rate", "10", srv.URL}, "line 2"},
 		"not an http url":                  {[]string{"-file", timed, "-methods", "all", "ftp://example.com"}, "url must be"},
 		"zero workers":                     {[]string{"-file", timed, "-methods", "all", "-workers", "0", srv.URL}, "workers"},
+		"negative endpoints":               {[]string{"-file", timed, "-endpoints", "-1", srv.URL}, "-endpoints must be 0"},
+		"a single endpoint row":            {[]string{"-file", timed, "-endpoints", "1", srv.URL}, "-endpoints must be 0"},
+		"too many endpoint rows":           {[]string{"-file", timed, "-endpoints", "101", srv.URL}, "-endpoints must be 0"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			code, _, stderr := execReplay(t, tc.args...)

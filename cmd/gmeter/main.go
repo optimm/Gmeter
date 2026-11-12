@@ -9,7 +9,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,6 +25,11 @@ import (
 // sampleEvery is a variable so tests can shorten it.
 var sampleEvery = time.Second
 
+// settle is the pause between the trials of `gmeter find`, so that one trial's
+// aftermath (a backlog draining, a server recovering) does not leak into the
+// next. A variable so tests can remove it.
+var settle = time.Second
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
@@ -39,6 +43,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "diff" { // a URL always has a scheme, so this cannot be one
 		return runDiff(args[1:], stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "find" {
+		return runFind(ctx, args[1:], stdout, stderr)
+	}
 
 	fs := flag.NewFlagSet("gmeter", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -46,18 +53,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		rate     = fs.Float64("rate", 100, "target requests per second (open loop)")
 		duration = fs.Duration("duration", 10*time.Second, "how long to keep scheduling requests")
 		stagesIn = fs.String("stages", "", `load profile instead of -rate and -duration: comma-separated DURATION@RATE (constant) or DURATION@FROM->TO (ramp), e.g. "30s@100,30s@200" or "10s@50,1m@50->500"`)
-		arrivals = fs.String("arrivals", "even", "how requests are spread within the rate: even (exact spacing) or poisson (random bursts)")
-		seed     = fs.Uint64("seed", 0, "seed for -arrivals poisson, to repeat the same arrival times (0 picks one, and reports it)")
-		workers  = fs.Int("workers", 50, "max requests in flight, which is also the max number of connections")
-		timeout  = fs.Duration("timeout", 10*time.Second, "per-request timeout")
-		spin     = fs.Duration("spin", 200*time.Microsecond, "busy-wait this long before each request's due time instead of sleeping, for precise timing (0 = plain timer); capped at a quarter of the gap between requests, so it costs about a quarter of one core at most")
-		method   = fs.String("method", http.MethodGet, "HTTP method")
-		body     = fs.String("body", "", "request body; prefix with @ to read it from a file")
-		jsonOut  = fs.String("json", "", "also write a JSON summary to this path ('-' writes only the JSON, to stdout)")
-		quiet    = fs.Bool("quiet", false, "no progress output on stderr")
-		headers  headerFlag
 	)
-	fs.Var(&headers, "H", `extra request header "Key: Value" (repeatable)`)
+	rf := addRequestFlags(fs, "even", 50)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: gmeter [flags] URL\n\nFlags must come before the URL.\n\n")
 		fs.PrintDefaults()
@@ -96,42 +93,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	} else {
 		stages = pacer.ConstantRate(*rate, *duration)
 	}
-	arrival, err := pacer.ParseArrivals(*arrivals)
+	arrival, seed, err := rf.arrival()
 	if err != nil {
-		fmt.Fprintf(stderr, "gmeter: -arrivals: %v\n", err)
+		fmt.Fprintf(stderr, "gmeter: %v\n", err)
 		return 2
-	}
-	if arrival == pacer.Poisson && *seed == 0 {
-		*seed = rand.Uint64() | 1 // never 0, which means "pick one"
-	}
-	if arrival != pacer.Poisson {
-		*seed = 0 // spacing is exact: there is nothing for a seed to do
 	}
 	totalDuration, expected := pacer.Totals(stages)
 
-	reqBody, err := readBody(*body)
+	cfg, err := rf.base(target)
 	if err != nil {
-		fmt.Fprintf(stderr, "gmeter: cannot read -body: %v\n", err)
+		fmt.Fprintf(stderr, "gmeter: %v\n", err)
 		return 2
 	}
-
-	cfg := runner.Config{
-		URL:         target,
-		Method:      strings.ToUpper(*method),
-		Header:      http.Header(headers),
-		Body:        reqBody,
-		Stages:      stages,
-		Arrivals:    arrival,
-		Seed:        *seed,
-		Workers:     *workers,
-		Timeout:     *timeout,
-		Spin:        *spin,
-		SampleEvery: sampleEvery, // the same windows whether or not progress is shown
-	}
+	cfg.Stages, cfg.Arrivals, cfg.Seed = stages, arrival, seed
 	shownURL := redactURL(cfg.URL) // anything printed or saved uses this, never cfg.URL
-	if !*quiet {
+	if !*rf.quiet {
 		fmt.Fprintf(stderr, "gmeter: %s %s%s%s, up to %d in flight\n",
-			cfg.Method, shownURL, profileText(stages), arrivalsText(arrival, *seed), cfg.Workers)
+			cfg.Method, shownURL, profileText(stages), arrivalsText(arrival, seed), cfg.Workers)
 		cfg.Progress = func(s runner.Snapshot) {
 			fmt.Fprintf(stderr, "[%5.1fs] %d scheduled, %d completed, %d failed, %d late | %s\n",
 				s.Elapsed.Seconds(), s.Scheduled, s.Completed, s.Failed, s.Late, windowText(s.Window))
@@ -156,12 +134,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		DurationSeconds: totalDuration.Seconds(),
 		Profile:         profileSpec(stages),
 		Arrivals:        arrival.String(),
-		Seed:            *seed,
+		Seed:            seed,
 		TimeoutSeconds:  cfg.Timeout.Seconds(),
 		SpinSeconds:     cfg.Spin.Seconds(),
 		StartedAt:       started.Format(time.RFC3339),
 	}
-	if *jsonOut == "-" {
+	if *rf.jsonOut == "-" {
 		if err := summary.WriteJSON(stdout); err != nil {
 			fmt.Fprintf(stderr, "gmeter: writing JSON: %v\n", err)
 			return 1
@@ -172,9 +150,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "gmeter: writing report: %v\n", err)
 		return 1
 	}
-	if *jsonOut != "" {
-		if err := writeJSONFile(*jsonOut, summary); err != nil {
-			fmt.Fprintf(stderr, "gmeter: writing %s: %v\n", *jsonOut, err)
+	if *rf.jsonOut != "" {
+		if err := writeJSONFile(*rf.jsonOut, summary); err != nil {
+			fmt.Fprintf(stderr, "gmeter: writing %s: %v\n", *rf.jsonOut, err)
 			return 1
 		}
 	}
@@ -326,7 +304,10 @@ func readBody(v string) ([]byte, error) {
 	return []byte(v), nil
 }
 
-func writeJSONFile(path string, s report.Summary) (err error) {
+func writeJSONFile(path string, s report.Summary) error { return writeJSONTo(path, s.WriteJSON) }
+
+// writeJSONTo creates path and has write fill it, reporting a failed close.
+func writeJSONTo(path string, write func(io.Writer) error) (err error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -336,7 +317,7 @@ func writeJSONFile(path string, s report.Summary) (err error) {
 			err = cerr
 		}
 	}()
-	return s.WriteJSON(f)
+	return write(f)
 }
 
 // headerFlag collects repeated -H "Key: Value" flags.

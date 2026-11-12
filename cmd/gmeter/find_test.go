@@ -189,3 +189,22 @@ func TestFindUsageErrorsExitWithCode2(t *testing.T) {
 		})
 	}
 }
+
+// Every progress line, and the usage text, must end in a real newline.
+func TestFindOutputUsesRealNewlines(t *testing.T) {
+	fast(t)
+	srv := okServer(t)
+	_, _, stderr := exec(t, "find", "-slo", "p99=1s", "-start", "20", "-max", "40", "-trial", "300ms", "-warmup", "0",
+		"-confirm", "0", "-arrivals", "even", srv.URL)
+	if strings.Contains(stderr, `\n`) {
+		t.Errorf("progress contains a literal backslash-n:\n%s", stderr)
+	}
+	if lines := strings.Split(strings.TrimSpace(stderr), "\n"); len(lines) < 3 { // banner + two trials
+		t.Errorf("want the banner and a line per trial, got %d lines:\n%s", len(lines), stderr)
+	}
+
+	_, _, usage := exec(t, "find")
+	if strings.Contains(usage, `\n`) || !strings.Contains(usage, "Usage: gmeter find") {
+		t.Errorf("the usage text should be real lines:\n%s", usage)
+	}
+}

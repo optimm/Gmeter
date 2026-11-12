@@ -32,10 +32,10 @@ func runFind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	)
 	rf := addRequestFlags(fs, "poisson", 200)
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: gmeter find -slo p99=50ms [flags] URL\\n\\n"+
-			"Finds the highest request rate at which the latency target is still met: it doubles the\\n"+
-			"rate until the target fails, narrows in between, and repeats the answer to check it.\\n"+
-			"Latency is measured from each request's intended send time. Flags must come before the URL.\\n\\n")
+		fmt.Fprintf(stderr, "Usage: gmeter find -slo p99=50ms [flags] URL\n\n"+
+			"Finds the highest request rate at which the latency target is still met: it doubles the\n"+
+			"rate until the target fails, narrows in between, and repeats the answer to check it.\n"+
+			"Latency is measured from each request's intended send time. Flags must come before the URL.\n\n")
 		fs.PrintDefaults()
 	}
 
@@ -51,13 +51,13 @@ func runFind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fs.Usage()
 		return 2
 	case n > 1:
-		fmt.Fprintf(stderr, "gmeter find: expected exactly one URL but got %d arguments (flags must come before the URL)\\n", n)
+		fmt.Fprintf(stderr, "gmeter find: expected exactly one URL but got %d arguments (flags must come before the URL)\n", n)
 		return 2
 	}
 	target := fs.Arg(0)
 
 	usage := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "gmeter find: "+format+"\\n", a...)
+		fmt.Fprintf(stderr, "gmeter find: "+format+"\n", a...)
 		return 2
 	}
 	if *sloIn == "" {
@@ -94,7 +94,7 @@ func runFind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	scrub := func(s string) string { return strings.ReplaceAll(s, cfg.URL, shownURL) }
 
 	if !*rf.quiet {
-		fmt.Fprintf(stderr, "gmeter: finding the highest rate for %s %s that meets %s, errors ≤ %g%%%s\\n",
+		fmt.Fprintf(stderr, "gmeter: finding the highest rate for %s %s that meets %s, errors ≤ %g%%%s\n",
 			cfg.Method, shownURL, slo, *maxErrors, arrivalsText(arrival, seed))
 	}
 
@@ -114,7 +114,7 @@ func runFind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return v, nil, err
 		}
 		if !*rf.quiet {
-			fmt.Fprintf(stderr, "[trial %d] %g rps: %s %s, errors %.1f%% -> %s\\n",
+			fmt.Fprintf(stderr, "[trial %d] %g rps: %s %s, errors %.1f%% -> %s\n",
 				trials, rate, slo.Label(), report.FormatDuration(o.Observed), o.ErrorRate*100, v)
 		}
 		return v, o, nil
@@ -123,7 +123,7 @@ func runFind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	out, err := find.Search(ctx, search, probe)
 	interrupted := ctx.Err() != nil
 	if err != nil && !interrupted {
-		fmt.Fprintf(stderr, "gmeter find: %s\\n", scrub(err.Error()))
+		fmt.Fprintf(stderr, "gmeter find: %s\n", scrub(err.Error()))
 		if len(out.Trials) == 0 {
 			return 2 // it never got as far as a trial: the request or its setup is wrong
 		}
@@ -152,7 +152,7 @@ func runFind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "gmeter find: writing the report: %v\\n", err)
+		fmt.Fprintf(stderr, "gmeter find: writing the report: %v\n", err)
 		return 1
 	}
 	if interrupted || !summary.Result.Found {

@@ -20,6 +20,12 @@ gmeter -rate 2000 -duration 60s -workers 64 http://localhost:8080/health
 gmeter -rate 500 -duration 30s -method POST \
   -H 'Content-Type: application/json' -H 'Authorization: Bearer ...' \
   -body @order.json http://localhost:8080/v1/orders
+
+# a step test: where does it stop coping?
+gmeter -stages '30s@200,30s@400,30s@800,30s@1600' http://localhost:8080/health
+
+# bursty, random arrivals at the same average rate
+gmeter -rate 600 -duration 60s -arrivals poisson http://localhost:8080/health
 ```
 
 Flags must come before the URL.
@@ -28,6 +34,9 @@ Flags must come before the URL.
 |---|---|---|
 | `-rate` | `100` | target requests per second (open loop) |
 | `-duration` | `10s` | how long requests keep being scheduled |
+| `-stages` | | a load profile instead of `-rate` and `-duration`: steps and ramps (see [Load profiles](#load-profiles-steps-and-ramps)) |
+| `-arrivals` | `even` | `even` (exact spacing) or `poisson` (random bursts at the same average rate) |
+| `-seed` | random | seed for `poisson`, to repeat the same arrival times; the one used is always printed and saved |
 | `-workers` | `50` | max requests in flight, which is also the max connection count |
 | `-timeout` | `10s` | per-request timeout |
 | `-spin` | `200µs` | busy-wait this long before each request's due time instead of sleeping, for precise timing; `0` = plain timer (see [Pacing precision](#pacing-precision--spin)) |
@@ -47,10 +56,10 @@ Against a throwaway server that answers instantly except for a 1-second freeze s
 that window**:
 
 ```
-[  1.0s] 201 scheduled, 201 completed, 0 failed, 1 late | window: 201 rps, p50 446µs p99 2.8ms max 6.9ms
-[  2.0s] 377 scheduled, 337 completed, 0 failed, 1 late | window: 136 rps, p50 455µs p99 5.3ms max 10.0ms
-[  3.0s] 601 scheduled, 601 completed, 0 failed, 163 late | window: 264 rps, p50 352.3ms p99 993.0ms max 1.00s
-[  4.0s] 801 scheduled, 801 completed, 0 failed, 163 late | window: 200 rps, p50 416µs p99 3.7ms max 6.6ms
+[  1.0s] 201 scheduled, 201 completed, 0 failed, 2 late | window: 201 rps, p50 490µs p99 8.9ms max 18.7ms
+[  2.0s] 355 scheduled, 315 completed, 0 failed, 2 late | window: 114 rps, p50 572µs p99 1.6ms max 3.0ms
+[  3.0s] 601 scheduled, 601 completed, 0 failed, 163 late | window: 286 rps, p50 291.5ms p99 992.0ms max 1.00s
+[  4.0s] 801 scheduled, 801 completed, 0 failed, 163 late | window: 200 rps, p50 416µs p99 2.7ms max 6.1ms
 ```
 
 The freeze is in the window ending at 3.0s. A run-wide p99 could not tell you *when*. Then the report:
@@ -59,33 +68,33 @@ The freeze is in the window ending at 3.0s. A run-wide p99 could not tell you *w
 requests   1000 scheduled   1000 ok   0 bad status   0 failed   0 dropped
 achieved   200.1 rps (target 200) over 5.00s
 status     200: 1000
-generator  timer lag p99 679µs, max 4.4ms   late 163 (16.3%)
-warning    163 of 1000 requests (16%) were dispatched after their due time: every worker was busy (raise -workers, or the server is slow) or […]
+generator  timer lag p99 1.1ms, max 14.3ms   late 163 (16.3%)
+warning    163 of 1000 requests (16%) were dispatched more than 1ms after their due time: every worker was busy (raise -workers, or the […]
 
 latency, corrected (from each request's intended send time)
-  p50 492µs   p90 510.1ms   p99 955.3ms   p99.9 999.8ms   max 1.00s
+  p50 572µs   p90 505.2ms   p99 951.6ms   p99.9 996.7ms   max 1.00s
 latency, service (from when the request was actually sent)
-  p50 473µs   p90 1.2ms   p99 955.3ms   p99.9 999.3ms   max 1.00s
+  p50 518µs   p90 897µs   p99 951.6ms   p99.9 996.7ms   max 1.00s
 ```
 
-The **service** line is what a closed-loop tester would report: the p90 looks perfect at 1.2ms. The
+The **service** line is what a closed-loop tester would report: the p90 looks perfect at 897µs. The
 **corrected** line shows that about a fifth of the requests (the 200 that were due during the 1-second
 freeze) actually waited for it.
 
-Note that the corrected p50 (492µs) is within 20µs of the service p50 (473µs): with the default `-spin`, the
+Note that the corrected p50 (572µs) is within about 50µs of the service p50 (518µs): with the default `-spin`, the
 scheduler's own wake-up lateness is not in the numbers (see [Pacing precision](#pacing-precision--spin)).
 
-Re-running with `-workers 2` is a good test of which number to trust. The corrected p99 stays at 954ms
+Re-running with `-workers 2` is a good test of which number to trust. The corrected p99 stays at 957ms
 (was 952ms with 20 workers), because it does not depend on how many workers you gave it. The service p99
-drops to 3.0ms (was 952ms), because only 2 requests were physically stuck. The service number is an artifact
+drops to 3.5ms (was 952ms), because only 2 requests were physically stuck. The service number is an artifact
 of the worker count; the corrected one is not.
 
 The first run's report closes with a per-window timeline, so a spike has a time on it:
 
 ```
 timeline (1s windows)
-  p99  ▁▁█▁▁   worst 993.0ms in the window ending at 3.0s
-  rps  ▆▅█▆   lowest 136 in the window ending at 2.0s
+  p99  ▁▁█▁▁   worst 992.0ms in the window ending at 3.0s
+  rps  ▆▄█▆   lowest 114 in the window ending at 2.0s
 ```
 
 (The completions are counted when a request finishes, so the requests stuck in the freeze show up in the
@@ -93,6 +102,64 @@ window ending at 3.0s, not in the ones in which they were due.)
 
 The bars are scaled from zero, so a small wobble stays small. When a run has more windows than fit, they are
 combined so that the worst p99 and the lowest rps survive.
+
+## Load profiles: steps and ramps
+
+`-stages` replaces `-rate` and `-duration` (it cannot be combined with them) with a list of stages, each
+`DURATION@RATE` for a constant rate or `DURATION@FROM->TO` for a linear ramp:
+
+```bash
+gmeter -stages '30s@200,30s@400,30s@800'          # a step test
+gmeter -stages '10s@50,1m@50->500,30s@500'        # warm up, ramp, hold
+gmeter -stages '20s@500,10s@0,20s@500'            # a pause in the middle
+```
+
+The report then breaks the run down by stage, and attributes each request to the stage it was **due** in, not the
+one it finished in: it is the load that was being offered when it was due that is being tested. Against a throwaway
+server with a fixed capacity (4 requests at a time, 5ms each, so about 800 rps), 400 workers:
+
+```
+gmeter -workers 400 -stages '4s@200,4s@400,4s@600,4s@700,4s@900,4s@1200' http://127.0.0.1:18082/
+```
+
+```
+stages (corrected latency, by when each request was due)
+   #  stage    scheduled  failed        p50        p90        p99        max
+   1  4s@200         800       0      5.5ms      6.3ms     10.7ms     13.2ms
+   2  4s@400        1600       0      5.3ms      5.8ms      9.1ms     14.4ms
+   3  4s@600        2400       0      5.3ms      5.5ms     12.1ms     21.7ms
+   4  4s@700        2800       0      5.5ms      5.6ms      6.3ms      8.1ms
+   5  4s@900        3600       0    374.9ms    821.0ms    977.3ms    996.0ms
+   6  4s@1200       4800       0      2.77s      4.19s      4.52s      4.56s
+```
+
+The knee is between 700 and 900 rps: up to 700 the p99 is 6-12ms, at 900 (just over capacity) it is a second, at
+1200 it is 4.5 seconds. The same run's whole-run service p99 was 639ms, because the workers cap how many requests
+can be physically in flight; the corrected p99 was 4.43s.
+
+That run also printed a late-dispatch warning, and it was right to: holding 1200 rps against a multi-second
+latency needs thousands of requests in flight, and it had 400 workers. The corrected latencies stay honest anyway,
+because a backed-up request keeps its place on the clock; raise `-workers` to also see the server's view.
+
+Ramps and steps are computed from the cumulative request count, so there is no drift and a fraction of a request
+left at the end of a stage carries into the next. `0` is a valid rate, for a pause.
+
+### Poisson arrivals
+
+By default requests are exactly evenly spaced. Real traffic is not: it arrives in clumps, and clumps queue. The
+same server at the same average rate, 600 rps (75% of its capacity), `-seed 11`:
+
+| arrivals | p50 | p90 | p99 | p99.9 |
+|---|---|---|---|---|
+| `even` | 5.3ms | 5.4ms | 6.0ms | 15.4ms |
+| `poisson` | 6.2ms | 11.1ms | 17.4ms | 26.0ms |
+
+Evenly spaced requests said the p99 was 6.0ms; the same load arriving in random bursts gave 17.4ms. Use `-arrivals
+poisson` when the question is how the server behaves under realistic traffic, not how it behaves under a metronome.
+
+`-arrivals poisson` draws exponential gaps (mean 1/rate) from a seeded generator, mapped through the profile, so it
+follows ramps and steps too. The seed is always printed in the banner and saved in the JSON; pass it back with
+`-seed` to repeat the same arrival times. `diff` notes when two runs used different arrival processes or seeds.
 
 ## Comparing runs
 
@@ -117,23 +184,25 @@ achieved rps            200.1        200.1     +0.0%
 failed                      0            0     +0.0%
 bad status                  0            0     +0.0%
 latency, corrected
-  p50                   469µs        492µs     +4.8%
-  p90                   1.1ms      510.1ms +45230.0%
-  p99                   3.3ms      955.3ms +29015.6%
-  p99.9                10.1ms      999.8ms  +9806.5%
-  max                  14.2ms        1.00s  +6973.6%
+  p50                   442µs        572µs    +29.3%
+  p90                   947µs      505.2ms +53231.1%
+  p99                   3.0ms      951.6ms +31966.3%
+  p99.9                 6.6ms      996.7ms +14976.1%
+  max                   6.7ms        1.00s +14837.8%
 
 share of B's requests that are slower than A's percentiles
-  slower than A's p50 (469µs): 52.4%   (at most 50.0% if nothing changed)
-  slower than A's p90 (1.1ms): 26.5%   (at most 10.0% if nothing changed)
-  slower than A's p99 (3.3ms): 21.2%   (at most 1.0% if nothing changed)
+  slower than A's p50 (442µs): 62.5%   (at most 50.0% if nothing changed)
+  slower than A's p90 (947µs): 29.0%   (at most 10.0% if nothing changed)
+  slower than A's p99 (3.0ms): 21.8%   (at most 1.0% if nothing changed)
 ```
 
 The last block is something percentiles alone cannot tell you. It uses the full histograms saved in each file
 to answer "how many more of my requests got slow?", not just "how much slower is the p99?".
 
-`diff` prints a note when the runs differ in URL, method, rate, workers, duration or pacing spin, or when either
-run's generator raised a warning. (Spin is in the list because it changes what the latencies contain: see below.)
+`diff` prints a note when the runs differ in URL, method, rate, workers, duration, load profile, arrival process
+(or Poisson seed) or pacing spin, or when either run's generator raised a warning. (Spin is in the list because it
+changes what the latencies contain: see below.) It compares the whole run; per-stage numbers are in each file's
+`stages`.
 
 To gate a build, add `-threshold`:
 
@@ -147,9 +216,9 @@ run-to-run noise, so treat small differences with suspicion and repeat the runs.
 
 ### What the JSON contains
 
-`version`, `run` (URL, method, workers, duration, spin, start time), the totals, `generator`, `warnings`, the
-per-window `timeline`, and the full latency `histograms` (sparse: only non-empty buckets). A password in the
-URL is redacted (`user:xxxxx@host`) in the JSON and everywhere Gmeter prints it, and request headers are never
+`version`, `run` (URL, method, workers, duration, profile, arrivals, seed, spin, start time), the totals,
+`generator`, `warnings`, `stages` (one digest per stage of the profile), the per-window `timeline`, and the
+full latency `histograms` (sparse: only non-empty buckets). A password in the URL is redacted (`user:xxxxx@host`) in the JSON and everywhere Gmeter prints it, and request headers are never
 saved. A query string is kept as given, so don't put secrets in it. `diff` refuses files with a missing or
 different `version`, and histograms it cannot rebuild.
 
@@ -159,9 +228,11 @@ different `version`, and histograms it cannot rebuild.
 
 - **timer lag** is how far past its due time the scheduler woke up, for requests it had to sleep for. It
   isolates timer and OS scheduling overshoot, plus GC pauses in Gmeter itself. A warning fires above 5ms p99.
-- **late** counts requests the scheduler reached when they were already overdue. Either every worker was busy
-  (raise `-workers`, or the server is slow) or the rate is finer than the machine's timers can pace. A
-  warning fires above 5%. Late requests are still measured from their due time, so the latency stays honest.
+- **late** counts requests the scheduler reached more than 1ms after their due time. Either every worker was
+  busy (raise `-workers`, or the server is slow) or the generator was starved of CPU. A warning fires above 5%.
+  Late requests are still measured from their due time, so the latency stays honest. The 1ms tolerance exists
+  because random arrivals put requests a few microseconds apart: without it, a healthy generator reported 24%
+  of Poisson requests as late at 20000 rps against an instant server.
 
 Both are in the JSON under `generator`, and `warnings` is always an array.
 
@@ -223,8 +294,10 @@ not the tails. Gmeter's own check still catches that case: the timer-lag and lat
 
 - **`internal/pacer`**: the schedule is computed from the request index, never by accumulating an interval,
   so rounding error does not build up over millions of requests. If the generator falls behind it catches up
-  by sending back-to-back, and those requests still carry their original due time. `WaitUntil` is the hybrid
-  sleep-then-spin wait described above.
+  by sending back-to-back, and those requests still carry their original due time. A profile is a list of
+  constant or linearly ramping stages, and the k-th request is due when the expected cumulative count reaches
+  k (even arrivals) or the k-th point of a seeded unit-rate Poisson process (poisson), found by inverting that
+  count in closed form. `WaitUntil` is the hybrid sleep-then-spin wait described above.
 - **`internal/hist`**: a fixed-memory (~250KB) log-linear histogram in the style of HdrHistogram. Relative
   error is at most 2^-10 (about 0.1%) at any magnitude.
   - `Histogram` is the plain version, used for merged results.
@@ -238,7 +311,8 @@ not the tails. Gmeter's own check still catches that case: the timer-lag and lat
   8 goroutines each recording into their own Recorder took 2.0-3.1 ns/op unpadded and 0.92-0.93 ns/op padded
   (five runs each). Reproduce with `go test -run '^$' -bench RecorderRecordParallel -cpu 8 ./internal/hist`.
 - **`internal/runner`**: scheduler, workers, an HTTP/1.1 client capped at `-workers` connections, live
-  counters (atomics), and the generator-health measurements.
+  counters (atomics), per-stage results (a small lock per stage, taken once per response), and the
+  generator-health measurements.
 - **`internal/report`**: text and JSON output, the per-window timeline, and run comparison (`diff`).
 
 ### Choices worth knowing
@@ -272,7 +346,8 @@ the live windows pinpoint when a stall happened.
 - [x] **v1b**: per-window timeline in the report and JSON, full histograms in the JSON, `gmeter diff a.json b.json`
       with a `-threshold` gate
 - [x] **v1c**: precise pacing: sleep, then busy-wait the last stretch (`-spin`), bounded in CPU cost
-- [ ] **v2**: ramp and step schedules, Poisson arrivals, "find the max rate under a p99 target", traffic replay
-      from a log file, per-phase timings (connect, TLS, first byte)
+- [x] **v2a**: load profiles (steps, ramps, pauses), Poisson arrivals with a reproducible seed, per-stage results
+- [ ] **v2b**: "find the max rate under a p99 target", traffic replay from a log file, per-phase timings
+      (connect, TLS, first byte)
 - [ ] **v3**: distributed mode with one controller driving several generators (merging histograms, not
       averaging percentiles), HTTP/2 and gRPC

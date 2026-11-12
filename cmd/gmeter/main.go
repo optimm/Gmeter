@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/optimm/Gmeter/internal/pacer"
 	"github.com/optimm/Gmeter/internal/report"
 	"github.com/optimm/Gmeter/internal/runner"
 )
@@ -43,6 +45,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	var (
 		rate     = fs.Float64("rate", 100, "target requests per second (open loop)")
 		duration = fs.Duration("duration", 10*time.Second, "how long to keep scheduling requests")
+		stagesIn = fs.String("stages", "", `load profile instead of -rate and -duration: comma-separated DURATION@RATE (constant) or DURATION@FROM->TO (ramp), e.g. "30s@100,30s@200" or "10s@50,1m@50->500"`)
+		arrivals = fs.String("arrivals", "even", "how requests are spread within the rate: even (exact spacing) or poisson (random bursts)")
+		seed     = fs.Uint64("seed", 0, "seed for -arrivals poisson, to repeat the same arrival times (0 picks one, and reports it)")
 		workers  = fs.Int("workers", 50, "max requests in flight, which is also the max number of connections")
 		timeout  = fs.Duration("timeout", 10*time.Second, "per-request timeout")
 		spin     = fs.Duration("spin", 200*time.Microsecond, "busy-wait this long before each request's due time instead of sleeping, for precise timing (0 = plain timer); capped at a quarter of the gap between requests, so it costs about a quarter of one core at most")
@@ -75,6 +80,35 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	target := fs.Arg(0)
 
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	var stages []pacer.Stage
+	if set["stages"] {
+		if set["rate"] || set["duration"] {
+			fmt.Fprintln(stderr, "gmeter: -stages cannot be combined with -rate or -duration: the stages already say how fast and for how long")
+			return 2
+		}
+		var err error
+		if stages, err = pacer.ParseStages(*stagesIn); err != nil {
+			fmt.Fprintf(stderr, "gmeter: -stages: %v\n", err)
+			return 2
+		}
+	} else {
+		stages = pacer.ConstantRate(*rate, *duration)
+	}
+	arrival, err := pacer.ParseArrivals(*arrivals)
+	if err != nil {
+		fmt.Fprintf(stderr, "gmeter: -arrivals: %v\n", err)
+		return 2
+	}
+	if arrival == pacer.Poisson && *seed == 0 {
+		*seed = rand.Uint64() | 1 // never 0, which means "pick one"
+	}
+	if arrival != pacer.Poisson {
+		*seed = 0 // spacing is exact: there is nothing for a seed to do
+	}
+	totalDuration, expected := pacer.Totals(stages)
+
 	reqBody, err := readBody(*body)
 	if err != nil {
 		fmt.Fprintf(stderr, "gmeter: cannot read -body: %v\n", err)
@@ -86,8 +120,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Method:      strings.ToUpper(*method),
 		Header:      http.Header(headers),
 		Body:        reqBody,
-		Rate:        *rate,
-		Duration:    *duration,
+		Stages:      stages,
+		Arrivals:    arrival,
+		Seed:        *seed,
 		Workers:     *workers,
 		Timeout:     *timeout,
 		Spin:        *spin,
@@ -95,8 +130,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	shownURL := redactURL(cfg.URL) // anything printed or saved uses this, never cfg.URL
 	if !*quiet {
-		fmt.Fprintf(stderr, "gmeter: %s %s at %g rps for %v, up to %d in flight\n",
-			cfg.Method, shownURL, cfg.Rate, cfg.Duration, cfg.Workers)
+		fmt.Fprintf(stderr, "gmeter: %s %s%s%s, up to %d in flight\n",
+			cfg.Method, shownURL, profileText(stages), arrivalsText(arrival, *seed), cfg.Workers)
 		cfg.Progress = func(s runner.Snapshot) {
 			fmt.Fprintf(stderr, "[%5.1fs] %d scheduled, %d completed, %d failed, %d late | %s\n",
 				s.Elapsed.Seconds(), s.Scheduled, s.Completed, s.Failed, s.Late, windowText(s.Window))
@@ -113,12 +148,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "gmeter: interrupted; the report covers the partial run")
 	}
 
-	summary := report.Summarize(res, cfg.Rate)
+	summary := report.Summarize(res, targetRate(expected, totalDuration))
 	summary.Run = report.RunInfo{
 		URL:             shownURL,
 		Method:          cfg.Method,
 		Workers:         cfg.Workers,
-		DurationSeconds: cfg.Duration.Seconds(),
+		DurationSeconds: totalDuration.Seconds(),
+		Profile:         profileSpec(stages),
+		Arrivals:        arrival.String(),
+		Seed:            *seed,
 		TimeoutSeconds:  cfg.Timeout.Seconds(),
 		SpinSeconds:     cfg.Spin.Seconds(),
 		StartedAt:       started.Format(time.RFC3339),
@@ -141,6 +179,41 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+// profileText describes a load profile for the startup banner: " at 200 rps
+// for 5s" for a constant rate, " with stages 30s@100,30s@200" otherwise.
+func profileText(stages []pacer.Stage) string {
+	if len(stages) == 1 && stages[0].From == stages[0].To {
+		return fmt.Sprintf(" at %g rps for %v", stages[0].From, stages[0].Duration)
+	}
+	return " with stages " + profileSpec(stages)
+}
+
+// arrivalsText names the arrival process in the banner when it is not the
+// default, with the seed that reproduces it.
+func arrivalsText(a pacer.Arrivals, seed uint64) string {
+	if a != pacer.Poisson {
+		return ""
+	}
+	return fmt.Sprintf(" (poisson arrivals, seed %d)", seed)
+}
+
+// profileSpec is the profile in the notation -stages reads.
+func profileSpec(stages []pacer.Stage) string {
+	parts := make([]string, len(stages))
+	for i, st := range stages {
+		parts[i] = st.String()
+	}
+	return strings.Join(parts, ",")
+}
+
+// targetRate is the average rate of a profile.
+func targetRate(expected float64, d time.Duration) float64 {
+	if d <= 0 {
+		return 0
+	}
+	return expected / d.Seconds()
 }
 
 // redactURL hides a password embedded in the URL (user:pass@host). It is what

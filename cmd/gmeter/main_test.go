@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -147,6 +148,11 @@ func TestUsageErrorsExitWithCode2(t *testing.T) {
 		"zero rate":            {[]string{"-rate", "0", srv.URL}, "rate"},
 		"unknown flag":         {[]string{"-nope", srv.URL}, "nope"},
 		"negative spin":        {[]string{"-spin", "-1ms", srv.URL}, "must not be negative"},
+		"stages with rate":     {[]string{"-stages", "1s@10", "-rate", "5", srv.URL}, "cannot be combined"},
+		"stages with duration": {[]string{"-stages", "1s@10", "-duration", "5s", srv.URL}, "cannot be combined"},
+		"malformed stages":     {[]string{"-stages", "soon@10", srv.URL}, "stage 1"},
+		"stages of nothing":    {[]string{"-stages", "1s@0", srv.URL}, "no requests"},
+		"unknown arrivals":     {[]string{"-arrivals", "random", srv.URL}, "poisson"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -366,5 +372,96 @@ func TestDiffUsageErrorsExitWithCode2(t *testing.T) {
 				t.Fatalf("stderr should mention %q:\n%s", tc.message, stderr)
 			}
 		})
+	}
+}
+
+type savedRun struct {
+	Run struct {
+		DurationSeconds float64 `json:"duration_seconds"`
+		Profile         string  `json:"profile"`
+		Arrivals        string  `json:"arrivals"`
+		Seed            uint64  `json:"seed"`
+	} `json:"run"`
+	TargetRPS float64 `json:"target_rps"`
+	Scheduled uint64  `json:"scheduled"`
+	Stages    []struct {
+		Profile   string `json:"profile"`
+		Scheduled uint64 `json:"scheduled"`
+	} `json:"stages"`
+}
+
+func runAndLoad(t *testing.T, args ...string) (saved savedRun, stdout, stderr string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "run.json")
+	code, out, errOut := exec(t, append([]string{"-json", path}, args...)...)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	return saved, out, errOut
+}
+
+func TestStagesFlagRunsAStepProfileAndReportsEachStage(t *testing.T) {
+	srv := okServer(t)
+	saved, out, _ := runAndLoad(t, "-quiet", "-stages", "300ms@50,300ms@150", srv.URL)
+
+	if saved.Scheduled != 60 { // 15 + 45
+		t.Errorf("scheduled %d, want 60", saved.Scheduled)
+	}
+	if saved.Run.Profile != "300ms@50,300ms@150" || saved.Run.DurationSeconds != 0.6 {
+		t.Errorf("saved profile %q over %vs, want 300ms@50,300ms@150 over 0.6s", saved.Run.Profile, saved.Run.DurationSeconds)
+	}
+	if saved.TargetRPS != 100 { // 60 requests over 0.6s
+		t.Errorf("target_rps = %v, want the average, 100", saved.TargetRPS)
+	}
+	if len(saved.Stages) != 2 || saved.Stages[0].Scheduled != 15 || saved.Stages[1].Scheduled != 45 {
+		t.Errorf("saved stages = %+v, want 15 and 45 scheduled", saved.Stages)
+	}
+	for _, want := range []string{"stages", "300ms@50", "300ms@150", "on average"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestAConstantRateIsSavedAsAOneStageEvenProfile(t *testing.T) {
+	srv := okServer(t)
+	saved, out, _ := runAndLoad(t, "-quiet", "-rate", "50", "-duration", "300ms", srv.URL)
+
+	if saved.Run.Profile != "300ms@50" || saved.Run.Arrivals != "even" || saved.Run.Seed != 0 {
+		t.Errorf("saved %+v, want profile 300ms@50, even arrivals, no seed", saved.Run)
+	}
+	if len(saved.Stages) != 1 {
+		t.Errorf("%d stages saved, want 1", len(saved.Stages))
+	}
+	if strings.Contains(out, "stages (") {
+		t.Errorf("a constant rate should not print a stage table:\n%s", out)
+	}
+}
+
+// The seed is what makes a random arrival pattern repeatable, so it is always
+// printed and saved, including one Gmeter picked itself.
+func TestPoissonArrivalsAreReproducibleFromTheSeedItReports(t *testing.T) {
+	srv := okServer(t)
+	args := []string{"-rate", "100", "-duration", "500ms", "-arrivals", "poisson"}
+
+	first, _, stderr := runAndLoad(t, append(args, srv.URL)...) // no seed given: one is chosen
+	m := regexp.MustCompile(`seed (\d+)`).FindStringSubmatch(stderr)
+	if m == nil {
+		t.Fatalf("the banner should name the seed that was chosen:\n%s", stderr)
+	}
+	if first.Run.Arrivals != "poisson" || first.Run.Seed == 0 || strconv.FormatUint(first.Run.Seed, 10) != m[1] {
+		t.Fatalf("saved arrivals/seed = %q/%d, want poisson and the printed seed %s", first.Run.Arrivals, first.Run.Seed, m[1])
+	}
+
+	again, _, _ := runAndLoad(t, append(append(args, "-quiet", "-seed", m[1]), srv.URL)...)
+	if again.Scheduled != first.Scheduled || again.Run.Seed != first.Run.Seed {
+		t.Fatalf("the same seed gave %d requests, then %d", first.Scheduled, again.Scheduled)
 	}
 }

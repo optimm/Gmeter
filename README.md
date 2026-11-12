@@ -30,6 +30,7 @@ Flags must come before the URL.
 | `-duration` | `10s` | how long requests keep being scheduled |
 | `-workers` | `50` | max requests in flight, which is also the max connection count |
 | `-timeout` | `10s` | per-request timeout |
+| `-spin` | `200µs` | busy-wait this long before each request's due time instead of sleeping, for precise timing; `0` = plain timer (see [Pacing precision](#pacing-precision--spin)) |
 | `-method` | `GET` | HTTP method |
 | `-H` | | extra header `"Key: Value"` (repeatable) |
 | `-body` | | request body; `@file` reads it from a file |
@@ -46,10 +47,10 @@ Against a throwaway server that answers instantly except for a 1-second freeze s
 that window**:
 
 ```
-[  1.0s] 201 scheduled, 201 completed, 0 failed, 2 late | window: 201 rps, p50 1.4ms p99 4.5ms max 11.9ms
-[  2.0s] 343 scheduled, 303 completed, 0 failed, 3 late | window: 102 rps, p50 1.2ms p99 4.7ms max 6.9ms
-[  3.0s] 601 scheduled, 601 completed, 0 failed, 166 late | window: 298 rps, p50 271.6ms p99 996.1ms max 1.01s
-[  4.0s] 801 scheduled, 801 completed, 0 failed, 171 late | window: 200 rps, p50 1.3ms p99 17.2ms max 27.2ms
+[  1.0s] 201 scheduled, 201 completed, 0 failed, 1 late | window: 201 rps, p50 446µs p99 2.8ms max 6.9ms
+[  2.0s] 377 scheduled, 337 completed, 0 failed, 1 late | window: 136 rps, p50 455µs p99 5.3ms max 10.0ms
+[  3.0s] 601 scheduled, 601 completed, 0 failed, 163 late | window: 264 rps, p50 352.3ms p99 993.0ms max 1.00s
+[  4.0s] 801 scheduled, 801 completed, 0 failed, 163 late | window: 200 rps, p50 416µs p99 3.7ms max 6.6ms
 ```
 
 The freeze is in the window ending at 3.0s. A run-wide p99 could not tell you *when*. Then the report:
@@ -58,31 +59,37 @@ The freeze is in the window ending at 3.0s. A run-wide p99 could not tell you *w
 requests   1000 scheduled   1000 ok   0 bad status   0 failed   0 dropped
 achieved   200.1 rps (target 200) over 5.00s
 status     200: 1000
-generator  timer lag p99 2.1ms, max 22.6ms   late 171 (17.1%)
-warning    171 of 1000 requests (17%) were dispatched after their due time: every worker was busy (raise -workers, or the server is slow) or […]
+generator  timer lag p99 679µs, max 4.4ms   late 163 (16.3%)
+warning    163 of 1000 requests (16%) were dispatched after their due time: every worker was busy (raise -workers, or the server is slow) or […]
 
 latency, corrected (from each request's intended send time)
-  p50 1.4ms   p90 513.5ms   p99 956.8ms   p99.9 1.00s   max 1.01s
+  p50 492µs   p90 510.1ms   p99 955.3ms   p99.9 999.8ms   max 1.00s
 latency, service (from when the request was actually sent)
-  p50 484µs   p90 1.2ms   p99 955.8ms   p99.9 1.00s   max 1.01s
+  p50 473µs   p90 1.2ms   p99 955.3ms   p99.9 999.3ms   max 1.00s
 ```
 
 The **service** line is what a closed-loop tester would report: the p90 looks perfect at 1.2ms. The
 **corrected** line shows that about a fifth of the requests (the 200 that were due during the 1-second
 freeze) actually waited for it.
 
-Re-running with `-workers 2` is a good test of which number to trust. The corrected p99 stays at 955ms
-(was 957ms), because it does not depend on how many workers you gave it. The service p99 drops to 2.9ms
-(was 956ms), because only 2 requests were physically stuck. The service number is an artifact of the
-worker count; the corrected one is not.
+Note that the corrected p50 (492µs) is within 20µs of the service p50 (473µs): with the default `-spin`, the
+scheduler's own wake-up lateness is not in the numbers (see [Pacing precision](#pacing-precision--spin)).
 
-From another run of the same demo, the report closes with a per-window timeline, so a spike has a time on it:
+Re-running with `-workers 2` is a good test of which number to trust. The corrected p99 stays at 954ms
+(was 952ms with 20 workers), because it does not depend on how many workers you gave it. The service p99
+drops to 3.0ms (was 952ms), because only 2 requests were physically stuck. The service number is an artifact
+of the worker count; the corrected one is not.
+
+The first run's report closes with a per-window timeline, so a spike has a time on it:
 
 ```
 timeline (1s windows)
-  p99  ▁▁█▁▁   worst 993.5ms in the window ending at 3.0s
-  rps  ████   lowest 194 in the window ending at 2.0s
+  p99  ▁▁█▁▁   worst 993.0ms in the window ending at 3.0s
+  rps  ▆▅█▆   lowest 136 in the window ending at 2.0s
 ```
+
+(The completions are counted when a request finishes, so the requests stuck in the freeze show up in the
+window ending at 3.0s, not in the ones in which they were due.)
 
 The bars are scaled from zero, so a small wobble stays small. When a run has more windows than fit, they are
 combined so that the worst p99 and the lowest rps survive.
@@ -98,35 +105,35 @@ gmeter -rate 200 -duration 30s -json after.json  http://localhost:8080/
 gmeter diff before.json after.json
 ```
 
-Real output (A is a healthy run, B is the freeze demo; file paths shortened):
+Real output (A is a healthy run against a fast server, B is the freeze demo; the two runs used two different
+local servers, which is why `diff` says the URLs differ):
 
 ```
-note  duration differs (A: 4s, B: 5s): this is not a like-for-like comparison
-note  A reported 1 warning(s) about the generator (see its summary): its latencies may be inflated
+note  URL differs (A: http://127.0.0.1:18081/, B: http://127.0.0.1:18080/): this is not a like-for-like comparison
 note  B reported 1 warning(s) about the generator (see its summary): its latencies may be inflated
 
                             A            B    change
-achieved rps            200.1        200.1     -0.0%
+achieved rps            200.1        200.1     +0.0%
 failed                      0            0     +0.0%
 bad status                  0            0     +0.0%
 latency, corrected
-  p50                   1.4ms        1.5ms     +4.9%
-  p90                   2.1ms      509.3ms +23975.9%
-  p99                   6.8ms      953.7ms +13850.4%
-  p99.9                11.6ms      998.8ms  +8483.7%
-  max                  11.6ms        1.00s  +8522.1%
+  p50                   469µs        492µs     +4.8%
+  p90                   1.1ms      510.1ms +45230.0%
+  p99                   3.3ms      955.3ms +29015.6%
+  p99.9                10.1ms      999.8ms  +9806.5%
+  max                  14.2ms        1.00s  +6973.6%
 
 share of B's requests that are slower than A's percentiles
-  slower than A's p50 (1.4ms): 59.7%   (at most 50.0% if nothing changed)
-  slower than A's p90 (2.1ms): 25.7%   (at most 10.0% if nothing changed)
-  slower than A's p99 (6.8ms): 21.1%   (at most 1.0% if nothing changed)
+  slower than A's p50 (469µs): 52.4%   (at most 50.0% if nothing changed)
+  slower than A's p90 (1.1ms): 26.5%   (at most 10.0% if nothing changed)
+  slower than A's p99 (3.3ms): 21.2%   (at most 1.0% if nothing changed)
 ```
 
 The last block is something percentiles alone cannot tell you. It uses the full histograms saved in each file
 to answer "how many more of my requests got slow?", not just "how much slower is the p99?".
 
-`diff` prints a note when the runs differ in URL, method, rate, workers or duration, or when either run's
-generator raised a warning.
+`diff` prints a note when the runs differ in URL, method, rate, workers, duration or pacing spin, or when either
+run's generator raised a warning. (Spin is in the list because it changes what the latencies contain: see below.)
 
 To gate a build, add `-threshold`:
 
@@ -140,7 +147,7 @@ run-to-run noise, so treat small differences with suspicion and repeat the runs.
 
 ### What the JSON contains
 
-`version`, `run` (URL, method, workers, duration, start time), the totals, `generator`, `warnings`, the
+`version`, `run` (URL, method, workers, duration, spin, start time), the totals, `generator`, `warnings`, the
 per-window `timeline`, and the full latency `histograms` (sparse: only non-empty buckets). A password in the
 URL is redacted (`user:xxxxx@host`) in the JSON and everywhere Gmeter prints it, and request headers are never
 saved. A query string is kept as given, so don't put secrets in it. `diff` refuses files with a missing or
@@ -158,10 +165,49 @@ different `version`, and histograms it cannot rebuild.
 
 Both are in the JSON under `generator`, and `warnings` is always an array.
 
-Timer lag counts toward corrected latency, because a request sent late is still measured from when it was due.
-On a Mac with other work running I measured a timer-lag p99 of about 5ms, which was most of the 6.8ms p99 of a
-fast local server. Gmeter warned, correctly. For sub-millisecond precision, run it on a quiet machine or on
-Linux.
+## Pacing precision (`-spin`)
+
+Timer lag counts toward corrected latency: a request the scheduler sends late is still measured from when it was
+due. So a scheduler that wakes up late makes every request look slower than the server made it.
+
+A plain timer wakes up late by an amount the OS picks. On the Mac I measured on, the median lateness was about 2ms
+for sleeps of 10ms or longer, 0.4ms for 2ms sleeps and 0.1ms for 1ms sleeps (probably the OS coalescing timers to
+save power, but I did not verify the cause). At 100 rps that is most of a fast server's latency: the corrected p50
+was 2.4ms while the service p50 was 0.7ms.
+
+By default the scheduler therefore sleeps most of the way to each request's due time and **busy-waits the last
+200µs** (`-spin`). It does not sleep straight to the start of that window, because a timer that wakes late would
+overshoot the due time itself: each sleep covers half of the time still to cover, re-reading the clock after every
+wake-up, so a late wake-up eats into slack that is still there.
+
+Measured against a local server that answers instantly, 8 seconds per cell, one run each (`/usr/bin/time` for CPU):
+
+| rate | corrected p50, `-spin 0` | corrected p50, default | service p50 | extra CPU |
+|---|---|---|---|---|
+| 100 rps | 2.4ms | 601µs | 541µs | about 3% of a core |
+| 1000 rps | 459µs | 161µs | 156µs | about 13% of a core |
+| 5000 rps | 114µs | 76µs | 72µs | about 15% of a core |
+| 10000 rps and up | 91µs | 90µs | | none: spinning switches itself off |
+
+With spinning, the corrected p50 lands within a few tens of microseconds of the service p50, so what is reported
+is the server and not the scheduler's alarm clock. At 1000 rps the corrected p99 also fell in each of three runs
+(from 2.1-3.9ms to 0.4-0.5ms; only the last of the three was on the final code, the other two used earlier
+revisions of the pacing loop).
+
+How much it costs, and when it turns itself off:
+
+- The busy-wait is capped at a quarter of the gap between requests, so it never costs more than about a quarter of
+  one core.
+- Above about 5000 rps the capped window would be shorter than the shortest useful sleep, so the scheduler would
+  never sleep and would just spin. A plain timer is already within tens of microseconds at those rates (p99 timer
+  lag 57µs at 20000 rps), so spinning switches itself off. At 20000 rps an earlier version without this rule gave
+  no better latencies and used about one whole extra core.
+- `-spin 0` restores the plain timer, for a machine that is short of CPU.
+
+What it cannot fix: the tail. These runs were on a machine that was already overloaded (load average about 12 on 10
+cores), and when the OS does not schedule the generator at all, no pacing strategy helps. Read the medians above,
+not the tails. Gmeter's own check still catches that case: the timer-lag and late-dispatch warnings do not depend on
+`-spin`. For sub-millisecond tails, use a quiet machine, ideally Linux.
 
 ## How it works
 
@@ -177,7 +223,8 @@ Linux.
 
 - **`internal/pacer`**: the schedule is computed from the request index, never by accumulating an interval,
   so rounding error does not build up over millions of requests. If the generator falls behind it catches up
-  by sending back-to-back, and those requests still carry their original due time.
+  by sending back-to-back, and those requests still carry their original due time. `WaitUntil` is the hybrid
+  sleep-then-spin wait described above.
 - **`internal/hist`**: a fixed-memory (~250KB) log-linear histogram in the style of HdrHistogram. Relative
   error is at most 2^-10 (about 0.1%) at any magnitude.
   - `Histogram` is the plain version, used for merged results.
@@ -202,6 +249,8 @@ Linux.
   server look fast.
 - If the server is so slow that the backlog cannot drain, the scheduler gives up on undispatched requests once
   the run is overdue by one `-timeout`, and reports them as `dropped`.
+- Precision costs CPU: the default `-spin 200µs` busy-waits, up to about a quarter of a core and only below about
+  5000 rps. Turn it off with `-spin 0` if the generator shares a small machine with the thing it is testing.
 - Redirects are not followed (a 302 is a result) and proxy environment variables are ignored.
 - HTTP/1.1 only for now.
 
@@ -222,6 +271,7 @@ the live windows pinpoint when a stall happened.
       warnings
 - [x] **v1b**: per-window timeline in the report and JSON, full histograms in the JSON, `gmeter diff a.json b.json`
       with a `-threshold` gate
+- [x] **v1c**: precise pacing: sleep, then busy-wait the last stretch (`-spin`), bounded in CPU cost
 - [ ] **v2**: ramp and step schedules, Poisson arrivals, "find the max rate under a p99 target", traffic replay
       from a log file, per-phase timings (connect, TLS, first byte)
 - [ ] **v3**: distributed mode with one controller driving several generators (merging histograms, not

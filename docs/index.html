@@ -28,6 +28,17 @@
   --screen-ink: #E6ECF2;
   --screen-dim: #8E9BB0;
   --focus: #2F5DA8;
+  --panel: #101B33;
+  --panel-2: #172442;
+  --panel-grid: rgba(150, 172, 212, 0.13);
+  --panel-rule: rgba(150, 172, 212, 0.26);
+  --panel-ink: #EEF2F8;
+  --panel-ink-2: #9AA8BF;
+  --panel-red: #FF5C72;
+  --panel-blue: #7FA8F5;
+  --panel-red-wash: rgba(255, 92, 114, 0.11);
+  --us: #17233F;
+  --us-ink: #EEF2F8;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -45,6 +56,10 @@
     --screen-ink: #E4EAF0;
     --screen-dim: #7E8DA2;
     --focus: #79A3F0;
+    --panel: #070C13;
+    --panel-2: #0F1824;
+    --us: #22324D;
+    --us-ink: #EEF2F8;
     color-scheme: dark;
   }
 }
@@ -62,6 +77,10 @@
   --screen-ink: #E4EAF0;
   --screen-dim: #7E8DA2;
   --focus: #79A3F0;
+  --panel: #070C13;
+  --panel-2: #0F1824;
+  --us: #22324D;
+  --us-ink: #EEF2F8;
   color-scheme: dark;
 }
 
@@ -86,6 +105,25 @@ p { margin: 0 0 1em; }
 .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
 @media (max-width: 600px) { .wrap { padding: 0 16px; } }
 
+/* the recorder panel: full-bleed dark bands at the top and the bottom of the page */
+.on-panel {
+  --paper: var(--panel);
+  --grid: var(--panel-grid);
+  --rule: var(--panel-rule);
+  --ink: var(--panel-ink);
+  --ink-2: var(--panel-ink-2);
+  --red: var(--panel-red);
+  --blue: var(--panel-blue);
+  --red-wash: var(--panel-red-wash);
+  --screen: var(--panel-2);
+  --focus: var(--panel-blue);
+  color-scheme: dark;
+  color: var(--ink);
+  /* paints the element and 100vmax either side in one pass, so the band has no seams and no sideways scroll */
+  border-image: linear-gradient(var(--paper), var(--paper)) fill 0 / 0 / 0 100vmax;
+}
+.hero.on-panel, footer.on-panel { border-image-outset: 1px 100vmax 0; }
+
 /* header */
 .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 0; }
 .mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; text-decoration: none; letter-spacing: -0.01em; }
@@ -96,21 +134,26 @@ p { margin: 0 0 1em; }
 @media (max-width: 480px) { .top nav { gap: 14px; font-size: 14px; } .mark { font-size: 18px; } .mark svg { width: 22px; height: 22px; } }
 
 /* hero */
-.hero { padding: 32px 0 24px; }
+.hero { padding: 36px 0 56px; }
 .hero h1 {
-  font-size: clamp(2.6rem, 6.6vw, 5.4rem);
-  line-height: 0.95;
-  letter-spacing: -0.028em;
-  font-weight: 750;
-  font-variation-settings: "wdth" 86, "opsz" 96;
+  font-size: clamp(2.5rem, 6.3vw, 5rem);
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-weight: 760;
+  font-variation-settings: "wdth" 84, "opsz" 96;
   margin: 0 0 28px;
 }
-.lede { font-size: clamp(1.1rem, 1.6vw, 1.3rem); line-height: 1.5; max-width: 40em; color: var(--ink); margin-bottom: 28px; }
-.lede strong { font-weight: 650; }
-.install { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+.hero h1 .num { font-variant-numeric: tabular-nums; }
+.hero h1 .sent { color: var(--blue); text-shadow: 0 0 28px rgba(127, 168, 245, 0.45); }
+.hero h1 .due { color: var(--red); text-shadow: 0 0 28px rgba(255, 92, 114, 0.5); }
+.hero h1 .or { color: var(--ink-2); font-weight: 500; }
+.hero-row { display: flex; flex-direction: column; gap: 24px; }
+.lede { font-size: clamp(1.08rem, 1.5vw, 1.22rem); line-height: 1.5; max-width: 44em; color: var(--ink-2); margin: 0; }
+.lede strong { font-weight: 650; color: var(--ink); }
+.install { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; }
 .cmd {
   display: inline-flex; align-items: center; gap: 12px; max-width: 100%;
-  background: var(--screen); color: var(--screen-ink);
+  background: var(--screen); color: var(--screen-ink); border: 1px solid var(--rule);
   border-radius: 6px; padding: 10px 10px 10px 16px; font-size: 14px;
 }
 .cmd code { overflow-x: auto; white-space: nowrap; font-size: 14px; }
@@ -121,10 +164,10 @@ p { margin: 0 0 1em; }
   border-radius: 4px; padding: 4px 10px; cursor: pointer; white-space: nowrap;
 }
 .copy:hover { border-color: var(--screen-ink); }
-.install .note { color: var(--ink-2); font-size: 15px; }
+.install .note { color: var(--ink-2); font-size: 14px; }
 
 /* the chart */
-.chart { margin: 48px 0 0; border-top: 2px solid var(--ink); padding-top: 18px; }
+.chart { margin: 44px 0 0; border-top: 1px solid var(--rule); padding-top: 18px; }
 .lane + .lane { margin-top: 22px; }
 .lane-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 16px; }
 .lane-title { font-weight: 650; font-size: 16px; }
@@ -134,6 +177,10 @@ p { margin: 0 0 1em; }
 .lane-sent .lane-value { color: var(--blue); }
 .lane-due .lane-value { color: var(--red); }
 .lane svg { display: block; width: 100%; overflow: visible; }
+.lane-sent .dots { filter: drop-shadow(0 0 3px var(--blue)); }
+.lane-due .dots { filter: drop-shadow(0 0 3px var(--red)); }
+.band { transition: fill 0.25s ease; }
+.band.live { fill: rgba(255, 92, 114, 0.26); }
 .lane svg text { font-family: "Fragment Mono", ui-monospace, monospace; font-size: 11px; fill: var(--ink-2); }
 .chart-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px 24px; margin-top: 14px; }
 .chart-foot p { font-size: 14.5px; color: var(--ink-2); max-width: 46em; margin: 0; }
@@ -192,6 +239,7 @@ p { margin: 0 0 1em; }
   padding: 18px 20px; margin: 18px 0 14px; overflow-x: auto; font-size: 13px; line-height: 1.55;
   white-space: pre;
 }
+.on-panel .term { border: 1px solid var(--rule); }
 .term .p { color: var(--screen-dim); }
 .term .r { color: #FF7A8C; }
 .term .g { color: #7FD1A6; }
@@ -202,8 +250,10 @@ table { border-collapse: collapse; width: 100%; min-width: 860px; font-size: 14.
 th, td { text-align: left; vertical-align: top; padding: 12px 12px; border-bottom: 1px solid var(--rule); }
 thead th { font-weight: 650; font-size: 15px; padding-top: 14px; }
 tbody th { font-weight: 450; width: 27%; padding-left: 0; }
-td.us, th.us { background: var(--paper-2); }
+td.us, th.us { background: var(--us); color: var(--us-ink); border-bottom-color: rgba(150, 172, 212, 0.22); }
+th.us { font-size: 16px; }
 td.us { font-weight: 600; }
+td.us.no { color: #9AA8BF; font-weight: 450; }
 td.no { color: var(--ink-2); }
 td .y { font-weight: 600; }
 .table-note { font-size: 14px; color: var(--ink-2); margin-top: 14px; max-width: 52em; }
@@ -220,18 +270,20 @@ td .y { font-weight: 600; }
 .facts dd { margin: 0; color: var(--ink-2); max-width: 34em; }
 
 /* start */
-.start { padding: 96px 0 0; }
-.start .term { font-size: 13.5px; }
-footer { margin-top: 96px; border-top: 1px solid var(--rule); padding: 24px 0 40px; font-size: 14.5px; color: var(--ink-2); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; }
+.start { margin-top: 112px; padding: 88px 0 0; }
+.start .term { font-size: 13.5px; margin-top: 0; }
+.start .split { align-items: start; }
+.start p { color: var(--ink-2); }
+footer { padding: 72px 0 40px; font-size: 14.5px; color: var(--ink-2); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .lane-value { transition: none; }
+  .lane-value, .band { transition: none; }
 }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header class="top">
+  <header class="top on-panel">
     <a class="mark" href="./" aria-label="Gmeter home">
       <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="6" fill="var(--ink)"/><path d="M4 24h8l1-15 6 13h9" fill="none" stroke="var(--red)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/></svg>
       gmeter
@@ -244,14 +296,17 @@ footer { margin-top: 96px; border-top: 1px solid var(--rule); padding: 24px 0 40
   </header>
 
   <main>
-    <section class="hero" aria-labelledby="title">
-      <h1 id="title">Load testing<br> that keeps time.</h1>
-      <p class="lede">Gmeter is an open-loop load generator for HTTP and gRPC. Every request is due at a fixed moment on the
-        clock, whatever the server is doing, and <strong>its latency is measured from that moment</strong>. When the
-        server stalls, the stall shows up in your p99 instead of disappearing from it.</p>
-      <div class="install">
-        <div class="cmd"><code id="install-cmd">go install github.com/optimm/Gmeter/cmd/gmeter@latest</code><button class="copy" type="button" data-copy="install-cmd">Copy</button></div>
-        <span class="note">One binary. Go 1.26 or newer.</span>
+    <section class="hero on-panel" aria-labelledby="title">
+      <h1 id="title"><span class="num sent">897µs</span> <span class="or">or</span> <span class="num due">505.2ms</span><br>Same run, different clock.</h1>
+      <div class="hero-row">
+        <p class="lede">That's the p90 of one test, timed from when each request was sent, and from when it was due. Most
+          load testers only show you the first. Gmeter, an open-loop load generator for HTTP and gRPC, keeps sending on
+          schedule through a stall and <strong>times every request from the moment it was due</strong>, so the stall
+          lands in your p99 instead of vanishing.</p>
+        <div class="install">
+          <div class="cmd"><code id="install-cmd">go install github.com/optimm/Gmeter/cmd/gmeter@latest</code><button class="copy" type="button" data-copy="install-cmd">Copy</button></div>
+          <span class="note">One binary. Go 1.26 or newer.</span>
+        </div>
       </div>
 
       <figure class="chart" aria-labelledby="chart-caption">
@@ -504,7 +559,7 @@ no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
       </dl>
     </section>
 
-    <section class="start" aria-labelledby="start-title">
+    <section class="start on-panel" aria-labelledby="start-title">
       <div class="split">
         <h2 id="start-title">Point it at something.</h2>
         <div>
@@ -519,7 +574,7 @@ no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
     </section>
   </main>
 
-  <footer>
+  <footer class="on-panel">
     <span>Gmeter, an open-loop load generator written in Go.</span>
     <a href="https://github.com/optimm/Gmeter">github.com/optimm/Gmeter</a>
   </footer>
@@ -603,9 +658,9 @@ no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
 
   function draw() {
     lanes.forEach(function (lane) {
-      var svg = lane.svg, W = svg.clientWidth || svg.parentNode.clientWidth;
+      var svg = lane.svg, W = Math.max(240, svg.clientWidth || svg.parentNode.clientWidth);
       while (svg.firstChild) svg.removeChild(svg.firstChild);
-      var padL = 40, padR = 8, padT = 10, H = Math.round(Math.max(110, Math.min(170, W * 0.17)));
+      var padL = 40, padR = 8, padT = 10, H = Math.round(Math.max(100, Math.min(140, W * 0.13)));
       var axisH = lane.axis ? 26 : 6, total = padT + H + axisH;
       svg.setAttribute("viewBox", "0 0 " + W + " " + total);
       svg.setAttribute("height", total);
@@ -613,7 +668,7 @@ no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
       var y = function (lat) { return padT + H - (lat / YMAX) * H; };
 
       // freeze band
-      el("rect", { x: x(F0), y: padT, width: x(F1) - x(F0), height: H, fill: "var(--red-wash)" }, svg);
+      lane.band = el("rect", { "class": "band", x: x(F0), y: padT, width: x(F1) - x(F0), height: H, fill: "var(--red-wash)" }, svg);
       // grid
       for (var s = 0; s <= T * 2; s++) {
         el("line", { x1: x(s / 2), x2: x(s / 2), y1: padT, y2: padT + H, stroke: "var(--grid)", "stroke-width": s % 2 ? 0.5 : 1 }, svg);
@@ -641,8 +696,9 @@ no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
           var note2 = el("text", { x: nx, y: ny + 14, "text-anchor": "end" }, svg); note2.textContent = words.slice(half).join(" ");
         }
       }
+      var g = el("g", { "class": "dots" }, svg);
       lane.dots = lane.points.map(function (p) {
-        return el("circle", { cx: x(p.t), cy: y(p.lat) - p.j * 2.5, r: W < 600 ? 1.9 : 2.6, fill: lane.color }, svg);
+        return el("circle", { cx: x(p.t), cy: y(p.lat) - p.j * 2.5, r: W < 600 ? 1.9 : 2.6, fill: lane.color }, g);
       });
       lane.head = el("line", { x1: x(0), x2: x(0), y1: padT - 4, y2: padT + H, stroke: "var(--ink)", "stroke-width": 1.5 }, svg);
       lane.x = x;
@@ -657,6 +713,7 @@ no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
       var hx = lane.x(Math.min(t, T));
       lane.head.setAttribute("x1", hx); lane.head.setAttribute("x2", hx);
       lane.head.style.visibility = t < T ? "visible" : "hidden";
+      lane.band.classList.toggle("live", t >= F0 && t < F1);
     });
     values.forEach(function (v) { v.classList.toggle("is-hidden", t < T); });
   }
@@ -680,7 +737,7 @@ no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
   var lastW = 0;
   var redraw = function () {
     var w = lanes[0].svg.clientWidth;
-    if (w === lastW) return;
+    if (!w || w === lastW) return; // hidden or mid-layout: keep the last drawing
     lastW = w; draw(); paint(progress);
   };
   if ("ResizeObserver" in window) new ResizeObserver(redraw).observe(document.querySelector(".chart"));

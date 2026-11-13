@@ -382,6 +382,7 @@ are appended to it. A log can therefore never send a request to another host.
 | `-duration` | one pass | with `-rate`: how long to keep sending; by default each request is sent once |
 | `-methods` | `GET,HEAD` | which methods to replay, or `all` (see below) |
 | `-endpoints` | `20` | the most rows in the per-endpoint breakdown, 2 to 100; `0` leaves it out (see below) |
+| `-group` | | name the endpoint of the paths a rule matches, e.g. `/products/:slug` (repeatable; see [Per endpoint](#per-endpoint)) |
 | `-arrivals` / `-seed` | `poisson` | access logs and `-rate` only; see below |
 
 `-workers`, `-timeout`, `-spin`, `-H`, `-json`, `-quiet`, `-insecure` and `-cacert` work as for a plain run. `-H` headers go with every
@@ -450,8 +451,20 @@ A replay reports each endpoint on its own as well as the whole mix. An endpoint 
 the query string dropped and any path segment that is an identifier (only digits, a UUID, or 16 or more hex
 characters) replaced by `:id`: `GET /orders/18273?ref=mail` and `GET /orders/99` are both `GET /orders/:id`. The
 busiest endpoints get a row each and the rest are grouped as `(other)`; `-endpoints N` sets the most rows (each one
-costs two histograms, hence the limit of 100). Requests left out by `-methods` are not counted, so the ranking is
-of what was sent.
+costs two histograms, three with phases, hence the limit of 100). Requests left out by `-methods` are not counted,
+so the ranking is of what was sent.
+
+Identifiers are recognised by how they look, so a slug (`/products/blue-shoes`) or a file name (`/img/a.png`) would
+be an endpoint of its own each time. `-group` names them instead (repeatable; the first rule that matches wins):
+
+```bash
+gmeter replay -file access.log -group '/products/:slug' -group '/products/*/reviews' -group 'GET /static/**' http://staging:8080
+```
+
+`*` or `:name` stands for any one non-empty segment, a last `**` for whatever follows (nothing included), and any
+other segment for itself, compared exactly. A method limits a rule to that method. The endpoint is named after the
+rule (`GET /products/:slug`), and paths no rule matches are named by their shape as before. Put the more specific
+rule first: `/products/:slug` before `/products/**`, or the second takes everything.
 
 Real output: a 10-second trace at about 300 rps (65% `/orders/N`, 20% `/search?q=...`, 15% `/users/N/cart`)
 against a toy server with four slots, where `/search` holds a slot for 40ms and everything else for 2ms. With
@@ -501,8 +514,19 @@ A 2ms `/orders` request spends 12.8ms in `wait` with 50 workers: that is the ser
 was free. With 4 workers its `wait` is 2.6ms, about its own cost, and the other 13ms are `queue`: it waited in
 Gmeter. All three endpoints queue for 12-13ms because the limit is the one shared pool of workers.
 
-- **Only means, not percentiles.** A distribution costs about a quarter of a megabyte, and 100 endpoints with 7
-  phases each would take hundreds. The whole-run table has the percentiles.
+- **Means, plus the tail of `wait`.** A distribution costs about a quarter of a megabyte, and 100 endpoints with 7
+  phases each would take hundreds, so each endpoint keeps one: its `wait`, the server's own time, shown as the last
+  column (`wait p99`) and saved as `endpoints[].latency_wait`. That is the one a mean hides. A real run against a
+  server where `/search` takes 5ms but one request in 30 takes 150ms, and `/orders/:id` always takes 8ms, at 200 rps:
+
+  ```
+    endpoint         answered      mean     queue   connect      send      wait  transfer  wait p99
+    GET /orders/:id      1500     9.5ms     136µs       1µs      36µs     9.3ms      39µs    12.8ms
+    GET /search          1500    10.7ms     128µs       3µs      36µs    10.5ms      27µs   150.6ms
+  ```
+
+  Their mean waits are a millisecond apart, and their tails more than ten times apart. The whole-run table has
+  every phase's percentiles. `diff` shows how a regressed endpoint's wait p99 moved (see below).
 - **`connect` is dns + connect + tls**, averaged over all of the endpoint's answered requests, not only those
   that opened a connection. The JSON keeps every phase apart, with how many requests had it, its mean and its
   share (`endpoints[].phases`).
@@ -563,9 +587,10 @@ endpoints, status vs the log (responses of another class than the log's)
   above). The table cannot tell "slow itself" from "stuck behind a slow neighbour"; to separate them, replay that
   endpoint alone from a trace of only its requests. A burst larger than `-workers` in flight shows up as late
   dispatches in the generator line.
-- **Endpoint names are recognised by shape.** Identifiers are found by how they look, so a slug such as
-  `/products/blue-shoes` or a name such as `/img/123.png` stays a different endpoint each time, and once there
-  are more than `-endpoints` rows the least busy fall into `(other)`.
+- **Endpoint names are recognised by shape unless you say otherwise.** Identifiers are found by how they look, so
+  a slug such as `/products/blue-shoes` or a name such as `/img/123.png` stays a different endpoint each time
+  unless a `-group` rule names it, and once there are more than `-endpoints` rows the least busy fall into
+  `(other)`.
 - **The whole trace is read into memory before the run starts**, because it has to be sorted by time (an access log
   is in completion order) and its endpoints ranked before the first request goes out. Measured with `/usr/bin/time
   -l` on a 1,000,000-line combined-format access log (147MB, 2,000 requests a second): about 140 bytes per request
@@ -750,9 +775,18 @@ gmeter diff -endpoint-threshold 30 before.json after.json
   `-endpoint-threshold` exits `2` and says why, instead of reporting that everything is fine.
 - **It only looks at p99.** An endpoint that began to fail has a better p99, not a worse one. Judge failures with
   `-error-threshold`, which also looks at each endpoint (see [Errors](#errors)).
-- **"mean grew most in" is about the mean.** The gate judges the p99, and says where the endpoint's *mean* time
-  grew most. The tail can come from another phase than the average does: read the table above for the whole
-  picture.
+- **"mean grew most in" is about the mean**, so when both runs kept it the line also shows the endpoint's wait p99,
+  the tail of the server's own time. A real pair against a server where one `/search` request in 30 is slow, 150ms
+  in A and 400ms in B:
+
+  ```
+  REGRESSION: 1 endpoint's corrected p99 rose more than 30%:
+    GET /search  +165.3%  (151.3ms -> 401.3ms)  mean grew most in wait (+8.0ms)  wait p99 151.0ms -> 401.1ms
+  ```
+
+  The mean moved by 8ms, while the wait p99 shows the whole 250ms rise was the server's tail. In the same pair
+  `/orders/:id`, which did not change, moved from 21.1ms to 13.4ms (-36.6%): that is run-to-run noise on a busy
+  machine, below the 30% gate only by luck of direction, and why one pair of runs is weak evidence.
 - **A shared bottleneck moves every endpoint.** With `/search` at 90ms on a server of only four slots, the same
   replay overloaded the server and every endpoint's p99 rose from 70-100ms to about 5.8s. The diff cannot say which
   endpoint caused it (the endpoints are only separable when the server is not saturated), so it says what it can:
@@ -779,7 +813,7 @@ how many requests were sent, the timing (`recorded` with its speed, or `fixed ra
 `-methods` or could not be parsed. For a replay `run.method` lists the methods in the trace, and `endpoints` has
 one digest per endpoint: its name, requests scheduled, failures, bad statuses, corrected and service latency, and
 its `phases`: for each phase, how many requests had it, their mean time in it and its share of the endpoint's time,
-and how many of its responses were compared with the log and differed. A replay whose trace has statuses also gets
+`latency_wait` (the digest of its wait phase), and how many of its responses were compared with the log and differed. A replay whose trace has statuses also gets
 `vs_log` at the top level.)
 
 `version`, `run` (URL, method, workers, duration, profile, arrivals, seed, spin, start time), the totals,

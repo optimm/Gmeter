@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -302,6 +303,11 @@ func (c *Caller) Call(ctx context.Context) (string, error) {
 	case codes.DeadlineExceeded, codes.Canceled:
 		if ctx.Err() != nil {
 			return "", ctx.Err()
+		}
+		// The server's DEADLINE_EXCEEDED for this call's own timeout can arrive
+		// a moment before the context's timer marks it done; it is still ours.
+		if dl, ok := ctx.Deadline(); ok && st.Code() == codes.DeadlineExceeded && !time.Now().Before(dl) {
+			return "", context.DeadlineExceeded
 		}
 	case codes.Unavailable:
 		return "", runner.Failure{Kind: "unavailable", Err: err}

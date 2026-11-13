@@ -284,3 +284,18 @@ func TestAServerThatCannotBeReachedIsNamedWithTheReason(t *testing.T) {
 		})
 	}
 }
+
+// lateContext is a context whose deadline has passed but that has not yet
+// marked itself done, as a real one is for a moment before its timer fires.
+type lateContext struct{ context.Context }
+
+func (lateContext) Deadline() (time.Time, bool) { return time.Now().Add(-time.Millisecond), true }
+
+func TestACallPastItsDeadlineIsATimeoutEvenBeforeTheContextSaysSo(t *testing.T) {
+	addr, _, _ := serve(t, grpcdemo.ReflectionBoth)
+	c := mustDial(t, Options{Addr: addr, Plaintext: true, Method: grpcdemo.Say})
+	code, err := c.Call(lateContext{context.Background()})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("call = %q, %v; want the call's own deadline, not an answer from the server", code, err)
+	}
+}

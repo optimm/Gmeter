@@ -3,6 +3,7 @@
 package report
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,8 +36,10 @@ type Summary struct {
 	BadStatus uint64 `json:"bad_status"`
 	Failed    uint64 `json:"failed"` // transport failures: timeout, refused, ...
 
-	Statuses map[int]uint64    `json:"statuses"`
-	Errors   map[string]uint64 `json:"errors"`
+	Statuses map[int]uint64 `json:"statuses"`
+	// Codes counts the answers of a gRPC run by their status code, e.g. "OK".
+	Codes  map[string]uint64 `json:"codes,omitempty"`
+	Errors map[string]uint64 `json:"errors"`
 	// Protocols counts the responses by the protocol they came over.
 	Protocols map[string]uint64 `json:"protocols,omitempty"`
 
@@ -182,6 +185,7 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 		Scheduled:      res.Scheduled,
 		Dropped:        res.Dropped,
 		Statuses:       res.Statuses,
+		Codes:          res.Codes,
 		Errors:         res.Errors,
 		Protocols:      res.Protocols,
 		Corrected:      digest(res.Corrected),
@@ -205,6 +209,12 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 	for code, n := range res.Statuses {
 		s.Responses += n
 		if code >= 200 && code < 400 {
+			s.OK += n
+		}
+	}
+	for code, n := range res.Codes {
+		s.Responses += n
+		if code == "OK" {
 			s.OK += n
 		}
 	}
@@ -307,6 +317,15 @@ func (s Summary) WriteText(w io.Writer) error {
 			parts[i] = fmt.Sprintf("%d: %d", c, s.Statuses[c])
 		}
 		fmt.Fprintf(&b, "status     %s\n", strings.Join(parts, "   "))
+	}
+	if len(s.Codes) > 0 {
+		names := sortedKeys(s.Codes)
+		slices.SortStableFunc(names, func(a, b string) int { return cmp.Compare(s.Codes[b], s.Codes[a]) }) // busiest first
+		parts := make([]string, len(names))
+		for i, c := range names {
+			parts[i] = fmt.Sprintf("%s: %d", c, s.Codes[c])
+		}
+		fmt.Fprintf(&b, "codes      %s\n", strings.Join(parts, "   "))
 	}
 	if len(s.Errors) > 0 {
 		kinds := sortedKeys(s.Errors)

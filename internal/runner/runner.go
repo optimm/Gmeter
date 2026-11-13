@@ -117,6 +117,17 @@ type Config struct {
 	SampleEvery time.Duration
 	Progress    func(Snapshot)
 
+	// Call, if set, is what each request does instead of an HTTP request: a
+	// gRPC call, say. It gets a context that carries the request timeout, and
+	// returns the name of the status the call ended with ("OK" is ok, anything
+	// else a bad status; see Result.Codes), or an error when it got no answer.
+	// An error from the context is a timeout (timed, like an HTTP timeout) or a
+	// cancellation, a Failure names its own kind, and anything else is
+	// classified like an HTTP transport error. URL is then only a name, and
+	// Method, Header, Body, Requests, TLS, HTTP2 and Phases are refused: they
+	// describe an HTTP request, and a call would ignore them.
+	Call func(ctx context.Context) (code string, err error)
+
 	// WindowHistograms keeps each timeline window's latency distribution
 	// (Window.Latency), which a result needs to be merged with others. It costs
 	// a few kilobytes a window.
@@ -222,6 +233,10 @@ type Result struct {
 	// "HTTP/1.1" or "HTTP/2.0".
 	Protocols map[string]uint64
 
+	// Codes counts the answers to a Config.Call by the name of their status,
+	// e.g. "OK" or "NOT_FOUND". Statuses is then empty.
+	Codes map[string]uint64
+
 	// Logged compares the responses with the statuses the traffic log recorded.
 	Logged LoggedStatuses
 
@@ -259,6 +274,16 @@ type Result struct {
 	// timed out or failed are not in it.
 	Phases []PhaseResult
 }
+
+// Failure is an error a Config.Call returns when it got no answer, naming the
+// kind of failure as the report counts it, e.g. "unavailable".
+type Failure struct {
+	Kind string
+	Err  error
+}
+
+func (f Failure) Error() string { return f.Kind + ": " + f.Err.Error() }
+func (f Failure) Unwrap() error { return f.Err }
 
 // lateTolerance is how far past its due time the scheduler may reach a request
 // before it counts as late. Without it, random arrivals would trip the count on
@@ -398,6 +423,7 @@ loop:
 		Scheduled: live.scheduled.Load(),
 		Dropped:   dropped,
 		Statuses:  map[int]uint64{},
+		Codes:     map[string]uint64{},
 		Errors:    map[string]uint64{},
 		Protocols: map[string]uint64{},
 		Corrected: hist.New(),
@@ -435,6 +461,9 @@ loop:
 		t.service.AddTo(res.Service)
 		for code, c := range t.statuses {
 			res.Statuses[code] += c
+		}
+		for code, c := range t.codes {
+			res.Codes[code] += c
 		}
 		for kind, c := range t.errors {
 			res.Errors[kind] += c
@@ -479,7 +508,19 @@ func newSource(start time.Time, cfg Config) (source, error) {
 }
 
 func (c Config) normalize() (Config, error) {
-	if c.Method == "" {
+	if c.Call != nil {
+		for _, set := range []struct {
+			name string
+			is   bool
+		}{
+			{"Method", c.Method != ""}, {"Header", c.Header != nil}, {"Body", c.Body != nil}, {"Requests", c.Requests != nil},
+			{"TLS", c.TLS != nil}, {"HTTP2", c.HTTP2}, {"Phases", c.Phases},
+		} {
+			if set.is {
+				return c, fmt.Errorf("runner: %s describes an HTTP request, and a Call sends none", set.name)
+			}
+		}
+	} else if c.Method == "" {
 		c.Method = http.MethodGet
 	}
 	switch {
@@ -538,6 +579,9 @@ func (c Config) normalize() (Config, error) {
 	}
 	if c.Workers < 1 {
 		return c, fmt.Errorf("runner: workers must be at least 1, got %d", c.Workers)
+	}
+	if c.Call != nil {
+		return c, nil // URL is only a name
 	}
 	u, err := url.Parse(c.URL)
 	if err != nil {
@@ -706,6 +750,7 @@ func windowOf(d *hist.Histogram, interval time.Duration) Window {
 type tally struct {
 	corrected, service *hist.Recorder
 	statuses           map[int]uint64
+	codes              map[string]uint64
 	errors             map[string]uint64
 	protocols          map[string]uint64
 	loggedCompared     uint64
@@ -717,6 +762,7 @@ func newTally() *tally {
 		corrected: hist.NewRecorder(),
 		service:   hist.NewRecorder(),
 		statuses:  map[int]uint64{},
+		codes:     map[string]uint64{},
 		errors:    map[string]uint64{},
 		protocols: map[string]uint64{},
 
@@ -813,6 +859,10 @@ func (w *worker) do(ctx context.Context, j job) {
 	intended := j.at
 	reqCtx, cancel := context.WithTimeout(ctx, w.cfg.Timeout)
 	defer cancel()
+	if w.cfg.Call != nil {
+		w.call(ctx, reqCtx, j)
+		return
+	}
 
 	method, target, extra, payload := w.cfg.Method, w.cfg.URL, http.Header(nil), w.cfg.Body
 	if n := uint64(len(w.cfg.Requests)); n > 0 {
@@ -865,14 +915,7 @@ func (w *worker) do(ctx context.Context, j job) {
 	finished := time.Now()
 
 	if err != nil {
-		kind := classify(err)
-		if ctx.Err() != nil { // the whole run was cancelled, not this request timing out
-			kind = "canceled"
-		}
-		w.fail(kind, j)
-		if kind == "timeout" {
-			w.record(j, intended, sent, finished)
-		}
+		w.failed(ctx, err, j, sent, finished)
 		return
 	}
 	w.t.statuses[status]++
@@ -901,6 +944,36 @@ func (w *worker) do(ctx context.Context, j job) {
 		if l := w.label(j); l != nil {
 			l.bad()
 		}
+	}
+}
+
+// call makes j a Config.Call instead of an HTTP request.
+func (w *worker) call(ctx, callCtx context.Context, j job) {
+	sent := time.Now()
+	code, err := w.cfg.Call(callCtx)
+	finished := time.Now()
+	if err != nil {
+		w.failed(ctx, err, j, sent, finished)
+		return
+	}
+	w.t.codes[code]++
+	w.live.completed.Add(1)
+	w.record(j, j.at, sent, finished)
+	if code != "OK" {
+		w.stages[j.stage].bad()
+	}
+}
+
+// failed counts j as a failure of the kind err is, and times it if it timed
+// out: a hung server must not look fast.
+func (w *worker) failed(ctx context.Context, err error, j job, sent, finished time.Time) {
+	kind := classify(err)
+	if ctx.Err() != nil { // the whole run was cancelled, not this request timing out
+		kind = "canceled"
+	}
+	w.fail(kind, j)
+	if kind == "timeout" {
+		w.record(j, j.at, sent, finished)
 	}
 }
 
@@ -945,7 +1018,10 @@ func (w *worker) fail(kind string, j job) {
 func classify(err error) string {
 	var dns *net.DNSError
 	var netErr net.Error
+	var named Failure
 	switch {
+	case errors.As(err, &named):
+		return named.Kind
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
 	case errors.Is(err, context.Canceled):

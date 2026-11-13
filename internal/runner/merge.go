@@ -46,6 +46,7 @@ func Merge(results ...*Result) (*Result, error) {
 
 	m := &Result{
 		Statuses:  map[int]uint64{},
+		Codes:     map[string]uint64{},
 		Errors:    map[string]uint64{},
 		Protocols: map[string]uint64{},
 		Corrected: hist.New(),
@@ -59,6 +60,7 @@ func Merge(results ...*Result) (*Result, error) {
 		m.Dropped += r.Dropped
 		m.Late += r.Late
 		addCounts(m.Statuses, r.Statuses)
+		addCounts(m.Codes, r.Codes)
 		addCounts(m.Errors, r.Errors)
 		addCounts(m.Protocols, r.Protocols)
 		m.Corrected.Merge(r.Corrected)

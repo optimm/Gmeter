@@ -31,6 +31,8 @@ type requestFlags struct {
 	quiet    *bool
 	insecure *bool
 	cacert   *string
+	cert     *string
+	key      *string
 	http2    *bool // nil for a command that does not offer -http2
 	headers  headerFlag
 	phases   *bool   // nil for a command that does not offer -phases
@@ -68,6 +70,8 @@ func addCommonFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers int
 		quiet:    fs.Bool("quiet", false, "no progress output on stderr"),
 		insecure: fs.Bool("insecure", false, "do not verify the server's TLS certificate (https only); the run then measures a server it has not checked"),
 		cacert:   fs.String("cacert", "", "PEM file with the certificate authorities to trust for https, instead of the system's (https only)"),
+		cert:     fs.String("cert", "", "PEM file with the client certificate to present to a server that asks for one (mutual TLS, https only); needs -key"),
+		key:      fs.String("key", "", "PEM file with the private key of the -cert certificate"),
 	}
 	fs.Var(&r.headers, "H", `extra request header "Key: Value" (repeatable)`)
 	return r
@@ -128,13 +132,18 @@ func (r *requestFlags) base(url string) (runner.Config, error) {
 }
 
 // tlsConfig builds the client TLS configuration the flags ask for, or nil for
-// the default: verify against the system's roots.
+// the default: verify against the system's roots, present no certificate.
 func (r *requestFlags) tlsConfig() (*tls.Config, error) {
-	switch {
-	case *r.insecure && *r.cacert != "":
+	if *r.insecure && *r.cacert != "" {
 		return nil, errors.New("-insecure and -cacert cannot be combined: -insecure trusts every certificate, so there is nothing for -cacert to add")
+	}
+	if (*r.cert == "") != (*r.key == "") {
+		return nil, errors.New("-cert and -key go together: give both the client certificate and its private key, or neither")
+	}
+	var cfg *tls.Config
+	switch {
 	case *r.insecure:
-		return &tls.Config{InsecureSkipVerify: true}, nil // the user asked for it by name
+		cfg = &tls.Config{InsecureSkipVerify: true} // the user asked for it by name
 	case *r.cacert != "":
 		data, err := os.ReadFile(*r.cacert)
 		if err != nil {
@@ -144,9 +153,19 @@ func (r *requestFlags) tlsConfig() (*tls.Config, error) {
 		if !roots.AppendCertsFromPEM(data) {
 			return nil, fmt.Errorf("-cacert: no certificate found in %s (it must be PEM)", *r.cacert)
 		}
-		return &tls.Config{RootCAs: roots}, nil
+		cfg = &tls.Config{RootCAs: roots}
 	}
-	return nil, nil
+	if *r.cert != "" {
+		pair, err := tls.LoadX509KeyPair(*r.cert, *r.key)
+		if err != nil {
+			return nil, fmt.Errorf("-cert/-key: %w", err)
+		}
+		if cfg == nil {
+			cfg = &tls.Config{}
+		}
+		cfg.Certificates = []tls.Certificate{pair}
+	}
+	return cfg, nil
 }
 
 // protocol is the protocol asked for, as saved in a run's JSON: "HTTP/2", or

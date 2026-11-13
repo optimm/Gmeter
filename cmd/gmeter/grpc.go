@@ -78,8 +78,8 @@ func runGRPC(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return usage("-conns must be at least 1, got %d", *conns)
 	case *conns > *rf.workers:
 		return usage("-conns %d is more than -workers %d: at most %d calls are in flight, so a connection would sit idle", *conns, *rf.workers, *rf.workers)
-	case *plaintext && (*rf.insecure || *rf.cacert != ""):
-		return usage("-plaintext connects without TLS, so -insecure and -cacert have nothing to do")
+	case *plaintext && (*rf.insecure || *rf.cacert != "" || *rf.cert != "" || *rf.key != ""):
+		return usage("-plaintext connects without TLS, so -insecure, -cacert, -cert and -key have nothing to do")
 	}
 	stages, err := profileFlags(set, *rate, *duration, *stagesIn)
 	if err != nil {

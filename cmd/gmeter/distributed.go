@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -23,6 +24,9 @@ func addAgentsFlag(fs *flag.FlagSet, r *requestFlags) {
 func (r *requestFlags) agentClients(given bool) ([]*agent.Client, error) {
 	if !given {
 		return nil, nil
+	}
+	if *r.key != "" {
+		return nil, errors.New("-key: the private key would have to be sent to every agent over plain HTTP; run without -agents, or start each agent with the certificate on it")
 	}
 	var addrs []string
 	seen := map[string]bool{}

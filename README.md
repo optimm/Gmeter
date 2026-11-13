@@ -67,6 +67,7 @@ Flags must come before the URL.
 | `-body` | | request body; `@file` reads it from a file |
 | `-insecure` | `false` | do not verify the server's TLS certificate (https only); says so on stderr |
 | `-cacert` | | PEM file with the certificate authorities to trust for https, instead of the system's |
+| `-cert`, `-key` | | PEM client certificate and its private key, for a server that asks for one (mutual TLS); give both |
 | `-json` | | also save a JSON summary (timeline and full histograms included) to a path (`-` = only JSON, on stdout) |
 | `-phases` | `true` | split each request's latency into phases, see [Where the time goes](#where-the-time-goes); `-phases=false` turns it off |
 | `-quiet` | `false` | no progress output on stderr |
@@ -130,6 +131,10 @@ Gmeter says so on stderr (`gmeter: -insecure: the server's certificate is not ve
 server nobody checked is not taken for one that was. The two cannot be combined. Both work with `find` and `replay`
 too. The `tls` row of the [phases](#where-the-time-goes) still shows the handshake (890µs for the one
 connection above).
+
+A server that asks the client for a certificate (mutual TLS) needs `-cert client.pem -key client-key.pem`. They
+combine with `-cacert` or `-insecure` and work with `find`, `replay` and `grpc`. They do not work with `-agents`,
+because the private key would have to travel to every agent over plain HTTP.
 
 ## What it looks like
 
@@ -408,7 +413,7 @@ interrupted), `2` bad usage.
 | `-confirm` | `2` | repeats of the answer at the end |
 
 `-workers`, `-timeout`, `-method`, `-H`, `-body`, `-spin`, `-arrivals` (default `poisson` here), `-seed`, `-json`,
-`-quiet`, `-phases`, `-insecure` and `-cacert` work as for a plain run. Each trial uses the seed plus its number, so a printed seed reproduces the search.
+`-quiet`, `-phases`, `-insecure`, `-cacert`, `-cert` and `-key` work as for a plain run. Each trial uses the seed plus its number, so a printed seed reproduces the search.
 
 ## Replaying real traffic (`gmeter replay`)
 
@@ -438,7 +443,7 @@ are appended to it. A log can therefore never send a request to another host.
 | `-group` | | name the endpoint of the paths a rule matches, e.g. `/products/:slug` (repeatable; see [Per endpoint](#per-endpoint)) |
 | `-arrivals` / `-seed` | `poisson` | access logs and `-rate` only; see below |
 
-`-workers`, `-timeout`, `-spin`, `-H`, `-json`, `-quiet`, `-insecure` and `-cacert` work as for a plain run. `-H` headers go with every
+`-workers`, `-timeout`, `-spin`, `-H`, `-json`, `-quiet`, `-insecure`, `-cacert`, `-cert` and `-key` work as for a plain run. `-H` headers go with every
 replayed request, which is how to supply credentials (an access log has no headers). Headers in a JSON Lines
 trace are sent too and replace a `-H` of the same name. No headers or bodies are saved in the results. Exit code
 is `0` when it ran, `1` if the report could not be written, and `2` for bad usage or an unreadable trace.
@@ -689,6 +694,7 @@ latency, service (from when the request was actually sent)
 | `-protoset` | | the schema as a `FileDescriptorSet`; without it the server is asked by server reflection (v1, or v1alpha) |
 | `-plaintext` | `false` | no TLS (HTTP/2 over cleartext); otherwise TLS, verified against the system's roots |
 | `-insecure`, `-cacert` | | as for HTTP: skip verification, or trust these authorities |
+| `-cert`, `-key` | | as for HTTP: the client certificate for mutual TLS |
 | `-H` | | metadata `"key: value"` sent with every call (repeatable); keys starting `grpc-` are reserved and refused |
 | `-conns` | `1` | connections to spread the calls over, in turn |
 

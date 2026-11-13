@@ -37,6 +37,7 @@ type requestFlags struct {
 	headers  headerFlag
 	phases   *bool   // nil for a command that does not offer -phases
 	agents   *string // nil for a command that does not offer -agents
+	results  *string // nil for a command that does not offer -results
 }
 
 // addRequestFlags registers them on fs. The commands differ in the default
@@ -82,6 +83,12 @@ func addCommonFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers int
 // where the time grew between the answer and the first rate that failed.
 func addPhasesFlag(fs *flag.FlagSet, r *requestFlags) {
 	r.phases = fs.Bool("phases", true, "split each request's latency into phases (queue, dns, connect, tls, send, wait, transfer); costs about 16 small allocations per request, -phases=false turns it off")
+}
+
+// addResultsFlag registers -results, for the commands that run a single test
+// and can save every request of it: a run, a replay and a gRPC run.
+func addResultsFlag(fs *flag.FlagSet, r *requestFlags) {
+	r.results = fs.String("results", "", "also save every request to this CSV file (when it was due and sent, how long it took by each clock, how it ended), to look at with `gmeter plot` or any tool that reads CSV; a slow disk delays requests, so write to a fast one")
 }
 
 // arrival parses -arrivals and settles the seed: Poisson with no seed gets a

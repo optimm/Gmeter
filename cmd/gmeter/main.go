@@ -47,6 +47,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "diff" { // a URL always has a scheme, so this cannot be one
 		return runDiff(args[1:], stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "plot" {
+		return runPlot(args[1:], stdout, stderr)
+	}
 	if len(args) > 0 && args[0] == "find" {
 		return runFind(ctx, args[1:], stdout, stderr)
 	}
@@ -70,6 +73,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	rf := addRequestFlags(fs, "even", 50)
 	addPhasesFlag(fs, rf)
 	addAgentsFlag(fs, rf)
+	addResultsFlag(fs, rf)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: gmeter [flags] URL\n\nFlags must come before the URL.\n\n")
 		fs.PrintDefaults()

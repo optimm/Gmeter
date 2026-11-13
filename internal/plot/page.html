@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<style>
+:root {
+  --paper: #F2F4F1; --panel: #FFFFFF; --grid: #D5DED8; --rule: #C3CDC7;
+  --ink: #17233F; --ink-2: #4E5B70; --red: #C21E3A; --blue: #2F5DA8; --amber: #A66A00;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0F1620; --panel: #16202C; --grid: #1F2B38; --rule: #2A3847;
+    --ink: #E4EAF0; --ink-2: #97A5B7; --red: #FF5C72; --blue: #79A3F0; --amber: #E0A93B;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1040px; margin: 0 auto; padding: 32px 16px 64px; }
+h1 { font-size: 24px; font-weight: 600; margin: 0 0 4px; text-wrap: balance; }
+h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+.sub { color: var(--ink-2); margin: 0 0 24px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin: 0 0 32px; padding: 16px 0; border-block: 1px solid var(--rule); }
+.facts dt { color: var(--ink-2); font-size: 13px; }
+.facts dd { margin: 0; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.facts dd small { font-size: 13px; font-weight: 400; color: var(--ink-2); }
+section { margin: 0 0 32px; }
+.note { color: var(--ink-2); font-size: 13px; margin: 0 0 8px; max-width: 70ch; }
+.chart { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 8px; position: relative; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { fill: var(--ink-2); font: 11px system-ui, sans-serif; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 0; font-size: 13px; color: var(--ink-2); }
+.legend i { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
+.legend i.dash { border-top-style: dashed; }
+button { font: inherit; font-size: 13px; color: var(--ink); background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 4px 12px; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+button[aria-pressed="true"] { border-color: var(--blue); }
+.tip { position: absolute; pointer-events: none; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 8px; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; display: none; z-index: 1; }
+.tip b { display: block; margin-bottom: 4px; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--grid); }
+td:last-child, th:last-child { text-align: right; padding-right: 0; }
+th { font-weight: 600; font-size: 13px; color: var(--ink-2); }
+.none { color: var(--ink-2); }
+</style>
+</head>
+<body>
+<main>
+<h1>{{.Title}}</h1>
+<p class="sub" id="sub"></p>
+<dl class="facts" id="facts"></dl>
+
+<section>
+  <h2>Latency over time</h2>
+  <p class="note">Each point is the requests due in that slice of the run. The red lines time a request from when it was due; the blue line from when it was sent. Where they part, requests waited before they were sent, and a tool that times only from the send would not show it.</p>
+  <p><button id="log" aria-pressed="false">Log scale</button></p>
+  <div class="chart" id="latency"></div>
+  <div class="legend">
+    <span><i style="border-color:var(--red)"></i>due to done, p50</span>
+    <span><i style="border-color:var(--red);opacity:.55"></i>due to done, p99</span>
+    <span><i style="border-color:var(--amber)"></i>due to done, max</span>
+    <span><i class="dash" style="border-color:var(--blue)"></i>sent to done, p99</span>
+  </div>
+</section>
+
+<section>
+  <h2>Load over time</h2>
+  <p class="note">Requests due per second, split into answered and failed. A flat line is the rate that was asked for.</p>
+  <div class="chart" id="load"></div>
+  <div class="legend">
+    <span><i style="border-color:var(--blue)"></i>answered per second</span>
+    <span><i style="border-color:var(--red)"></i>failed per second</span>
+  </div>
+</section>
+
+<section>
+  <h2>Latency distribution</h2>
+  <p class="note">How long the slowest 1 in N requests took or more, by each clock. The right of the chart is the tail.</p>
+  <div class="chart" id="curve"></div>
+  <div class="legend">
+    <span><i style="border-color:var(--red)"></i>due to done</span>
+    <span><i class="dash" style="border-color:var(--blue)"></i>sent to done</span>
+  </div>
+</section>
+
+<section class="two">
+  <div><h2>Answers</h2><table id="statuses"></table></div>
+  <div><h2>Failures</h2><table id="failures"></table></div>
+</section>
+</main>
+
+<script>
+const D = {{.Data}};
+const $ = id => document.getElementById(id);
+const fmtMs = v => v === 0 ? "0" : v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 1 : 2) + " s" : v >= 100 ? v.toFixed(0) + " ms" : v >= 1 ? v.toFixed(1) + " ms" : (v * 1000).toFixed(0) + " µs";
+const fmtN = n => n.toLocaleString("en-US");
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+
+$("sub").textContent = fmtN(D.total) + " requests over " + D.span.toFixed(1) + " s, in " + D.buckets.length + " slices of " + fmtMs(D.bucket_seconds * 1000);
+const fact = (k, v, small) => "<div><dt>" + k + "</dt><dd>" + v + (small ? " <small>" + small + "</small>" : "") + "</dd></div>";
+$("facts").innerHTML =
+  fact("Got a response", fmtN(D.ok), D.total ? (100 * D.ok / D.total).toFixed(1) + "%" : "") +
+  fact("Failed", fmtN(D.failed)) +
+  fact("p50, due to done", fmtMs(D.corrected.p50)) +
+  fact("p99, due to done", fmtMs(D.corrected.p99)) +
+  fact("p99, sent to done", fmtMs(D.service.p99)) +
+  fact("Slowest", fmtMs(D.corrected.max));
+
+let W = 960, H = 300;
+const M = {l: 56, r: 16, t: 12, b: 28};
+// size the drawing to the box, so its text stays the size it was written at
+const sizeTo = box => { W = Math.max(300, Math.round(box.clientWidth - 16)); H = W < 600 ? 240 : 300; };
+const nice = max => { const p = Math.pow(10, Math.floor(Math.log10(max || 1))); const f = max / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; };
+const ticks = (max, n) => Array.from({length: n + 1}, (_, i) => max * i / n);
+
+function frame(box, xmax, xlabel) {
+  const svg = {x: v => M.l + (W - M.l - M.r) * v / xmax};
+  svg.head = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img">';
+  svg.axisX = ticks(xmax, W < 600 ? 3 : 6).map(v => '<text x="' + svg.x(v) + '" y="' + (H - 8) + '" text-anchor="middle">' + xlabel(v) + '</text>').join("");
+  return svg;
+}
+function path(pts, color, opts) {
+  opts = opts || {};
+  const d = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join("");
+  return '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linejoin="round"' + (opts.dash ? ' stroke-dasharray="6 4"' : "") + (opts.opacity ? ' opacity="' + opts.opacity + '"' : "") + "/>";
+}
+function tooltip(box, svgEl, count, xAt, html) {
+  const tip = document.createElement("div");
+  tip.className = "tip";
+  box.appendChild(tip);
+  const line = svgEl.querySelector(".cursor");
+  box.addEventListener("pointermove", e => {
+    const r = svgEl.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width * W;
+    let best = 0;
+    for (let i = 1; i < count; i++) if (Math.abs(xAt(i) - x) < Math.abs(xAt(best) - x)) best = i;
+    line.setAttribute("x1", xAt(best)); line.setAttribute("x2", xAt(best)); line.style.display = "";
+    tip.innerHTML = html(best); tip.style.display = "block";
+    const left = xAt(best) / W * r.width + 12;
+    tip.style.left = Math.min(left, r.width - tip.offsetWidth) + "px";
+    tip.style.top = "16px";
+  });
+  box.addEventListener("pointerleave", () => { tip.style.display = "none"; line.style.display = "none"; });
+}
+const cursor = () => '<line class="cursor" y1="' + M.t + '" y2="' + (H - M.b) + '" stroke="currentColor" stroke-opacity=".4" style="display:none"/>';
+
+function drawLatency() {
+  sizeTo($("latency"));
+  const log = $("log").getAttribute("aria-pressed") === "true";
+  const B = D.buckets, box = $("latency");
+  const top = Math.max(0.001, ...B.map(b => b.corrected.max), ...B.map(b => b.service.p99));
+  const floor = Math.max(0.01, Math.min(...B.filter(b => b.corrected.p50 > 0).map(b => b.corrected.p50), top) / 2);
+  const ymax = log ? Math.pow(10, Math.ceil(Math.log10(top))) : nice(top);
+  const ymin = log ? Math.pow(10, Math.floor(Math.log10(floor))) : 0;
+  const y = v => {
+    const f = log ? (Math.log10(Math.max(v, ymin)) - Math.log10(ymin)) / (Math.log10(ymax) - Math.log10(ymin)) : v / ymax;
+    return H - M.b - (H - M.t - M.b) * f;
+  };
+  const f = frame(box, D.span || 1, v => v.toFixed(v < 10 ? 1 : 0) + " s");
+  const yTicks = log ? Array.from({length: Math.round(Math.log10(ymax / ymin)) + 1}, (_, i) => ymin * Math.pow(10, i)) : ticks(ymax, 5);
+  let s = f.head + yTicks.map(v => '<line x1="' + M.l + '" x2="' + (W - M.r) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="var(--grid)"/><text x="' + (M.l - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + fmtMs(v) + "</text>").join("") + f.axisX;
+  const xs = B.map(b => f.x(b.start + D.bucket_seconds / 2));
+  const line = (get, color, o) => path(B.map((b, i) => [xs[i], y(get(b))]).filter((_, i) => B[i].corrected.count > 0), color, o);
+  s += line(b => b.corrected.max, "var(--amber)") + line(b => b.corrected.p99, "var(--red)", {opacity: .55}) + line(b => b.service.p99, "var(--blue)", {dash: true}) + line(b => b.corrected.p50, "var(--red)") + cursor() + "</svg>";
+  box.querySelectorAll(".tip").forEach(t => t.remove());
+  box.innerHTML = s;
+  const el = box.querySelector("svg");
+  tooltip(box, el, B.length, i => xs[i], i => {
+    const b = B[i];
+    return "<b>" + b.start.toFixed(1) + " s, " + fmtN(b.due) + " requests</b>due to done p50 " + fmtMs(b.corrected.p50) + "<br>due to done p99 " + fmtMs(b.corrected.p99) + "<br>due to done max " + fmtMs(b.corrected.max) + "<br>sent to done p99 " + fmtMs(b.service.p99) + (b.failed ? "<br>" + fmtN(b.failed) + " failed" : "");
+  });
+}
+$("log").addEventListener("click", e => { e.target.setAttribute("aria-pressed", e.target.getAttribute("aria-pressed") !== "true"); drawLatency(); });
+
+function drawLoad() {
+  sizeTo($("load"));
+  const B = D.buckets, box = $("load"), w = D.bucket_seconds;
+  const top = nice(Math.max(1, ...B.map(b => b.due / w)));
+  const f = frame(box, D.span || 1, v => v.toFixed(v < 10 ? 1 : 0) + " s");
+  const y = v => H - M.b - (H - M.t - M.b) * v / top;
+  const xs = B.map(b => f.x(b.start + w / 2));
+  let s = f.head + ticks(top, 5).map(v => '<line x1="' + M.l + '" x2="' + (W - M.r) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="var(--grid)"/><text x="' + (M.l - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + fmtN(Math.round(v)) + "</text>").join("") + f.axisX;
+  s += path(B.map((b, i) => [xs[i], y(b.ok / w)]), "var(--blue)") + path(B.map((b, i) => [xs[i], y(b.failed / w)]), "var(--red)") + cursor() + "</svg>";
+  box.innerHTML = s;
+  tooltip(box, box.querySelector("svg"), B.length, i => xs[i], i => {
+    const b = B[i];
+    return "<b>" + b.start.toFixed(1) + " s</b>due " + (b.due / w).toFixed(0) + " per second<br>answered " + (b.ok / w).toFixed(0) + "<br>failed " + (b.failed / w).toFixed(0);
+  });
+}
+
+function drawCurve() {
+  sizeTo($("curve"));
+  const C = D.curve, box = $("curve");
+  if (!C.length) { box.innerHTML = '<p class="none" style="padding:16px">No request got an answer, so there is no latency to show.</p>'; return; }
+  const pts = C.filter(p => p.q < 1);
+  const labelled = W < 600 ? new Set([0, 0.9, 0.99, 0.9999]) : null; // fewer x labels on a narrow screen
+  const xmax = Math.log10(1 / (1 - pts[pts.length - 1].q));
+  const top = Math.pow(10, Math.ceil(Math.log10(Math.max(0.01, ...C.map(p => Math.max(p.corrected, p.service))))));
+  const bottom = top / Math.pow(10, Math.min(5, Math.max(2, Math.ceil(Math.log10(top / Math.max(0.001, Math.min(...C.filter(p => p.corrected > 0).map(p => p.corrected), top)))) + 0)));
+  const x = q => M.l + (W - M.l - M.r) * Math.log10(1 / (1 - q)) / (xmax || 1);
+  const y = v => H - M.b - (H - M.t - M.b) * (Math.log10(Math.max(v, bottom)) - Math.log10(bottom)) / (Math.log10(top) - Math.log10(bottom));
+  let s = '<svg viewBox="0 0 ' + W + " " + H + '" role="img">';
+  for (let v = bottom; v <= top * 1.001; v *= 10) s += '<line x1="' + M.l + '" x2="' + (W - M.r) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="var(--grid)"/><text x="' + (M.l - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + fmtMs(v) + "</text>";
+  s += pts.filter(p => !labelled || labelled.has(p.q)).map(p => '<text x="' + x(p.q) + '" y="' + (H - 8) + '" text-anchor="middle">' + (p.q === 0 ? "all" : p.q === 0.5 ? "1 in 2" : "1 in " + (n => n < 10 ? String(+n.toFixed(1)) : fmtN(Math.round(n)))(1 / (1 - p.q))) + "</text>").join("");
+  s += path(pts.map(p => [x(p.q), y(p.corrected)]), "var(--red)") + path(pts.map(p => [x(p.q), y(p.service)]), "var(--blue)", {dash: true});
+  s += pts.map(p => '<circle cx="' + x(p.q) + '" cy="' + y(p.corrected) + '" r="3" fill="var(--red)"><title>' + (100 * p.q) + "%: " + fmtMs(p.corrected) + " from due, " + fmtMs(p.service) + " from sent</title></circle>").join("") + "</svg>";
+  box.innerHTML = s;
+}
+
+function table(id, counts, head) {
+  const rows = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  $(id).innerHTML = rows.length ? "<tr><th>" + head + "</th><th>requests</th></tr>" + rows.map(r => "<tr><td>" + esc(r[0]) + "</td><td>" + fmtN(r[1]) + "</td></tr>").join("") : '<tr><td class="none">none</td></tr>';
+}
+table("statuses", D.statuses, "status");
+table("failures", D.failures, "kind");
+const drawAll = () => { drawLatency(); drawLoad(); drawCurve(); };
+drawAll();
+let resizing; // redraw when the width changes, not on every pixel of it
+addEventListener("resize", () => { clearTimeout(resizing); resizing = setTimeout(drawAll, 120); });
+</script>
+</body>
+</html>

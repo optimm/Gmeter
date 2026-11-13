@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/optimm/Gmeter/internal/agent"
+	"github.com/optimm/Gmeter/internal/results"
 	"github.com/optimm/Gmeter/internal/runner"
 )
 
@@ -27,6 +28,9 @@ func (r *requestFlags) agentClients(given bool) ([]*agent.Client, error) {
 	}
 	if *r.key != "" {
 		return nil, errors.New("-key: the private key would have to be sent to every agent over plain HTTP; run without -agents, or start each agent with the certificate on it")
+	}
+	if r.results != nil && *r.results != "" {
+		return nil, errors.New("-results: not available with -agents, which report only the whole test; run without -agents, or save each agent's own run")
 	}
 	var addrs []string
 	seen := map[string]bool{}
@@ -97,6 +101,20 @@ func (r *requestFlags) job(cfg runner.Config) (agent.Job, error) {
 // configuration that cannot run, 1 for a test on agents that failed or was
 // interrupted (a part of a test is not the test, so that has no report).
 func (r *requestFlags) execute(ctx context.Context, cfg runner.Config, agents []*agent.Client, name string, stderr io.Writer, scrub func(string) string) (*runner.Result, int) {
+	if agents == nil && r.results != nil && *r.results != "" {
+		f, err := os.Create(*r.results)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: -results: %v\n", name, err)
+			return nil, 2
+		}
+		w := results.NewWriter(f)
+		cfg.Sink = w.Add
+		defer func() {
+			if err := errors.Join(w.Close(), f.Close()); err != nil {
+				fmt.Fprintf(stderr, "%s: -results: the file is incomplete: %v\n", name, err)
+			}
+		}()
+	}
 	if agents == nil {
 		res, err := runner.Run(ctx, cfg)
 		if err != nil {

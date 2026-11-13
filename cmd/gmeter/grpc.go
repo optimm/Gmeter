@@ -36,6 +36,7 @@ func runGRPC(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		stagesIn  = fs.String("stages", "", `load profile instead of -rate and -duration: comma-separated DURATION@RATE (constant) or DURATION@FROM->TO (ramp)`)
 	)
 	rf := addCommonFlags(fs, "even", 50)
+	addResultsFlag(fs, rf)
 	fs.Lookup("H").Usage = `metadata "key: value" sent with every call (repeatable)`
 	fs.Lookup("insecure").Usage = "do not verify the server's TLS certificate; the run then measures a server it has not checked"
 	fs.Lookup("cacert").Usage = "PEM file with the certificate authorities to trust, instead of the system's"

@@ -69,6 +69,7 @@ Flags must come before the URL.
 | `-cacert` | | PEM file with the certificate authorities to trust for https, instead of the system's |
 | `-cert`, `-key` | | PEM client certificate and its private key, for a server that asks for one (mutual TLS); give both |
 | `-json` | | also save a JSON summary (timeline and full histograms included) to a path (`-` = only JSON, on stdout) |
+| `-results` | | also save every request to a CSV file, see [Every request, and a chart](#every-request-and-a-chart-gmeter-plot) |
 | `-phases` | `true` | split each request's latency into phases, see [Where the time goes](#where-the-time-goes); `-phases=false` turns it off |
 | `-quiet` | `false` | no progress output on stderr |
 | `-http2` | `false` | send over HTTP/2 only, see [HTTP/2](#http2) |
@@ -1024,6 +1025,40 @@ per-window `timeline`, and the
 full latency `histograms` (sparse: only non-empty buckets). A password in the URL is redacted (`user:xxxxx@host`) in the JSON and everywhere Gmeter prints it, and request headers are never
 saved. A query string is kept as given, so don't put secrets in it. `diff` refuses files with a missing or
 different `version`, and histograms it cannot rebuild.
+
+## Every request, and a chart (`gmeter plot`)
+
+The summary says how the run went; `-results` keeps every request of it, to look at later or with other tools. It
+works on a plain run, `replay` and `grpc` (not on `find`, which runs many trials, and not with `-agents`, which
+report only the whole test).
+
+```
+$ gmeter -rate 200 -duration 10s -results run.csv http://localhost:8080/
+$ gmeter plot run.csv
+gmeter plot: wrote run.html
+```
+
+One row is one request that was sent, in the order they finished:
+
+| column | |
+|---|---|
+| `seq`, `stage` | its place in the schedule, and the stage of the profile it was due in |
+| `label` | its endpoint, for a replay |
+| `due_us`, `sent_us`, `finished_us` | when it was due, sent and done, in microseconds from the start of the run |
+| `corrected_us`, `service_us` | the latency from when it was due, and from when it was sent: the two clocks of the report |
+| `status` | the HTTP status, or the gRPC status code name; empty if it got no answer |
+| `error` | the kind of failure (`timeout`, `connection_refused`, `tls`...); empty if it got an answer |
+
+The file opens in a spreadsheet, pandas or awk. `gmeter plot` turns it into one HTML page with no outside
+dependencies, so it can be attached to a ticket or opened offline: latency over time by both clocks (where the red and
+blue lines part, requests waited before they were sent), the load over time, the latency distribution, and what
+answered and what failed. It cuts the run into `-buckets` slices (default 100) and reads the file twice, keeping a
+histogram per slice, so a file of millions of rows takes bounded memory. `-o FILE` says where the page goes (`-`
+for stdout) and `-title` names it.
+
+The file is written from its own goroutine so the workers do not wait for the disk, but if the disk cannot keep up the
+queue fills and they do, and that delay shows up as latency. Write to a fast disk, and expect a file of about 50 bytes
+a request.
 
 ## Reading the generator line
 

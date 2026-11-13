@@ -42,6 +42,7 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	addHTTP2Flag(fs, rf)
 	addPhasesFlag(fs, rf)
 	addAgentsFlag(fs, rf)
+	addResultsFlag(fs, rf)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: gmeter replay -file TRACE [flags] BASE_URL\n\n"+
 			"Sends the requests of a traffic log to BASE_URL (scheme, host and optional path prefix; the\n"+

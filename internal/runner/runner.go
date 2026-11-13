@@ -128,6 +128,14 @@ type Config struct {
 	// describe an HTTP request, and a call would ignore them.
 	Call func(ctx context.Context) (code string, err error)
 
+	// Sink, if set, is called once for every request that was sent, as soon as
+	// it has ended, with its times and how it ended. It is called from the
+	// workers, concurrently, so it must be safe for concurrent use; and it runs
+	// on the worker's time, so a slow one delays the next request that worker
+	// would have sent and shows up as latency. Hand the sample to a channel or a
+	// buffered writer and return.
+	Sink func(Sample)
+
 	// WindowHistograms keeps each timeline window's latency distribution
 	// (Window.Latency), which a result needs to be merged with others. It costs
 	// a few kilobytes a window.
@@ -154,6 +162,20 @@ type Request struct {
 	// distinct label separately. Give every request one or none, at most
 	// MaxLabels different ones.
 	Label string
+}
+
+// Sample is one request as it happened, for Config.Sink. The times are offsets
+// from the start of the run.
+type Sample struct {
+	Seq      uint64        // its index in the schedule, from 0
+	Stage    int           // the stage of the profile it was due in
+	Label    string        // the Request.Label it carried, if any
+	Due      time.Duration // when the schedule said to send it: latency is measured from here
+	Sent     time.Duration // when it was handed to the client; later than Due if it had to wait for a worker
+	Finished time.Duration // when its response was read, or it failed
+	Status   int           // the HTTP status, or 0 if it got none
+	Code     string        // the gRPC status code name of a Config.Call that returned one
+	Failure  string        // the kind of failure (see Result.Errors), empty if it got an answer
 }
 
 // LoggedStatuses is how the responses of a replay compare with what the log's
@@ -358,7 +380,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	jobs := make(chan job, cfg.Workers)
 	var wg sync.WaitGroup
 	for _, t := range tallies {
-		w := &worker{client: client, cfg: cfg, live: &live, t: t, stages: stages, labels: labels, phases: phases}
+		w := &worker{start: start, client: client, cfg: cfg, live: &live, t: t, stages: stages, labels: labels, phases: phases}
 		wg.Go(func() { w.run(ctx, jobs) })
 	}
 
@@ -840,6 +862,7 @@ func (p *partTally) bad() {
 }
 
 type worker struct {
+	start  time.Time // of the run, that a Sample's times are offsets from
 	client *http.Client
 	cfg    Config
 	live   *counters
@@ -921,6 +944,7 @@ func (w *worker) do(ctx context.Context, j job) {
 	w.t.statuses[status]++
 	w.live.completed.Add(1)
 	w.record(j, intended, sent, finished)
+	w.emit(j, sent, finished, status, "", "")
 	if req := w.request(j); req != nil && req.Logged != 0 {
 		logged, got := req.Logged/100, status/100
 		w.t.loggedCompared++
@@ -959,6 +983,7 @@ func (w *worker) call(ctx, callCtx context.Context, j job) {
 	w.t.codes[code]++
 	w.live.completed.Add(1)
 	w.record(j, j.at, sent, finished)
+	w.emit(j, sent, finished, 0, code, "")
 	if code != "OK" {
 		w.stages[j.stage].bad()
 	}
@@ -975,6 +1000,28 @@ func (w *worker) failed(ctx context.Context, err error, j job, sent, finished ti
 	if kind == "timeout" {
 		w.record(j, j.at, sent, finished)
 	}
+	w.emit(j, sent, finished, 0, "", kind)
+}
+
+// emit hands j's outcome to Config.Sink, if there is one.
+func (w *worker) emit(j job, sent, finished time.Time, status int, code, failure string) {
+	if w.cfg.Sink == nil {
+		return
+	}
+	s := Sample{
+		Seq:      j.seq,
+		Stage:    j.stage,
+		Due:      j.at.Sub(w.start),
+		Sent:     sent.Sub(w.start),
+		Finished: finished.Sub(w.start),
+		Status:   status,
+		Code:     code,
+		Failure:  failure,
+	}
+	if r := w.request(j); r != nil {
+		s.Label = r.Label
+	}
+	w.cfg.Sink(s)
 }
 
 // request is the request j asks for, or nil if the run sends one fixed request.

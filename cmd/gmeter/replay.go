@@ -179,8 +179,8 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		if fixedRate {
 			how = strings.TrimPrefix(profileText(cfg.Stages), " ") + arrivalsText(arrival, seed)
 		}
-		fmt.Fprintf(stderr, "gmeter: replaying %s from %s against %s, %s, up to %d in flight\n",
-			count(len(trace.Requests), "request"), filepath.Base(*file), shownURL, how, cfg.Workers)
+		fmt.Fprintf(stderr, "gmeter: replaying %s from %s against %s, %s%s, up to %d in flight\n",
+			count(len(trace.Requests), "request"), filepath.Base(*file), shownURL, how, rf.protocolText(), cfg.Workers)
 		cfg.Progress = progressTo(stderr)
 	}
 	rf.noteTLS(stderr)
@@ -219,6 +219,7 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		TimeoutSeconds:  cfg.Timeout.Seconds(),
 		SpinSeconds:     cfg.Spin.Seconds(),
 		StartedAt:       started.Format(time.RFC3339),
+		Protocol:        rf.protocol(),
 		Replay:          info,
 	}
 	return emit(summary, *rf.jsonOut, stdout, stderr)

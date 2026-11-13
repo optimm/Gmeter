@@ -31,6 +31,7 @@ type requestFlags struct {
 	quiet    *bool
 	insecure *bool
 	cacert   *string
+	http2    *bool
 	headers  headerFlag
 	phases   *bool // nil for a command that does not offer -phases
 }
@@ -58,6 +59,7 @@ func addCommonFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers int
 		quiet:    fs.Bool("quiet", false, "no progress output on stderr"),
 		insecure: fs.Bool("insecure", false, "do not verify the server's TLS certificate (https only); the run then measures a server it has not checked"),
 		cacert:   fs.String("cacert", "", "PEM file with the certificate authorities to trust for https, instead of the system's (https only)"),
+		http2:    fs.Bool("http2", false, "send over HTTP/2 only (negotiated over TLS for https, h2c with prior knowledge for http); a server without it fails the requests instead of being measured over HTTP/1.1"),
 	}
 	fs.Var(&r.headers, "H", `extra request header "Key: Value" (repeatable)`)
 	return r
@@ -111,6 +113,7 @@ func (r *requestFlags) base(url string) (runner.Config, error) {
 		Timeout:     *r.timeout,
 		Spin:        *r.spin,
 		Phases:      r.phases != nil && *r.phases,
+		HTTP2:       *r.http2,
 		TLS:         tlsConfig,
 		SampleEvery: sampleEvery, // the same windows whether or not progress is shown
 	}, nil
@@ -136,6 +139,23 @@ func (r *requestFlags) tlsConfig() (*tls.Config, error) {
 		return &tls.Config{RootCAs: roots}, nil
 	}
 	return nil, nil
+}
+
+// protocol is the protocol asked for, as saved in a run's JSON: "HTTP/2", or
+// empty for the default, HTTP/1.1.
+func (r *requestFlags) protocol() string {
+	if *r.http2 {
+		return "HTTP/2"
+	}
+	return ""
+}
+
+// protocolText says the protocol in a banner, if it is not the default.
+func (r *requestFlags) protocolText() string {
+	if *r.http2 {
+		return ", over HTTP/2"
+	}
+	return ""
 }
 
 // noteTLS says on stderr that the server is not being verified, so a result

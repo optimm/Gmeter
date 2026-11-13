@@ -95,8 +95,8 @@ func runFind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	scrub := func(s string) string { return strings.ReplaceAll(s, cfg.URL, shownURL) }
 
 	if !*rf.quiet {
-		fmt.Fprintf(stderr, "gmeter: finding the highest rate for %s %s that meets %s, errors ≤ %g%%%s\n",
-			cfg.Method, shownURL, slo, *maxErrors, arrivalsText(arrival, seed))
+		fmt.Fprintf(stderr, "gmeter: finding the highest rate for %s %s that meets %s, errors ≤ %g%%%s%s\n",
+			cfg.Method, shownURL, slo, *maxErrors, arrivalsText(arrival, seed), rf.protocolText())
 	}
 	rf.noteTLS(stderr)
 

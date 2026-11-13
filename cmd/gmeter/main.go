@@ -113,8 +113,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	cfg.Stages, cfg.Arrivals, cfg.Seed = stages, arrival, seed
 	shownURL := redactURL(cfg.URL) // anything printed or saved uses this, never cfg.URL
 	if !*rf.quiet {
-		fmt.Fprintf(stderr, "gmeter: %s %s%s%s, up to %d in flight\n",
-			cfg.Method, shownURL, profileText(stages), arrivalsText(arrival, seed), cfg.Workers)
+		fmt.Fprintf(stderr, "gmeter: %s %s%s%s%s, up to %d in flight\n",
+			cfg.Method, shownURL, profileText(stages), arrivalsText(arrival, seed), rf.protocolText(), cfg.Workers)
 		cfg.Progress = progressTo(stderr)
 	}
 	rf.noteTLS(stderr)
@@ -141,6 +141,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		TimeoutSeconds:  cfg.Timeout.Seconds(),
 		SpinSeconds:     cfg.Spin.Seconds(),
 		StartedAt:       started.Format(time.RFC3339),
+		Protocol:        rf.protocol(),
 	}
 	return emit(summary, *rf.jsonOut, stdout, stderr)
 }

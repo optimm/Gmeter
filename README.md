@@ -54,9 +54,44 @@ Flags must come before the URL.
 | `-json` | | also save a JSON summary (timeline and full histograms included) to a path (`-` = only JSON, on stdout) |
 | `-phases` | `true` | split each request's latency into phases, see [Where the time goes](#where-the-time-goes); `-phases=false` turns it off |
 | `-quiet` | `false` | no progress output on stderr |
+| `-http2` | `false` | send over HTTP/2 only, see [HTTP/2](#http2) |
 
 Ctrl-C stops the run early and still prints the report for what ran. Exit code is `0` on success and `2` for
 bad usage or configuration.
+
+### HTTP/2
+
+By default Gmeter speaks HTTP/1.1, even to a server that offers HTTP/2. `-http2` sends every request over
+HTTP/2 instead: negotiated over TLS for `https://`, and with prior knowledge (h2c, HTTP/2 without TLS) for
+`http://`. It never falls back: a server without HTTP/2 fails the requests as `protocol` errors, with a warning
+saying so, rather than being measured over the wrong protocol. The report counts the responses by protocol
+(`protocol   HTTP/2.0: 10000`), the JSON saves it as `run.protocol`, and `diff` notes when two runs used different
+ones. It works with `find` and `replay` too.
+
+The same server (5ms of work a request), at 1000 rps for 10 seconds with `-workers 50`, both real:
+
+```
+protocol   HTTP/1.1: 10000
+  connect         11     871µs     1.6ms     1.6ms    0.0%
+  send         10000       4µs      19µs     1.1ms    0.1%
+
+protocol   HTTP/2.0: 10000
+  connect          1     705µs     705µs     705µs    0.0%
+  send         10000      28µs      46µs     1.1ms    0.6%
+```
+
+HTTP/1.1 opened 11 connections, one per request in flight at the peak, and HTTP/2 one, with every request a
+stream on it. `send` grew from 4µs to 28µs: sharing a connection means framing, flow control and taking turns to
+write. Latency was the same, because this server's 5ms dwarfs both.
+
+What changes in the numbers over HTTP/2:
+
+- **`-workers` is still the most requests in flight**, but they share connections: Go opens another only when the
+  server's limit on concurrent streams is reached.
+- **`send` includes waiting for a turn on the shared connection**, and a request that joined a connection while
+  another request was dialling it counts only the part of the dial it waited for, from when it was sent.
+- **One slow connection slows every stream on it** (TCP head-of-line blocking). That is real HTTP/2 behaviour and
+  it shows in `send` and `wait`.
 
 ### HTTPS with a private or self-signed certificate
 
@@ -180,8 +215,8 @@ know:
   connecting is.
 - **Timeouts and failed requests are not split**: there is no response to split. They are in the latency totals.
 - **`wait` is not only the server.** It includes the network round trip. On loopback it is all server.
-- **It is HTTP/1.1 only**, measured with the hooks of `net/http/httptrace`. A request that took an idle connection
-  gets no connection phases, even if a dial it started was still under way.
+- **They are measured with the hooks of `net/http/httptrace`**, over HTTP/1.1 or [HTTP/2](#http2). A request that
+  took an idle connection gets no connection phases, even if a dial it started was still under way.
 - **Cost**: about 16 more small allocations (650 bytes) per request. On loopback a request took about 67µs with and
   without it, so any time difference is inside run-to-run noise. Reproduce with
   `go test -run '^$' -bench PhaseTrace -benchmem ./internal/runner`. `-phases=false` turns it off. `gmeter find`
@@ -935,7 +970,7 @@ not the tails. Gmeter's own check still catches that case: the timer-lag and lat
 - Precision costs CPU: the default `-spin 200µs` busy-waits, up to about a quarter of a core and only below about
   5000 rps. Turn it off with `-spin 0` if the generator shares a small machine with the thing it is testing.
 - Redirects are not followed (a 302 is a result) and proxy environment variables are ignored.
-- HTTP/1.1 only for now.
+- HTTP/1.1 by default; `-http2` for HTTP/2, never a mix of both in one run.
 
 ## Development
 

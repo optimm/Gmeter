@@ -46,7 +46,9 @@ type Job struct {
 	Stages   []pacer.Stage    `json:"stages,omitempty"`
 	Arrivals string           `json:"arrivals,omitempty"` // "even" (or empty) or "poisson"
 	Seed     uint64           `json:"seed,omitempty"`
+	Phase    float64          `json:"phase,omitempty"` // see runner.Config.Phase
 	Offsets  []time.Duration  `json:"offsets,omitempty"`
+	Span     time.Duration    `json:"span,omitempty"` // see runner.Config.Span
 	Requests []runner.Request `json:"requests,omitempty"`
 	Workers  int              `json:"workers"`
 	Timeout  time.Duration    `json:"timeout"`
@@ -75,13 +77,9 @@ func (j Job) Config() (runner.Config, error) {
 	if j.StartIn < 0 || j.StartIn > MaxStartIn {
 		return runner.Config{}, fmt.Errorf("start in %v: want between 0 and %v", j.StartIn, MaxStartIn)
 	}
-	arrivals := pacer.Even
-	if j.Arrivals != "" {
-		a, err := pacer.ParseArrivals(j.Arrivals)
-		if err != nil {
-			return runner.Config{}, err
-		}
-		arrivals = a
+	arrivals, err := j.arrivals()
+	if err != nil {
+		return runner.Config{}, err
 	}
 	var tlsConfig *tls.Config
 	switch {
@@ -104,7 +102,9 @@ func (j Job) Config() (runner.Config, error) {
 		Stages:           j.Stages,
 		Arrivals:         arrivals,
 		Seed:             j.Seed,
+		Phase:            j.Phase,
 		Offsets:          j.Offsets,
+		Span:             j.Span,
 		Requests:         j.Requests,
 		Workers:          j.Workers,
 		Timeout:          j.Timeout,
@@ -121,4 +121,12 @@ func (j Job) Config() (runner.Config, error) {
 type Status struct {
 	Version int  `json:"version"`
 	Busy    bool `json:"busy"` // running a job, so it would refuse another
+}
+
+// arrivals is the arrival process the job names: even if it names none.
+func (j Job) arrivals() (pacer.Arrivals, error) {
+	if j.Arrivals == "" {
+		return pacer.Even, nil
+	}
+	return pacer.ParseArrivals(j.Arrivals)
 }

@@ -436,9 +436,14 @@ func TestAJobCarriesEverythingARunNeeds(t *testing.T) {
 		t.Errorf("config = %+v", cfg)
 	}
 
-	replay := Job{Version: Version, URL: "http://x", Offsets: []time.Duration{0, time.Second}, Workers: 1}
-	if cfg, err := replay.Config(); err != nil || len(cfg.Offsets) != 2 || cfg.Offsets[1] != time.Second || cfg.Arrivals != pacer.Even {
+	replay := Job{Version: Version, URL: "http://x", Offsets: []time.Duration{0, time.Second}, Span: 2 * time.Second, Workers: 1}
+	if cfg, err := roundTrip(t, replay).Config(); err != nil || len(cfg.Offsets) != 2 || cfg.Offsets[1] != time.Second || cfg.Span != 2*time.Second || cfg.Arrivals != pacer.Even {
 		t.Errorf("replay config = %+v, %v", cfg, err)
+	}
+
+	even := Job{Version: Version, URL: "http://x", Stages: pacer.ConstantRate(10, time.Second), Phase: 0.5, Workers: 1}
+	if cfg, err := roundTrip(t, even).Config(); err != nil || cfg.Phase != 0.5 || cfg.Arrivals != pacer.Even {
+		t.Errorf("even config = %+v, %v", cfg, err)
 	}
 
 	insecure := Job{Version: Version, Insecure: true}
@@ -472,4 +477,18 @@ func TestAJobTrustsTheCertificatesItCarries(t *testing.T) {
 	if res.Statuses[200] != 0 {
 		t.Errorf("without it: %v OK, want every request to fail verification", res.Statuses)
 	}
+}
+
+// roundTrip is j after being sent as JSON.
+func roundTrip(t *testing.T, j Job) Job {
+	t.Helper()
+	raw, err := json.Marshal(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Job
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	return back
 }

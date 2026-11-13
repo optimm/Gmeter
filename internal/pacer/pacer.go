@@ -80,6 +80,7 @@ type Schedule struct {
 	arrivals Arrivals
 	rng      *rand.Rand
 	n        uint64  // requests produced so far (Even)
+	phase    float64 // added to n (Even); see SetPhase
 	m        float64 // position on the unit-rate process (Poisson)
 
 	last time.Duration // offset of the previous request; due times never go back
@@ -144,7 +145,7 @@ func (s *Schedule) Next() (at time.Time, stage int, ok bool) {
 		s.m += s.rng.ExpFloat64()
 		m = s.m
 	} else {
-		m = float64(s.n)
+		m = float64(s.n) + s.phase
 		s.n++
 	}
 
@@ -187,4 +188,22 @@ func Totals(stages []Stage) (duration time.Duration, expected float64) {
 		expected += (st.From + st.To) / 2 * st.Duration.Seconds()
 	}
 	return duration, expected
+}
+
+// SetPhase delays every request of an Even schedule by the fraction p of a
+// request's worth of the profile: the k-th request is due when k+p requests'
+// worth are, instead of k. Several schedules at a share of the rate, the i-th
+// of n with phase i/n, then interleave into exactly the schedule of the whole
+// rate, instead of all firing at once. Call it before the first Next.
+func (s *Schedule) SetPhase(p float64) error {
+	switch {
+	case s.arrivals != Even:
+		return fmt.Errorf("pacer: a phase only applies to even arrivals, not %v", s.arrivals)
+	case !(p >= 0 && p < 1):
+		return fmt.Errorf("pacer: phase must be at least 0 and less than 1, got %v", p)
+	case s.n > 0 || s.done:
+		return fmt.Errorf("pacer: the phase must be set before the schedule starts")
+	}
+	s.phase = p
+	return nil
 }

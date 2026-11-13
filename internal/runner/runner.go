@@ -65,6 +65,18 @@ type Config struct {
 	// Arrivals and Seed, since the arrival times are already decided.
 	Offsets []time.Duration
 
+	// Phase delays every request of an Even schedule by that fraction of a
+	// request's worth of the profile (see pacer.Schedule.SetPhase), at least 0
+	// and less than 1. Generators that each run a 1/n share of the rate, the
+	// i-th with phase i/n, then send together exactly what one would have.
+	Phase float64
+
+	// Span, with Offsets, is how long the replay lasts, if longer than the
+	// last offset: a generator replaying a share of a trace lasts as long as the
+	// whole trace, so that its result lines up with the others'. Zero is the
+	// last offset.
+	Span time.Duration
+
 	// Requests, if set, says what to send instead of URL, Method, Header and
 	// Body alone: the i-th request of the schedule sends Requests[i mod
 	// len(Requests)], so a trace shorter than the schedule is replayed over and
@@ -454,7 +466,16 @@ func newSource(start time.Time, cfg Config) (source, error) {
 	if len(cfg.Offsets) > 0 {
 		return pacer.NewReplay(start, cfg.Offsets)
 	}
-	return pacer.New(start, cfg.Stages, cfg.Arrivals, cfg.Seed)
+	s, err := pacer.New(start, cfg.Stages, cfg.Arrivals, cfg.Seed)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Phase != 0 {
+		if err := s.SetPhase(cfg.Phase); err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
 }
 
 func (c Config) normalize() (Config, error) {
@@ -481,27 +502,37 @@ func (c Config) normalize() (Config, error) {
 		if len(c.Stages) > 0 || c.Rate != 0 || c.Duration != 0 {
 			return c, fmt.Errorf("runner: Offsets already say when requests are due: do not also set Rate, Duration or Stages")
 		}
-		if c.Arrivals != pacer.Even || c.Seed != 0 {
-			return c, fmt.Errorf("runner: Offsets already fix the arrival times: Arrivals and Seed have no effect with them")
+		if c.Arrivals != pacer.Even || c.Seed != 0 || c.Phase != 0 {
+			return c, fmt.Errorf("runner: Offsets already fix the arrival times: Arrivals, Seed and Phase have no effect with them")
 		}
 		replay, err := pacer.NewReplay(time.Time{}, c.Offsets)
 		if err != nil {
 			return c, err
 		}
 		span := replay.Duration()
+		switch {
+		case c.Span < 0:
+			return c, fmt.Errorf("runner: span must not be negative, got %v", c.Span)
+		case c.Span > 0 && c.Span < span:
+			return c, fmt.Errorf("runner: a span of %v ends before the last offset, %v", c.Span, span)
+		case c.Span > 0:
+			span = c.Span
+		}
 		if span <= 0 {
 			return c, fmt.Errorf("runner: the Offsets span no time (every request is due at once): use Rate and Duration instead")
 		}
 		// One stage that describes the replay, for reporting: its average rate.
 		rate := float64(replay.Len()) / span.Seconds()
 		c.Stages = pacer.ConstantRate(rate, span)
+	case c.Span != 0:
+		return c, fmt.Errorf("runner: Span is the length of a replay of Offsets, and there are none")
 	case len(c.Stages) > 0 && (c.Rate != 0 || c.Duration != 0):
 		return c, fmt.Errorf("runner: set either Rate and Duration or Stages, not both")
 	case len(c.Stages) == 0:
 		c.Stages = pacer.ConstantRate(c.Rate, c.Duration)
 	}
 	if len(c.Offsets) == 0 {
-		if _, err := pacer.New(time.Time{}, c.Stages, c.Arrivals, c.Seed); err != nil {
+		if _, err := newSource(time.Time{}, c); err != nil {
 			return c, err
 		}
 	}

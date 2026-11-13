@@ -188,6 +188,7 @@ func TestGRPCRefusesWhatItCannotRun(t *testing.T) {
 		{"stages and a rate", append(call, "-stages", "1s@10", "-rate", "5", addr), "-stages"},
 		{"a missing protoset", append(call, "-protoset", "/no/such/file", addr), "-protoset"},
 		{"nothing listening", []string{"-plaintext", "-call", grpcdemo.Say, closed}, "refused"},
+		{"TLS to a server without it", []string{"-call", grpcdemo.Say, addr}, "try -plaintext"},
 		{"an HTTP flag", append(call, "-http2", addr), "-http2"},
 		{"agents", append(call, "-agents", "127.0.0.1:1", addr), "-agents"},
 		{"phases", append(call, "-phases", addr), "-phases"},
@@ -196,6 +197,9 @@ func TestGRPCRefusesWhatItCannotRun(t *testing.T) {
 			code, stdout, stderr := exec(t, append([]string{"grpc"}, tc.args...)...)
 			if code != 2 || !strings.Contains(stderr, tc.says) || stdout != "" {
 				t.Errorf("exit %d, stderr:\n%s\nwant 2 and %q", code, stderr, tc.says)
+			}
+			if strings.Contains(stderr, "grpc: grpc:") {
+				t.Errorf("the prefix is said twice:\n%s", stderr)
 			}
 		})
 	}

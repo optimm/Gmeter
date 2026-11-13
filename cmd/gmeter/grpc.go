@@ -117,9 +117,12 @@ func runGRPC(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	caller, err := grpcload.Dial(dialCtx, opts)
 	cancel()
 	if err != nil {
-		msg := err.Error()
-		if strings.Contains(msg, "certificate") {
+		msg := strings.TrimPrefix(err.Error(), "grpc: ")
+		switch {
+		case strings.Contains(msg, "certificate"):
 			msg += "\n  trust its certificate authority with -cacert FILE, or skip verification with -insecure"
+		case strings.Contains(msg, "TLS handshake"):
+			msg += "\n  if the server does not use TLS, try -plaintext"
 		}
 		return usage("%s", msg)
 	}

@@ -36,6 +36,8 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		methods  = fs.String("methods", "GET,HEAD", `which methods to replay, comma separated, or "all": a replay sends whatever the trace says, so the default leaves out requests that would write`)
 		rows     = fs.Int("endpoints", 20, "the most rows in the per-endpoint breakdown: the busiest endpoints, and the rest together as (other); 0 leaves it out, and with it every path from the report and the saved JSON")
 	)
+	var groups groupFlag
+	fs.Var(&groups, "group", `name the endpoint of the paths that match a rule, e.g. "/products/:slug" or "GET /static/**": * or :name stands for one segment, a last ** for the rest (repeatable; the first rule that matches wins, and paths no rule matches are grouped by their shape)`)
 	rf := addCommonFlags(fs, "poisson", 50)
 	addPhasesFlag(fs, rf)
 	fs.Usage = func() {
@@ -85,6 +87,9 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	case fixedRate && set["duration"] && *duration <= 0:
 		return usage("-duration must be positive, got %v", *duration)
 	}
+	if *rows == 0 && len(groups) > 0 {
+		return usage("-group names endpoints, but -endpoints 0 leaves the endpoint breakdown out")
+	}
 	if *rows != 0 && (*rows < 2 || *rows > runner.MaxLabels) {
 		return usage("-endpoints must be 0 (no breakdown) or between 2 and %d, got %d", runner.MaxLabels, *rows)
 	}
@@ -118,7 +123,7 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return usage("every request in %s has a method outside -methods (%s): nothing to replay; pass -methods all to include them", filepath.Base(*file), *methods)
 	}
 	if *rows > 0 {
-		if err := trace.LabelEndpoints(*rows); err != nil { // after the filter: rank what will be sent
+		if err := trace.LabelEndpoints(*rows, groups...); err != nil { // after the filter: rank what will be sent
 			return usage("-endpoints: %v", err)
 		}
 	}
@@ -307,4 +312,18 @@ func isAre(n int) string {
 		return "is"
 	}
 	return "are"
+}
+
+// groupFlag collects -group rules, in the order given.
+type groupFlag []replay.Group
+
+func (g *groupFlag) String() string { return fmt.Sprint(len(*g), " rules") }
+
+func (g *groupFlag) Set(v string) error {
+	rule, err := replay.ParseGroup(v)
+	if err != nil {
+		return err
+	}
+	*g = append(*g, rule)
+	return nil
 }

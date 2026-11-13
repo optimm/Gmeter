@@ -276,10 +276,13 @@ func TestInterruptingARunOnAgentsStopsThemWithoutAReport(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Errorf("a report of part of a test:\n%s", stdout.String())
 	}
+	// The controller returns as soon as it has dropped its connections; an
+	// agent stops when it notices, which takes it a moment.
+	time.Sleep(200 * time.Millisecond)
 	after := hits.Load()
 	time.Sleep(300 * time.Millisecond)
 	if more := hits.Load() - after; more > 0 {
-		t.Errorf("the agents sent %d requests after the run was stopped", more)
+		t.Errorf("the agents were still sending %d requests 200ms after the run was stopped", more)
 	}
 }
 

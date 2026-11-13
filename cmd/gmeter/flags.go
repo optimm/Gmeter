@@ -31,7 +31,7 @@ type requestFlags struct {
 	quiet    *bool
 	insecure *bool
 	cacert   *string
-	http2    *bool
+	http2    *bool // nil for a command that does not offer -http2
 	headers  headerFlag
 	phases   *bool   // nil for a command that does not offer -phases
 	agents   *string // nil for a command that does not offer -agents
@@ -44,11 +44,19 @@ func addRequestFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers in
 	r := addCommonFlags(fs, defaultArrivals, defaultWorkers)
 	r.method = fs.String("method", http.MethodGet, "HTTP method")
 	r.body = fs.String("body", "", "request body; prefix with @ to read it from a file")
+	addHTTP2Flag(fs, r)
 	return r
 }
 
-// addCommonFlags registers everything but -method and -body, for a command
-// that takes what to send from somewhere else (a replayed trace).
+// addHTTP2Flag registers -http2, for the commands that speak HTTP (gRPC is
+// always HTTP/2).
+func addHTTP2Flag(fs *flag.FlagSet, r *requestFlags) {
+	r.http2 = fs.Bool("http2", false, "send over HTTP/2 only (negotiated over TLS for https, h2c with prior knowledge for http); a server without it fails the requests instead of being measured over HTTP/1.1")
+}
+
+// addCommonFlags registers everything but -method, -body and -http2, for a
+// command that takes what to send from somewhere else (a replayed trace, a
+// gRPC method).
 func addCommonFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers int) *requestFlags {
 	r := &requestFlags{
 		workers:  fs.Int("workers", defaultWorkers, "max requests in flight, which is also the max number of connections"),
@@ -60,7 +68,6 @@ func addCommonFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers int
 		quiet:    fs.Bool("quiet", false, "no progress output on stderr"),
 		insecure: fs.Bool("insecure", false, "do not verify the server's TLS certificate (https only); the run then measures a server it has not checked"),
 		cacert:   fs.String("cacert", "", "PEM file with the certificate authorities to trust for https, instead of the system's (https only)"),
-		http2:    fs.Bool("http2", false, "send over HTTP/2 only (negotiated over TLS for https, h2c with prior knowledge for http); a server without it fails the requests instead of being measured over HTTP/1.1"),
 	}
 	fs.Var(&r.headers, "H", `extra request header "Key: Value" (repeatable)`)
 	return r
@@ -114,7 +121,7 @@ func (r *requestFlags) base(url string) (runner.Config, error) {
 		Timeout:     *r.timeout,
 		Spin:        *r.spin,
 		Phases:      r.phases != nil && *r.phases,
-		HTTP2:       *r.http2,
+		HTTP2:       r.http2 != nil && *r.http2,
 		TLS:         tlsConfig,
 		SampleEvery: sampleEvery, // the same windows whether or not progress is shown
 	}, nil
@@ -145,7 +152,7 @@ func (r *requestFlags) tlsConfig() (*tls.Config, error) {
 // protocol is the protocol asked for, as saved in a run's JSON: "HTTP/2", or
 // empty for the default, HTTP/1.1.
 func (r *requestFlags) protocol() string {
-	if *r.http2 {
+	if r.http2 != nil && *r.http2 {
 		return "HTTP/2"
 	}
 	return ""
@@ -153,7 +160,7 @@ func (r *requestFlags) protocol() string {
 
 // protocolText says the protocol in a banner, if it is not the default.
 func (r *requestFlags) protocolText() string {
-	if *r.http2 {
+	if r.http2 != nil && *r.http2 {
 		return ", over HTTP/2"
 	}
 	return ""

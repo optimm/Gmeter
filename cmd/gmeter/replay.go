@@ -39,6 +39,7 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	var groups groupFlag
 	fs.Var(&groups, "group", `name the endpoint of the paths that match a rule, e.g. "/products/:slug" or "GET /static/**": * or :name stands for one segment, a last ** for the rest (repeatable; the first rule that matches wins, and paths no rule matches are grouped by their shape)`)
 	rf := addCommonFlags(fs, "poisson", 50)
+	addHTTP2Flag(fs, rf)
 	addPhasesFlag(fs, rf)
 	addAgentsFlag(fs, rf)
 	fs.Usage = func() {

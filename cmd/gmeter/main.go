@@ -53,6 +53,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "agent" {
 		return runAgent(ctx, args[1:], stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "grpc" {
+		return runGRPC(ctx, args[1:], stdout, stderr)
+	}
 
 	fs := flag.NewFlagSet("gmeter", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -88,19 +91,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-	var stages []pacer.Stage
-	if set["stages"] {
-		if set["rate"] || set["duration"] {
-			fmt.Fprintln(stderr, "gmeter: -stages cannot be combined with -rate or -duration: the stages already say how fast and for how long")
-			return 2
-		}
-		var err error
-		if stages, err = pacer.ParseStages(*stagesIn); err != nil {
-			fmt.Fprintf(stderr, "gmeter: -stages: %v\n", err)
-			return 2
-		}
-	} else {
-		stages = pacer.ConstantRate(*rate, *duration)
+	stages, err := profileFlags(set, *rate, *duration, *stagesIn)
+	if err != nil {
+		fmt.Fprintf(stderr, "gmeter: %v\n", err)
+		return 2
 	}
 	arrival, seed, err := rf.arrival()
 	if err != nil {
@@ -151,6 +145,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Agents:          len(agents),
 	}
 	return emit(summary, *rf.jsonOut, stdout, stderr)
+}
+
+// profileFlags is the load profile -stages, or -rate and -duration, ask for.
+func profileFlags(set map[string]bool, rate float64, duration time.Duration, stages string) ([]pacer.Stage, error) {
+	if !set["stages"] {
+		return pacer.ConstantRate(rate, duration), nil
+	}
+	if set["rate"] || set["duration"] {
+		return nil, errors.New("-stages cannot be combined with -rate or -duration: the stages already say how fast and for how long")
+	}
+	out, err := pacer.ParseStages(stages)
+	if err != nil {
+		return nil, fmt.Errorf("-stages: %w", err)
+	}
+	return out, nil
 }
 
 // progressTo returns the live progress line printer for a run.

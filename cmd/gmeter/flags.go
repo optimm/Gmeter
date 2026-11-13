@@ -33,7 +33,8 @@ type requestFlags struct {
 	cacert   *string
 	http2    *bool
 	headers  headerFlag
-	phases   *bool // nil for a command that does not offer -phases
+	phases   *bool   // nil for a command that does not offer -phases
+	agents   *string // nil for a command that does not offer -agents
 }
 
 // addRequestFlags registers them on fs. The commands differ in the default

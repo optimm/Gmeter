@@ -40,6 +40,7 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	fs.Var(&groups, "group", `name the endpoint of the paths that match a rule, e.g. "/products/:slug" or "GET /static/**": * or :name stands for one segment, a last ** for the rest (repeatable; the first rule that matches wins, and paths no rule matches are grouped by their shape)`)
 	rf := addCommonFlags(fs, "poisson", 50)
 	addPhasesFlag(fs, rf)
+	addAgentsFlag(fs, rf)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: gmeter replay -file TRACE [flags] BASE_URL\n\n"+
 			"Sends the requests of a traffic log to BASE_URL (scheme, host and optional path prefix; the\n"+
@@ -105,6 +106,10 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return usage("%v", err)
 	}
 	cfg, err := rf.base(target)
+	if err != nil {
+		return usage("%v", err)
+	}
+	agents, err := rf.agentClients(set["agents"])
 	if err != nil {
 		return usage("%v", err)
 	}
@@ -179,20 +184,16 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		if fixedRate {
 			how = strings.TrimPrefix(profileText(cfg.Stages), " ") + arrivalsText(arrival, seed)
 		}
-		fmt.Fprintf(stderr, "gmeter: replaying %s from %s against %s, %s%s, up to %d in flight\n",
-			count(len(trace.Requests), "request"), filepath.Base(*file), shownURL, how, rf.protocolText(), cfg.Workers)
-		cfg.Progress = progressTo(stderr)
+		fmt.Fprintf(stderr, "gmeter: replaying %s from %s against %s, %s%s, up to %d in flight%s\n",
+			count(len(trace.Requests), "request"), filepath.Base(*file), shownURL, how, rf.protocolText(), cfg.Workers, agentsText(agents))
+		cfg.Progress = progressTo(stderr) // a test on agents has none: their progress is not sent back
 	}
 	rf.noteTLS(stderr)
 
 	started := time.Now().UTC()
-	res, err := runner.Run(ctx, cfg)
-	if err != nil {
-		fmt.Fprintf(stderr, "gmeter replay: %s\n", scrub(err.Error()))
-		return 2
-	}
-	if ctx.Err() != nil {
-		fmt.Fprintln(stderr, "gmeter: interrupted; the report covers the partial run")
+	res, code := rf.execute(ctx, cfg, agents, "gmeter replay", stderr, scrub)
+	if res == nil {
+		return code
 	}
 
 	// The runner describes the replay as one stage: its length and average rate.
@@ -220,6 +221,7 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		SpinSeconds:     cfg.Spin.Seconds(),
 		StartedAt:       started.Format(time.RFC3339),
 		Protocol:        rf.protocol(),
+		Agents:          len(agents),
 		Replay:          info,
 	}
 	return emit(summary, *rf.jsonOut, stdout, stderr)

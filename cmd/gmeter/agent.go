@@ -90,3 +90,8 @@ func runAgent(ctx context.Context, args []string, _, stderr io.Writer) int {
 		return 1
 	}
 }
+
+// agentStartIn is how long after the controller sends the agents their shares
+// they start: time for every share to arrive, so that they start together. A
+// variable so tests can shorten it.
+var agentStartIn = 2 * time.Second

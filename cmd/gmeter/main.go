@@ -63,6 +63,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	)
 	rf := addRequestFlags(fs, "even", 50)
 	addPhasesFlag(fs, rf)
+	addAgentsFlag(fs, rf)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: gmeter [flags] URL\n\nFlags must come before the URL.\n\n")
 		fs.PrintDefaults()
@@ -114,22 +115,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	cfg.Stages, cfg.Arrivals, cfg.Seed = stages, arrival, seed
+	agents, err := rf.agentClients(set["agents"])
+	if err != nil {
+		fmt.Fprintf(stderr, "gmeter: %v\n", err)
+		return 2
+	}
 	shownURL := redactURL(cfg.URL) // anything printed or saved uses this, never cfg.URL
+	scrub := func(s string) string { return strings.ReplaceAll(s, cfg.URL, shownURL) }
 	if !*rf.quiet {
-		fmt.Fprintf(stderr, "gmeter: %s %s%s%s%s, up to %d in flight\n",
-			cfg.Method, shownURL, profileText(stages), arrivalsText(arrival, seed), rf.protocolText(), cfg.Workers)
-		cfg.Progress = progressTo(stderr)
+		fmt.Fprintf(stderr, "gmeter: %s %s%s%s%s, up to %d in flight%s\n",
+			cfg.Method, shownURL, profileText(stages), arrivalsText(arrival, seed), rf.protocolText(), cfg.Workers, agentsText(agents))
+		cfg.Progress = progressTo(stderr) // a test on agents has none: their progress is not sent back
 	}
 	rf.noteTLS(stderr)
 
 	started := time.Now().UTC()
-	res, err := runner.Run(ctx, cfg)
-	if err != nil {
-		fmt.Fprintf(stderr, "gmeter: %s\n", strings.ReplaceAll(err.Error(), cfg.URL, shownURL))
-		return 2
-	}
-	if ctx.Err() != nil {
-		fmt.Fprintln(stderr, "gmeter: interrupted; the report covers the partial run")
+	res, code := rf.execute(ctx, cfg, agents, "gmeter", stderr, scrub)
+	if res == nil {
+		return code
 	}
 
 	summary := report.Summarize(res, targetRate(expected, totalDuration))
@@ -145,6 +148,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		SpinSeconds:     cfg.Spin.Seconds(),
 		StartedAt:       started.Format(time.RFC3339),
 		Protocol:        rf.protocol(),
+		Agents:          len(agents),
 	}
 	return emit(summary, *rf.jsonOut, stdout, stderr)
 }

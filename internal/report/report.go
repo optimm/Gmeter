@@ -108,6 +108,7 @@ type RunInfo struct {
 	Seed            uint64  `json:"seed"`               // Poisson arrivals only: the seed that reproduces the arrival times
 	StartedAt       string  `json:"started_at"`         // RFC 3339, UTC
 	Protocol        string  `json:"protocol,omitempty"` // "HTTP/2" when asked for with -http2; empty is HTTP/1.1
+	Agents          int     `json:"agents,omitempty"`   // how many gmeter agents shared the load; 0 is this machine alone
 
 	// Replay is set when the run replayed a traffic log instead of sending one
 	// request over and over. In that case Method lists the methods in the trace.

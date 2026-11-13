@@ -227,6 +227,9 @@ func likeForLike(a, b Summary) []string {
 	if pa, pb := protocolOf(a), protocolOf(b); pa != pb {
 		differs("protocol", pa, pb)
 	}
+	if a.Run.Agents != b.Run.Agents { // one machine can be the bottleneck that several are not
+		notes = append(notes, fmt.Sprintf("load generators differ (A: %s, B: %s): this is not a like-for-like comparison", generatorsOf(a), generatorsOf(b)))
+	}
 	if a.Run.SpinSeconds != b.Run.SpinSeconds {
 		differs("pacing spin", spinText(a.Run.SpinSeconds), spinText(b.Run.SpinSeconds))
 	}
@@ -325,6 +328,17 @@ func (c Comparison) errorRateRow() Row {
 		r.Change = fmt.Sprintf("%+.1f points", rise)
 	}
 	return r
+}
+
+// generatorsOf says what sent a run's load: this machine, or how many agents.
+func generatorsOf(s Summary) string {
+	switch s.Run.Agents {
+	case 0:
+		return "this machine"
+	case 1:
+		return "1 agent"
+	}
+	return fmt.Sprintf("%d agents", s.Run.Agents)
 }
 
 // protocolOf is the protocol a run asked for: HTTP/1.1 unless it says

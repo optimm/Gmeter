@@ -960,3 +960,10 @@ func isTLSFailure(err error) bool {
 	return errors.As(err, &verify) || errors.As(err, &unknown) || errors.As(err, &host) ||
 		errors.As(err, &invalid) || errors.As(err, &record) || errors.As(err, &alert)
 }
+
+// Validate reports what Run would refuse in cfg, without running anything: a
+// remote generator checks the job it is given before it waits to start.
+func (c Config) Validate() error {
+	_, err := c.normalize()
+	return err
+}

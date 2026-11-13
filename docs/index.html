@@ -175,7 +175,8 @@ h1, h2, h3 { text-wrap: balance; }
   transition: border-color 150ms var(--ease), transform 150ms var(--ease);
 }
 .copy:hover { border-color: var(--screen-ink); }
-.install .note { color: var(--ink-2); font-size: 14px; }
+.install .note { color: var(--ink-2); font-size: 14px; overflow-wrap: anywhere; }
+.install .note code { font-size: 13px; color: var(--ink); }
 
 /* the chart */
 .chart { margin: 44px 0 0; border-top: 1px solid var(--rule); padding-top: 20px; }
@@ -314,8 +315,8 @@ footer { padding: 72px 0 40px; font-size: 14px; color: var(--ink-2); display: fl
           errors. It can ramp through a load profile, find the highest rate your service holds under an SLO, replay real
           traffic, compare two runs in CI, and spread one test across machines. One binary, no scripts to write.</p>
         <div class="install">
-          <div class="cmd"><code id="install-cmd">go install github.com/optimm/Gmeter/cmd/gmeter@latest</code><button class="copy" type="button" data-copy="install-cmd">Copy</button></div>
-          <span class="note">Go 1.26 or newer</span>
+          <div class="cmd"><code id="install-cmd">brew install optimm/tap/gmeter</code><button class="copy" type="button" data-copy="install-cmd">Copy</button></div>
+          <span class="note">Or with Go 1.26 or newer: <code>go install github.com/optimm/Gmeter/cmd/gmeter@latest</code></span>
         </div>
       </div>
 
@@ -580,7 +581,7 @@ no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
       <div class="split">
         <h2 id="start-title">Point it at something</h2>
         <div>
-<pre class="term"><span class="p">$ go install github.com/optimm/Gmeter/cmd/gmeter@latest</span>
+<pre class="term"><span class="p">$ brew install optimm/tap/gmeter</span>
 <span class="p">$ gmeter -rate 500 -duration 30s http://localhost:8080/health</span>
 <span class="p">$ gmeter -stages '30s@200,30s@400,30s@800' -arrivals poisson http://localhost:8080/</span>
 <span class="p">$ gmeter find -slo p99=50ms http://localhost:8080/health</span></pre>

@@ -39,6 +39,9 @@
   --panel-red-wash: rgba(255, 92, 114, 0.11);
   --us: #17233F;
   --us-ink: #EEF2F8;
+  --term-red: #FF7A8C;
+  --term-green: #7FD1A6;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -101,6 +104,7 @@ a:hover { color: var(--red); }
 code, pre, .mono { font-family: "Fragment Mono", ui-monospace, Menlo, monospace; }
 code { font-size: 0.9em; }
 p { margin: 0 0 1em; }
+h1, h2, h3 { text-wrap: balance; }
 
 .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
 @media (max-width: 600px) { .wrap { padding: 0 16px; } }
@@ -125,37 +129,37 @@ p { margin: 0 0 1em; }
 .hero.on-panel, footer.on-panel { border-image-outset: 1px 100vmax 0; }
 
 /* header */
-.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 0; }
-.mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; text-decoration: none; letter-spacing: -0.01em; }
-.mark svg { width: 26px; height: 26px; }
-.top nav { display: flex; gap: 22px; font-size: 15px; }
-.top nav a { text-decoration: none; color: var(--ink-2); }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 24px 0; }
+.mark { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 20px; text-decoration: none; }
+.mark svg { width: 24px; height: 24px; }
+.top nav { display: flex; gap: 24px; font-size: 15px; }
+.top nav a { text-decoration: none; color: var(--ink-2); transition: color 150ms var(--ease); }
 .top nav a:hover { color: var(--ink); }
-@media (max-width: 480px) { .top nav { gap: 14px; font-size: 14px; } .mark { font-size: 18px; } .mark svg { width: 22px; height: 22px; } }
+@media (max-width: 480px) { .top nav { gap: 16px; font-size: 14px; } .mark { font-size: 18px; } .mark svg { width: 20px; height: 20px; } }
 
 /* hero */
-.hero { padding: 36px 0 56px; }
+.hero { padding: 40px 0 56px; }
 .hero h1 {
   font-size: clamp(2.4rem, 5.6vw, 4.5rem);
-  line-height: 1.02;
+  line-height: 1.04;
   max-width: 13em;
-  letter-spacing: -0.03em;
-  font-weight: 760;
+  letter-spacing: -0.025em;
+  font-weight: 600;
   font-variation-settings: "wdth" 84, "opsz" 96;
   margin: 0 0 28px;
 }
 .hero .num { font-variant-numeric: tabular-nums; }
-.hero .sent { color: var(--blue); text-shadow: 0 0 24px rgba(127, 168, 245, 0.45); }
-.hero .due { color: var(--red); text-shadow: 0 0 24px rgba(255, 92, 114, 0.5); }
-.hero .or { color: var(--ink-2); font-weight: 500; }
+.hero .sent { color: var(--blue); }
+.hero .due { color: var(--red); }
+.hero .or { color: var(--ink-2); font-weight: 400; }
 .demo { margin-top: 96px; }
 .demo h2 {
-  font-size: clamp(1.9rem, 4vw, 3.1rem); line-height: 1.05; letter-spacing: -0.025em;
-  font-weight: 740; font-variation-settings: "wdth" 86, "opsz" 72; margin: 0 0 18px;
+  font-size: clamp(1.9rem, 4vw, 3.1rem); line-height: 1.06; letter-spacing: -0.02em;
+  font-weight: 600; font-variation-settings: "wdth" 86, "opsz" 72; margin: 0 0 16px;
 }
 .hero-row { display: flex; flex-direction: column; gap: 24px; }
 .lede { font-size: clamp(1.08rem, 1.5vw, 1.22rem); line-height: 1.5; max-width: 44em; color: var(--ink-2); margin: 0; }
-.lede strong { font-weight: 650; color: var(--ink); }
+.lede strong { font-weight: 500; color: var(--ink); }
 .install { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; }
 .cmd {
   display: inline-flex; align-items: center; gap: 12px; max-width: 100%;
@@ -165,44 +169,45 @@ p { margin: 0 0 1em; }
 .cmd code { overflow-x: auto; white-space: nowrap; font-size: 14px; }
 .cmd code::before { content: "$ "; color: var(--screen-dim); }
 .copy {
-  font: inherit; font-family: "Bricolage Grotesque", system-ui, sans-serif; font-size: 13px; font-weight: 600;
+  font: inherit; font-family: "Bricolage Grotesque", system-ui, sans-serif; font-size: 13px; font-weight: 500;
   background: transparent; color: var(--screen-ink); border: 1px solid var(--screen-dim);
-  border-radius: 4px; padding: 4px 10px; cursor: pointer; white-space: nowrap;
+  border-radius: 4px; padding: 4px 12px; cursor: pointer; white-space: nowrap;
+  transition: border-color 150ms var(--ease), transform 150ms var(--ease);
 }
 .copy:hover { border-color: var(--screen-ink); }
 .install .note { color: var(--ink-2); font-size: 14px; }
 
 /* the chart */
-.chart { margin: 44px 0 0; border-top: 1px solid var(--rule); padding-top: 18px; }
-.lane + .lane { margin-top: 22px; }
-.lane-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 16px; }
-.lane-title { font-weight: 650; font-size: 16px; }
+.chart { margin: 44px 0 0; border-top: 1px solid var(--rule); padding-top: 20px; }
+.lane + .lane { margin-top: 24px; }
+.lane-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
+.lane-title { font-weight: 500; font-size: 16px; }
 .lane-title span { font-weight: 400; color: var(--ink-2); }
-.lane-value { font-family: "Fragment Mono", ui-monospace, monospace; font-size: 15px; transition: opacity 0.4s ease; }
-.lane-value b { font-weight: 400; font-size: 22px; letter-spacing: -0.02em; }
+.lane-value { font-family: "Fragment Mono", ui-monospace, monospace; font-size: 15px; font-variant-numeric: tabular-nums; transition: opacity 400ms var(--ease); }
+.lane-value b { font-weight: 400; font-size: 22px; }
 .lane-sent .lane-value { color: var(--blue); }
 .lane-due .lane-value { color: var(--red); }
 .lane svg { display: block; width: 100%; overflow: visible; }
-.lane-sent .dots { filter: drop-shadow(0 0 3px var(--blue)); }
-.lane-due .dots { filter: drop-shadow(0 0 3px var(--red)); }
-.band { transition: fill 0.25s ease; }
+.band { transition: fill 160ms var(--ease); }
 .band.live { fill: rgba(255, 92, 114, 0.26); }
 .lane svg text { font-family: "Fragment Mono", ui-monospace, monospace; font-size: 11px; fill: var(--ink-2); }
-.chart-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px 24px; margin-top: 14px; }
-.chart-foot p { font-size: 14.5px; color: var(--ink-2); max-width: 46em; margin: 0; }
+.chart-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px 24px; margin-top: 16px; }
+.chart-foot p { font-size: 14px; color: var(--ink-2); max-width: 46em; margin: 0; }
 .again {
-  font: inherit; font-size: 14px; font-weight: 600; color: var(--ink);
-  background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 5px 12px; cursor: pointer;
+  font: inherit; font-size: 14px; font-weight: 500; color: var(--ink);
+  background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 4px 12px; cursor: pointer;
+  transition: border-color 150ms var(--ease), transform 150ms var(--ease);
 }
 .again:hover { border-color: var(--ink); }
+.copy:active, .again:active { transform: scale(0.98); }
 .is-hidden { opacity: 0; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* sections */
 .section { padding: 96px 0 0; }
 .section h2, .start h2 {
-  font-size: clamp(1.9rem, 4vw, 2.9rem); line-height: 1.02; letter-spacing: -0.025em;
-  font-weight: 720; font-variation-settings: "wdth" 82, "opsz" 72;
+  font-size: clamp(1.9rem, 4vw, 2.9rem); line-height: 1.06; letter-spacing: -0.02em;
+  font-weight: 600; font-variation-settings: "wdth" 82, "opsz" 72;
   margin: 0 0 20px; max-width: 18ch;
 }
 .split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 24px 56px; }
@@ -210,9 +215,9 @@ p { margin: 0 0 1em; }
 .prose { max-width: 38em; }
 .prose p:last-child { margin-bottom: 0; }
 .figures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; margin-top: 28px; border-top: 1px solid var(--rule); }
-.figures div { padding: 14px 16px 14px 0; border-bottom: 1px solid var(--rule); }
+.figures div { padding: 16px 16px 16px 0; border-bottom: 1px solid var(--rule); }
 .figures dt { font-size: 14px; color: var(--ink-2); }
-.figures dd { margin: 2px 0 0; font-family: "Fragment Mono", ui-monospace, monospace; font-size: 20px; }
+.figures dd { margin: 4px 0 0; font-family: "Fragment Mono", ui-monospace, monospace; font-size: 20px; font-variant-numeric: tabular-nums; }
 .figures .red { color: var(--red); }
 .figures .blue { color: var(--blue); }
 
@@ -227,8 +232,8 @@ p { margin: 0 0 1em; }
   font: inherit; text-align: left; background: transparent; color: var(--ink-2); cursor: pointer;
   border: 0; border-bottom: 1px solid var(--rule); padding: 12px 4px; display: flex; flex-direction: column; gap: 0;
 }
-.tab code { font-size: 15px; color: var(--ink); }
-.tab small { font-size: 13.5px; line-height: 1.35; }
+.tab code { font-size: 15px; color: var(--ink); transition: color 150ms var(--ease); }
+.tab small { font-size: 13px; line-height: 1.4; }
 .tab[aria-selected="true"] { box-shadow: inset 3px 0 0 var(--red); padding-left: 14px; }
 .tab[aria-selected="true"] code { color: var(--red); }
 .tab:hover code { color: var(--red); }
@@ -237,53 +242,53 @@ p { margin: 0 0 1em; }
   .tab small { display: none; }
   .tab[aria-selected="true"] { box-shadow: inset 0 -3px 0 var(--red); padding-left: 14px; }
 }
-.panel h3 { font-size: 22px; letter-spacing: -0.015em; font-weight: 680; margin: 0 0 8px; line-height: 1.2; }
+.panel h3 { font-size: 22px; font-weight: 500; margin: 0 0 8px; line-height: 1.25; }
 .panel > p { max-width: 42em; color: var(--ink); }
 .panel .more { font-size: 15px; }
 .term {
   background: var(--screen); color: var(--screen-ink); border-radius: 6px;
-  padding: 18px 20px; margin: 18px 0 14px; overflow-x: auto; font-size: 13px; line-height: 1.55;
+  padding: 20px; margin: 20px 0 16px; overflow-x: auto; font-size: 13px; line-height: 1.55;
   white-space: pre;
 }
 .on-panel .term { border: 1px solid var(--rule); }
 .term .p { color: var(--screen-dim); }
-.term .r { color: #FF7A8C; }
-.term .g { color: #7FD1A6; }
+.term .r { color: var(--term-red); }
+.term .g { color: var(--term-green); }
 
 /* comparison */
 .table-scroll { overflow-x: auto; margin-top: 28px; border-top: 2px solid var(--ink); }
-table { border-collapse: collapse; width: 100%; min-width: 860px; font-size: 14.5px; line-height: 1.35; }
-th, td { text-align: left; vertical-align: top; padding: 12px 12px; border-bottom: 1px solid var(--rule); }
-thead th { font-weight: 650; font-size: 15px; padding-top: 14px; }
-tbody th { font-weight: 450; width: 27%; padding-left: 0; }
+table { border-collapse: collapse; width: 100%; min-width: 860px; font-size: 14px; line-height: 1.4; }
+th, td { text-align: left; vertical-align: top; padding: 12px; border-bottom: 1px solid var(--rule); }
+thead th { font-weight: 500; font-size: 15px; padding-top: 16px; }
+tbody th { font-weight: 400; width: 27%; padding-left: 0; }
 td.us, th.us { background: var(--us); color: var(--us-ink); border-bottom-color: rgba(150, 172, 212, 0.22); }
 th.us { font-size: 16px; }
-td.us { font-weight: 600; }
-td.us.no { color: #9AA8BF; font-weight: 450; }
+td.us { font-weight: 500; }
+td.us.no { color: var(--panel-ink-2); font-weight: 400; }
 td.no { color: var(--ink-2); }
-td .y { font-weight: 600; }
-.table-note { font-size: 14px; color: var(--ink-2); margin-top: 14px; max-width: 52em; }
+td .y { font-weight: 500; }
+.table-note { font-size: 14px; color: var(--ink-2); margin-top: 16px; max-width: 52em; }
 .else { margin-top: 48px; }
-.else h3 { font-size: 22px; font-weight: 680; letter-spacing: -0.015em; margin: 0 0 10px; }
+.else h3 { font-size: 22px; font-weight: 500; margin: 0 0 12px; }
 .else ul { margin: 0; padding-left: 1.1em; max-width: 42em; }
-.else li { margin-bottom: 6px; }
+.else li { margin-bottom: 8px; }
 
 /* under the hood */
 .facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 56px; margin: 24px 0 0; }
 @media (max-width: 760px) { .facts { grid-template-columns: minmax(0, 1fr); } }
-.facts div { border-top: 1px solid var(--rule); padding: 18px 0 20px; }
-.facts dt { font-weight: 650; font-size: 18px; margin-bottom: 4px; }
+.facts div { border-top: 1px solid var(--rule); padding: 20px 0; }
+.facts dt { font-weight: 500; font-size: 18px; margin-bottom: 4px; }
 .facts dd { margin: 0; color: var(--ink-2); max-width: 34em; }
 
 /* start */
 .start { margin-top: 112px; padding: 88px 0 0; }
-.start .term { font-size: 13.5px; margin-top: 0; }
+.start .term { font-size: 13px; margin-top: 0; }
 .start .split { align-items: start; }
 .start p { color: var(--ink-2); }
-footer { padding: 72px 0 40px; font-size: 14.5px; color: var(--ink-2); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; }
+footer { padding: 72px 0 40px; font-size: 14px; color: var(--ink-2); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .lane-value, .band { transition: none; }
+  *, *::before, *::after { transition: none !important; }
 }
 </style>
 </head>
@@ -303,19 +308,19 @@ footer { padding: 72px 0 40px; font-size: 14.5px; color: var(--ink-2); display: 
 
   <main>
     <section class="hero on-panel" aria-labelledby="title">
-      <h1 id="title">Load testing for HTTP and gRPC, written in Go.</h1>
+      <h1 id="title">Load testing for HTTP and gRPC, written in Go</h1>
       <div class="hero-row">
         <p class="lede">Gmeter sends requests at the rate you set and reports latency percentiles, throughput and
           errors. It can ramp through a load profile, find the highest rate your service holds under an SLO, replay real
           traffic, compare two runs in CI, and spread one test across machines. One binary, no scripts to write.</p>
         <div class="install">
           <div class="cmd"><code id="install-cmd">go install github.com/optimm/Gmeter/cmd/gmeter@latest</code><button class="copy" type="button" data-copy="install-cmd">Copy</button></div>
-          <span class="note">Go 1.26 or newer.</span>
+          <span class="note">Go 1.26 or newer</span>
         </div>
       </div>
 
       <div class="demo">
-        <h2 id="clocks"><span class="num sent">897µs</span> <span class="or">or</span> <span class="num due">505.2ms</span><br>Same run, different clock.</h2>
+        <h2 id="clocks"><span class="num sent">897µs</span> <span class="or">or</span> <span class="num due">505.2ms</span><br>Same run, different clock</h2>
         <p class="lede">Both numbers are the p90 of the same test: one timed from when each request was sent, the
           other from when it was due. Most load testers only show you the first. Gmeter keeps sending on schedule through a
           stall and <strong>times every request from the moment it was due</strong>, so the stall lands in your p99
@@ -348,7 +353,7 @@ footer { padding: 72px 0 40px; font-size: 14.5px; color: var(--ink-2); display: 
 
     <section class="section" aria-labelledby="why">
       <div class="split">
-        <h2 id="why">The requests a stall delays are the ones most testers never send.</h2>
+        <h2 id="why">The requests a stall delays are the ones most testers never send</h2>
         <div class="prose">
           <p>Most load testers send a request, wait for the reply, then send the next. When the server freezes, they
             freeze with it. The requests real users would have sent during that second are never sent, so they are never
@@ -360,7 +365,7 @@ footer { padding: 72px 0 40px; font-size: 14.5px; color: var(--ink-2); display: 
           <dl class="figures">
             <div><dt>service p90, from send</dt><dd class="blue">897µs</dd></div>
             <div><dt>corrected p90, from due time</dt><dd class="red">505.2ms</dd></div>
-            <div><dt>requests due during the freeze</dt><dd>200 of 1000</dd></div>
+            <div><dt>requests due during the freeze</dt><dd>200 of 1,000</dd></div>
             <div><dt>corrected p99 with 20 or 2 workers</dt><dd>952ms, 957ms</dd></div>
           </dl>
         </div>
@@ -368,7 +373,7 @@ footer { padding: 72px 0 40px; font-size: 14.5px; color: var(--ink-2); display: 
     </section>
 
     <section class="section" id="commands" aria-labelledby="commands-title">
-      <h2 id="commands-title">Six commands, one honest clock.</h2>
+      <h2 id="commands-title">Six commands, one honest clock</h2>
       <div class="commands">
         <div class="tabs" role="tablist" aria-label="Gmeter commands">
           <button class="tab" role="tab" id="t-run" aria-controls="p-run" aria-selected="true"><code>gmeter</code><small>Run at a rate or a profile</small></button>
@@ -496,7 +501,7 @@ no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
     </section>
 
     <section class="section" id="compare" aria-labelledby="compare-title">
-      <h2 id="compare-title">How it compares.</h2>
+      <h2 id="compare-title">How it compares</h2>
       <p class="prose">There are excellent load testers already. Gmeter is for when the question is "what latency will my users
         actually see at this load", and you want an answer you don't have to second-guess.</p>
       <div class="table-scroll" role="region" aria-labelledby="compare-title" tabindex="0">
@@ -545,7 +550,7 @@ no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
     </section>
 
     <section class="section" aria-labelledby="hood-title">
-      <h2 id="hood-title">Under the hood.</h2>
+      <h2 id="hood-title">Under the hood</h2>
       <dl class="facts">
         <div><dt>Never averages percentiles</dt>
           <dd>Every result keeps its full log-linear histogram: about 250KB, with at most 0.1% error at any size.
@@ -573,7 +578,7 @@ no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
 
     <section class="start on-panel" aria-labelledby="start-title">
       <div class="split">
-        <h2 id="start-title">Point it at something.</h2>
+        <h2 id="start-title">Point it at something</h2>
         <div>
 <pre class="term"><span class="p">$ go install github.com/optimm/Gmeter/cmd/gmeter@latest</span>
 <span class="p">$ gmeter -rate 500 -duration 30s http://localhost:8080/health</span>
@@ -587,7 +592,7 @@ no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
   </main>
 
   <footer class="on-panel">
-    <span>Gmeter, an open-loop load generator written in Go.</span>
+    <span>Gmeter, an open-loop load generator written in Go</span>
     <a href="https://github.com/optimm/Gmeter">github.com/optimm/Gmeter</a>
   </footer>
 </div>

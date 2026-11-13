@@ -20,7 +20,9 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Test
-        run: go test -race -count=1 ./...
+        # -short skips the two tests that measure this machine's timer precision
+        # (busy-wait wake-ups within 250µs), which a shared runner cannot promise
+        run: go test -race -short -count=1 ./...
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser

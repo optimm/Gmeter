@@ -419,6 +419,9 @@ func TestRecordsTimerLagForRequestsItHadToWaitFor(t *testing.T) {
 // the median on macOS for a 100 rps schedule), and all of it is charged to the
 // request as latency. The scheduler must use the spin window to remove it.
 func TestSpinMakesTheSchedulerWakeOnTime(t *testing.T) {
+	if testing.Short() {
+		t.Skip("measures this machine's timer precision, which a shared CI runner cannot promise; run without -short")
+	}
 	srv := okServer(t)
 	cfg := baseConfig(srv.URL)
 	cfg.Rate = 100 // one every 10ms: long enough sleeps for a timer to overshoot

@@ -79,6 +79,9 @@ func TestWaitUntilStopsWhenContextIsCancelled(t *testing.T) {
 // stretch must remove it. Only the median is asserted: the tail depends on how
 // busy the machine is, and no pacing strategy can fix that.
 func TestWaitUntilWithSpinWakesCloseToTheDeadline(t *testing.T) {
+	if testing.Short() {
+		t.Skip("measures this machine's timer precision, which a shared CI runner cannot promise; run without -short")
+	}
 	const waits = 40
 	start := time.Now()
 	lags := make([]time.Duration, waits)

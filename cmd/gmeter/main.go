@@ -350,6 +350,9 @@ func judgeEndpoints(c report.Comparison, thresholdPct float64, w io.Writer) (reg
 			if phase, ms, ok := r.GrewMost(); ok { // both runs recorded this endpoint's phases
 				where = fmt.Sprintf("  mean grew most in %s (+%s)", phase, report.FormatMs(ms))
 			}
+			if a, b, ok := r.WaitP99s(); ok {
+				where += fmt.Sprintf("  wait p99 %s -> %s", report.FormatMs(a), report.FormatMs(b))
+			}
 			fmt.Fprintf(w, "  %-*s  %+.1f%%  (%s -> %s)%s\n", width, r.Endpoint, r.P99ChangePct, report.FormatMs(r.P99A), report.FormatMs(r.P99B), where)
 		}
 		if rose, judged, ok := c.SharedRise(); ok {

@@ -116,7 +116,8 @@ func TestEndpointPhasesSurviveTheJSON(t *testing.T) {
 }
 
 // phaseRows returns the numbers of each row of the endpoint phase table
-// (answered, mean, queue, connect, send, wait, transfer) by endpoint name.
+// (answered, mean, queue, connect, send, wait, transfer, wait p99) by endpoint
+// name.
 func phaseRows(t *testing.T, out string) map[string][]string {
 	t.Helper()
 	_, section, found := strings.Cut(out, "endpoints, where the time goes")
@@ -132,8 +133,8 @@ func phaseRows(t *testing.T, out string) map[string][]string {
 		if i == 0 { // the header
 			continue
 		}
-		if len(f) >= 8 && strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") {
-			rows[strings.Join(f[:len(f)-7], " ")] = f[len(f)-7:]
+		if len(f) >= 9 && strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") {
+			rows[strings.Join(f[:len(f)-8], " ")] = f[len(f)-8:]
 		}
 	}
 	return rows
@@ -149,10 +150,11 @@ func TestEndpointPhaseTableShowsTheMeanTimePerAnsweredRequest(t *testing.T) {
 
 	// GET /a: per answered request 1ms queue, 0.2ms connect (20ms over 100
 	// requests, not 4ms), 0.1ms send, 8ms wait, 1ms transfer: 10.3ms in all.
+	// No wait distribution was recorded, so its p99 is "-".
 	want := map[string]string{
-		"GET /a": "100 10.3ms 1.0ms 200µs 100µs 8.0ms 1.0ms",
+		"GET /a": "100 10.3ms 1.0ms 200µs 100µs 8.0ms 1.0ms -",
 		// GET /b: dns, connect and tls are one column: 1+2+4 = 7ms.
-		"GET /b": "10 27.0ms 0ns 7.0ms 0ns 20.0ms 0ns",
+		"GET /b": "10 27.0ms 0ns 7.0ms 0ns 20.0ms 0ns -",
 	}
 	if len(rows) != len(want) {
 		t.Errorf("rows for %d endpoints, want %d (GET /c was never answered): %v", len(rows), len(want), rows)

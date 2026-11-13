@@ -23,6 +23,10 @@ type EndpointSummary struct {
 	// through them; the key is left out when phases were not recorded or nothing
 	// was answered.
 	Phases []PhaseMean `json:"phases,omitempty"`
+	// Wait digests the wait phase of the answered requests (written to first byte:
+	// the server's time and the network's), the one phase whose tail is kept;
+	// left out like Phases.
+	Wait *Latency `json:"latency_wait,omitempty"`
 
 	// LogCompared and LogDifferent are the responses that had a logged status to
 	// compare with and those of another class (see VsLog); left out when none had.
@@ -49,6 +53,10 @@ func endpointSummaries(labels []runner.LabelResult) []EndpointSummary {
 
 			LogCompared:  l.LoggedCompared,
 			LogDifferent: l.LoggedDiffer,
+		}
+		if l.Wait != nil && l.Wait.Count() > 0 {
+			wait := digest(l.Wait)
+			out[i].Wait = &wait
 		}
 	}
 	return out
@@ -100,12 +108,17 @@ func writeEndpointPhases(b *strings.Builder, endpoints []EndpointSummary) {
 		name     string
 		answered uint64
 		v        [len(shownPhases)]float64
+		waitP99  string
 	}
 	var rows []row
 	width := len("endpoint")
 	for _, e := range endpoints {
 		if v, answered := perRequest(e.Phases); answered > 0 {
-			rows = append(rows, row{e.Endpoint, answered, v})
+			waitP99 := "-"
+			if e.Wait != nil {
+				waitP99 = FormatMs(e.Wait.P99Ms)
+			}
+			rows = append(rows, row{e.Endpoint, answered, v, waitP99})
 			width = max(width, min(utf8.RuneCountInString(e.Endpoint), endpointWidth))
 		}
 	}
@@ -119,7 +132,7 @@ func writeEndpointPhases(b *strings.Builder, endpoints []EndpointSummary) {
 	for _, name := range shownPhases {
 		fmt.Fprintf(b, "  %8s", name)
 	}
-	b.WriteString("\n")
+	fmt.Fprintf(b, "  %8s\n", "wait p99")
 	for _, r := range rows {
 		var mean float64
 		for _, m := range r.v {
@@ -129,7 +142,8 @@ func writeEndpointPhases(b *strings.Builder, endpoints []EndpointSummary) {
 		for _, m := range r.v {
 			fmt.Fprintf(b, "  %8s", d(m))
 		}
-		b.WriteString("\n")
+		fmt.Fprintf(b, "  %8s\n", r.waitP99)
 	}
 	b.WriteString("connect is dns + connect + tls, averaged over all answered requests, not only those that opened a connection; timeouts and failures have no phases and are not counted\n")
+	b.WriteString("wait p99 is the tail of the server's own time (request written to first byte), which a mean hides\n")
 }

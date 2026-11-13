@@ -38,6 +38,8 @@ type EndpointRow struct {
 	// answered requests. It is nil unless both runs recorded the endpoint's
 	// phases.
 	Moves []float64
+
+	waitA, waitB *Latency // the wait digests, if recorded
 }
 
 // GrewMost is the phase in which an answered request of the endpoint spent the
@@ -50,6 +52,16 @@ func (r EndpointRow) GrewMost() (phase string, ms float64, ok bool) {
 		}
 	}
 	return phase, ms, ok
+}
+
+// WaitP99s are the endpoint's wait p99 in A and B, in milliseconds: the tail of
+// the server's own time, without the queue in Gmeter. It is false unless both
+// runs recorded it.
+func (r EndpointRow) WaitP99s() (a, b float64, ok bool) {
+	if r.waitA == nil || r.waitB == nil {
+		return 0, 0, false
+	}
+	return r.waitA.P99Ms, r.waitB.P99Ms, true
 }
 
 // compareEndpoints matches the endpoints of two runs by name. The rows are in
@@ -101,6 +113,7 @@ func endpointRow(a, b EndpointSummary) EndpointRow {
 		P50A: a.Corrected.P50Ms, P50B: b.Corrected.P50Ms,
 		P99A: a.Corrected.P99Ms, P99B: b.Corrected.P99Ms,
 		ErrorsA: a.Failed + a.BadStatus, ErrorsB: b.Failed + b.BadStatus,
+		waitA: a.Wait, waitB: b.Wait,
 	}
 	if va, answeredA := perRequest(a.Phases); answeredA > 0 {
 		if vb, answeredB := perRequest(b.Phases); answeredB > 0 {

@@ -210,6 +210,8 @@ type PhaseTotal struct {
 type phaseSums struct {
 	requests [numPhases]uint64
 	total    [numPhases]time.Duration
+
+	byName phaseTotalSums // for merging finished totals, by addTotals
 }
 
 // add records one request, counting a connection phase only if it happened, as
@@ -227,6 +229,33 @@ func (s *phaseSums) totals() []PhaseTotal {
 	out := make([]PhaseTotal, numPhases)
 	for i, name := range PhaseNames {
 		out[i] = PhaseTotal{Phase: name, Requests: s.requests[i], Total: s.total[i]}
+	}
+	return out
+}
+
+// phaseTotalSums adds up PhaseTotals by phase name, for merging.
+type phaseTotalSums = map[string]PhaseTotal
+
+// addTotals adds totals, a phase at a time, keyed by the phase's name.
+func (s *phaseSums) addTotals(totals []PhaseTotal) {
+	if s.byName == nil {
+		s.byName = phaseTotalSums{}
+	}
+	for _, t := range totals {
+		x := s.byName[t.Phase]
+		x.Phase = t.Phase
+		x.Requests += t.Requests
+		x.Total += t.Total
+		s.byName[t.Phase] = x
+	}
+}
+
+// totalsOf returns the added-up totals in the order of the phases of like.
+func (s *phaseSums) totalsOf(like []PhaseTotal) []PhaseTotal {
+	out := make([]PhaseTotal, len(like))
+	for i, t := range like {
+		out[i] = s.byName[t.Phase]
+		out[i].Phase = t.Phase
 	}
 	return out
 }

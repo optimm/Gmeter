@@ -105,6 +105,11 @@ type Config struct {
 	SampleEvery time.Duration
 	Progress    func(Snapshot)
 
+	// WindowHistograms keeps each timeline window's latency distribution
+	// (Window.Latency), which a result needs to be merged with others. It costs
+	// a few kilobytes a window.
+	WindowHistograms bool
+
 	labels  []string // the distinct Request labels in order of first use, filled in by normalize
 	labelOf []uint8  // the index in labels of each request's label, filled in by normalize
 	base    string   // URL without a trailing slash, that a request's Target is appended to
@@ -178,6 +183,11 @@ type Window struct {
 	RPS       float64       // Responses per second of Interval
 	P50, P99  time.Duration
 	Max       time.Duration
+
+	// Latency is the window's corrected-latency distribution, kept only when
+	// Config.WindowHistograms is set, so that windows from several generators
+	// can be merged (percentiles cannot be).
+	Latency *hist.Histogram
 }
 
 // Result is the outcome of a run.
@@ -608,7 +618,11 @@ func startSampler(cfg Config, live *counters, start time.Time, tallies []*tally)
 				t.corrected.AddTo(cur)
 			}
 			scheduled, failed := live.scheduled.Load(), live.failed.Load()
-			w := windowOf(cur.Delta(prev), now.Sub(prevAt))
+			d := cur.Delta(prev)
+			w := windowOf(d, now.Sub(prevAt))
+			if cfg.WindowHistograms {
+				w.Latency = d
+			}
 			w.End = now.Sub(start)
 			w.Partial = partial
 			w.Scheduled, w.Failed = scheduled-prevScheduled, failed-prevFailed

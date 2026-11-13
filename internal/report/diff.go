@@ -224,6 +224,9 @@ func likeForLike(a, b Summary) []string {
 	if ra, rb := replayText(a.Run.Replay), replayText(b.Run.Replay); ra != rb {
 		differs("replay", ra, rb)
 	}
+	if pa, pb := protocolOf(a), protocolOf(b); pa != pb {
+		differs("protocol", pa, pb)
+	}
 	if a.Run.SpinSeconds != b.Run.SpinSeconds {
 		differs("pacing spin", spinText(a.Run.SpinSeconds), spinText(b.Run.SpinSeconds))
 	}
@@ -322,4 +325,13 @@ func (c Comparison) errorRateRow() Row {
 		r.Change = fmt.Sprintf("%+.1f points", rise)
 	}
 	return r
+}
+
+// protocolOf is the protocol a run asked for: HTTP/1.1 unless it says
+// otherwise, which is also what every file from before -http2 used.
+func protocolOf(s Summary) string {
+	if s.Run.Protocol == "" {
+		return "HTTP/1.1"
+	}
+	return s.Run.Protocol
 }

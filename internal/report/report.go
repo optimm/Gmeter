@@ -37,6 +37,8 @@ type Summary struct {
 
 	Statuses map[int]uint64    `json:"statuses"`
 	Errors   map[string]uint64 `json:"errors"`
+	// Protocols counts the responses by the protocol they came over.
+	Protocols map[string]uint64 `json:"protocols,omitempty"`
 
 	// Corrected is measured from each request's intended send time (the honest
 	// number). Service is measured from when it was actually sent (what a
@@ -100,11 +102,12 @@ type RunInfo struct {
 	Workers         int     `json:"workers"`
 	DurationSeconds float64 `json:"duration_seconds"` // how long requests were scheduled for, in total
 	TimeoutSeconds  float64 `json:"timeout_seconds"`
-	SpinSeconds     float64 `json:"spin_seconds"` // pacing busy-wait window; 0 = plain timer (also what older files imply)
-	Profile         string  `json:"profile"`      // the load profile as stages, e.g. "30s@100,30s@200"; empty in older files
-	Arrivals        string  `json:"arrivals"`     // "even" or "poisson"; empty in older files, which were all even
-	Seed            uint64  `json:"seed"`         // Poisson arrivals only: the seed that reproduces the arrival times
-	StartedAt       string  `json:"started_at"`   // RFC 3339, UTC
+	SpinSeconds     float64 `json:"spin_seconds"`       // pacing busy-wait window; 0 = plain timer (also what older files imply)
+	Profile         string  `json:"profile"`            // the load profile as stages, e.g. "30s@100,30s@200"; empty in older files
+	Arrivals        string  `json:"arrivals"`           // "even" or "poisson"; empty in older files, which were all even
+	Seed            uint64  `json:"seed"`               // Poisson arrivals only: the seed that reproduces the arrival times
+	StartedAt       string  `json:"started_at"`         // RFC 3339, UTC
+	Protocol        string  `json:"protocol,omitempty"` // "HTTP/2" when asked for with -http2; empty is HTTP/1.1
 
 	// Replay is set when the run replayed a traffic log instead of sending one
 	// request over and over. In that case Method lists the methods in the trace.
@@ -179,6 +182,7 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 		Dropped:        res.Dropped,
 		Statuses:       res.Statuses,
 		Errors:         res.Errors,
+		Protocols:      res.Protocols,
 		Corrected:      digest(res.Corrected),
 		Service:        digest(res.Service),
 		Generator: Generator{
@@ -224,6 +228,11 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 	s.VsLog = vsLog(res.Logged)
 	if w := s.VsLog.warning(); w != "" {
 		s.Warnings = append(s.Warnings, w)
+	}
+	if n := res.Errors["protocol"]; n > 0 {
+		s.Warnings = append(s.Warnings, fmt.Sprintf(
+			"%d of %d requests failed because the server did not speak HTTP/2, which -http2 asks for and does not fall back from: leave out -http2 to test it over HTTP/1.1, or enable HTTP/2 on the server (for plain http that means h2c, HTTP/2 without TLS)",
+			n, s.Scheduled))
 	}
 	if n := res.Errors["tls"]; n > 0 {
 		s.Warnings = append(s.Warnings, fmt.Sprintf(
@@ -305,6 +314,14 @@ func (s Summary) WriteText(w io.Writer) error {
 			parts[i] = fmt.Sprintf("%s: %d", k, s.Errors[k])
 		}
 		fmt.Fprintf(&b, "errors     %s\n", strings.Join(parts, "   "))
+	}
+	if len(s.Protocols) > 0 {
+		names := sortedKeys(s.Protocols)
+		parts := make([]string, len(names))
+		for i, p := range names {
+			parts[i] = fmt.Sprintf("%s: %d", p, s.Protocols[p])
+		}
+		fmt.Fprintf(&b, "protocol   %s\n", strings.Join(parts, "   "))
 	}
 	writeVsLog(&b, s.VsLog)
 	fmt.Fprintf(&b, "generator  timer lag p99 %s, max %s   late %d (%.1f%%)\n",

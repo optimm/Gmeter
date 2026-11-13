@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gmeter: load testing that keeps time</title>
+<meta name="description" content="Gmeter is an open-loop load generator for HTTP and gRPC. Every request is due at a fixed moment, and its latency is measured from that moment, so a stalled server shows up in your p99 instead of vanishing from it.">
+<meta property="og:title" content="Gmeter: load testing that keeps time">
+<meta property="og:description" content="An open-loop load generator for HTTP and gRPC that measures latency from when each request was due.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://optimm.github.io/Gmeter/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2317233F'/%3E%3Cpath d='M4 24h8l1-15 6 13h9' fill='none' stroke='%23FF5C72' stroke-width='3' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Fragment+Mono&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #F2F4F1;
+  --paper-2: #E8EDE9;
+  --grid: #D5DED8;
+  --rule: #C3CDC7;
+  --ink: #17233F;
+  --ink-2: #4E5B70;
+  --red: #C21E3A;
+  --red-wash: rgba(194, 30, 58, 0.08);
+  --blue: #2F5DA8;
+  --screen: #17233F;
+  --screen-ink: #E6ECF2;
+  --screen-dim: #8E9BB0;
+  --focus: #2F5DA8;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0F1620;
+    --paper-2: #16202C;
+    --grid: #1F2B38;
+    --rule: #2A3847;
+    --ink: #E4EAF0;
+    --ink-2: #97A5B7;
+    --red: #FF5C72;
+    --red-wash: rgba(255, 92, 114, 0.10);
+    --blue: #79A3F0;
+    --screen: #0A1017;
+    --screen-ink: #E4EAF0;
+    --screen-dim: #7E8DA2;
+    --focus: #79A3F0;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0F1620;
+  --paper-2: #16202C;
+  --grid: #1F2B38;
+  --rule: #2A3847;
+  --ink: #E4EAF0;
+  --ink-2: #97A5B7;
+  --red: #FF5C72;
+  --red-wash: rgba(255, 92, 114, 0.10);
+  --blue: #79A3F0;
+  --screen: #0A1017;
+  --screen-ink: #E4EAF0;
+  --screen-dim: #7E8DA2;
+  --focus: #79A3F0;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
+  font-size: 17px;
+  line-height: 1.6;
+  font-variation-settings: "wdth" 100;
+}
+a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+a:hover { color: var(--red); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 2px; }
+code, pre, .mono { font-family: "Fragment Mono", ui-monospace, Menlo, monospace; }
+code { font-size: 0.9em; }
+p { margin: 0 0 1em; }
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+@media (max-width: 600px) { .wrap { padding: 0 16px; } }
+
+/* header */
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 0; }
+.mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; text-decoration: none; letter-spacing: -0.01em; }
+.mark svg { width: 26px; height: 26px; }
+.top nav { display: flex; gap: 22px; font-size: 15px; }
+.top nav a { text-decoration: none; color: var(--ink-2); }
+.top nav a:hover { color: var(--ink); }
+@media (max-width: 480px) { .top nav { gap: 14px; font-size: 14px; } .mark { font-size: 18px; } .mark svg { width: 22px; height: 22px; } }
+
+/* hero */
+.hero { padding: 32px 0 24px; }
+.hero h1 {
+  font-size: clamp(2.6rem, 6.6vw, 5.4rem);
+  line-height: 0.95;
+  letter-spacing: -0.028em;
+  font-weight: 750;
+  font-variation-settings: "wdth" 86, "opsz" 96;
+  margin: 0 0 28px;
+}
+.lede { font-size: clamp(1.1rem, 1.6vw, 1.3rem); line-height: 1.5; max-width: 40em; color: var(--ink); margin-bottom: 28px; }
+.lede strong { font-weight: 650; }
+.install { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+.cmd {
+  display: inline-flex; align-items: center; gap: 12px; max-width: 100%;
+  background: var(--screen); color: var(--screen-ink);
+  border-radius: 6px; padding: 10px 10px 10px 16px; font-size: 14px;
+}
+.cmd code { overflow-x: auto; white-space: nowrap; font-size: 14px; }
+.cmd code::before { content: "$ "; color: var(--screen-dim); }
+.copy {
+  font: inherit; font-family: "Bricolage Grotesque", system-ui, sans-serif; font-size: 13px; font-weight: 600;
+  background: transparent; color: var(--screen-ink); border: 1px solid var(--screen-dim);
+  border-radius: 4px; padding: 4px 10px; cursor: pointer; white-space: nowrap;
+}
+.copy:hover { border-color: var(--screen-ink); }
+.install .note { color: var(--ink-2); font-size: 15px; }
+
+/* the chart */
+.chart { margin: 48px 0 0; border-top: 2px solid var(--ink); padding-top: 18px; }
+.lane + .lane { margin-top: 22px; }
+.lane-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 16px; }
+.lane-title { font-weight: 650; font-size: 16px; }
+.lane-title span { font-weight: 400; color: var(--ink-2); }
+.lane-value { font-family: "Fragment Mono", ui-monospace, monospace; font-size: 15px; transition: opacity 0.4s ease; }
+.lane-value b { font-weight: 400; font-size: 22px; letter-spacing: -0.02em; }
+.lane-sent .lane-value { color: var(--blue); }
+.lane-due .lane-value { color: var(--red); }
+.lane svg { display: block; width: 100%; overflow: visible; }
+.lane svg text { font-family: "Fragment Mono", ui-monospace, monospace; font-size: 11px; fill: var(--ink-2); }
+.chart-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px 24px; margin-top: 14px; }
+.chart-foot p { font-size: 14.5px; color: var(--ink-2); max-width: 46em; margin: 0; }
+.again {
+  font: inherit; font-size: 14px; font-weight: 600; color: var(--ink);
+  background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 5px 12px; cursor: pointer;
+}
+.again:hover { border-color: var(--ink); }
+.is-hidden { opacity: 0; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* sections */
+.section { padding: 96px 0 0; }
+.section h2, .start h2 {
+  font-size: clamp(1.9rem, 4vw, 2.9rem); line-height: 1.02; letter-spacing: -0.025em;
+  font-weight: 720; font-variation-settings: "wdth" 82, "opsz" 72;
+  margin: 0 0 20px; max-width: 18ch;
+}
+.split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 24px 56px; }
+@media (max-width: 860px) { .split { grid-template-columns: minmax(0, 1fr); } }
+.prose { max-width: 38em; }
+.prose p:last-child { margin-bottom: 0; }
+.figures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; margin-top: 28px; border-top: 1px solid var(--rule); }
+.figures div { padding: 14px 16px 14px 0; border-bottom: 1px solid var(--rule); }
+.figures dt { font-size: 14px; color: var(--ink-2); }
+.figures dd { margin: 2px 0 0; font-family: "Fragment Mono", ui-monospace, monospace; font-size: 20px; }
+.figures .red { color: var(--red); }
+.figures .blue { color: var(--blue); }
+
+/* commands */
+.commands { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 0 40px; margin-top: 12px; }
+@media (max-width: 860px) { .commands { grid-template-columns: minmax(0, 1fr); } }
+.tabs { display: flex; flex-direction: column; border-top: 1px solid var(--rule); }
+@media (max-width: 860px) {
+  .tabs { flex-direction: row; overflow-x: auto; border-top: 0; border-bottom: 1px solid var(--rule); margin-bottom: 20px; }
+}
+.tab {
+  font: inherit; text-align: left; background: transparent; color: var(--ink-2); cursor: pointer;
+  border: 0; border-bottom: 1px solid var(--rule); padding: 12px 4px; display: flex; flex-direction: column; gap: 0;
+}
+.tab code { font-size: 15px; color: var(--ink); }
+.tab small { font-size: 13.5px; line-height: 1.35; }
+.tab[aria-selected="true"] { box-shadow: inset 3px 0 0 var(--red); padding-left: 14px; }
+.tab[aria-selected="true"] code { color: var(--red); }
+.tab:hover code { color: var(--red); }
+@media (max-width: 860px) {
+  .tab { border-bottom: 0; padding: 10px 14px; white-space: nowrap; }
+  .tab small { display: none; }
+  .tab[aria-selected="true"] { box-shadow: inset 0 -3px 0 var(--red); padding-left: 14px; }
+}
+.panel h3 { font-size: 22px; letter-spacing: -0.015em; font-weight: 680; margin: 0 0 8px; line-height: 1.2; }
+.panel > p { max-width: 42em; color: var(--ink); }
+.panel .more { font-size: 15px; }
+.term {
+  background: var(--screen); color: var(--screen-ink); border-radius: 6px;
+  padding: 18px 20px; margin: 18px 0 14px; overflow-x: auto; font-size: 13px; line-height: 1.55;
+  white-space: pre;
+}
+.term .p { color: var(--screen-dim); }
+.term .r { color: #FF7A8C; }
+.term .g { color: #7FD1A6; }
+
+/* comparison */
+.table-scroll { overflow-x: auto; margin-top: 28px; border-top: 2px solid var(--ink); }
+table { border-collapse: collapse; width: 100%; min-width: 860px; font-size: 14.5px; line-height: 1.35; }
+th, td { text-align: left; vertical-align: top; padding: 12px 12px; border-bottom: 1px solid var(--rule); }
+thead th { font-weight: 650; font-size: 15px; padding-top: 14px; }
+tbody th { font-weight: 450; width: 27%; padding-left: 0; }
+td.us, th.us { background: var(--paper-2); }
+td.us { font-weight: 600; }
+td.no { color: var(--ink-2); }
+td .y { font-weight: 600; }
+.table-note { font-size: 14px; color: var(--ink-2); margin-top: 14px; max-width: 52em; }
+.else { margin-top: 48px; }
+.else h3 { font-size: 22px; font-weight: 680; letter-spacing: -0.015em; margin: 0 0 10px; }
+.else ul { margin: 0; padding-left: 1.1em; max-width: 42em; }
+.else li { margin-bottom: 6px; }
+
+/* under the hood */
+.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 56px; margin: 24px 0 0; }
+@media (max-width: 760px) { .facts { grid-template-columns: minmax(0, 1fr); } }
+.facts div { border-top: 1px solid var(--rule); padding: 18px 0 20px; }
+.facts dt { font-weight: 650; font-size: 18px; margin-bottom: 4px; }
+.facts dd { margin: 0; color: var(--ink-2); max-width: 34em; }
+
+/* start */
+.start { padding: 96px 0 0; }
+.start .term { font-size: 13.5px; }
+footer { margin-top: 96px; border-top: 1px solid var(--rule); padding: 24px 0 40px; font-size: 14.5px; color: var(--ink-2); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lane-value { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="mark" href="./" aria-label="Gmeter home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="6" fill="var(--ink)"/><path d="M4 24h8l1-15 6 13h9" fill="none" stroke="var(--red)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/></svg>
+      gmeter
+    </a>
+    <nav aria-label="Site">
+      <a href="#commands">Commands</a>
+      <a href="#compare">Compare</a>
+      <a href="https://github.com/optimm/Gmeter">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="title">
+      <h1 id="title">Load testing<br> that keeps time.</h1>
+      <p class="lede">Gmeter is an open-loop load generator for HTTP and gRPC. Every request is due at a fixed moment on the
+        clock, whatever the server is doing, and <strong>its latency is measured from that moment</strong>. When the
+        server stalls, the stall shows up in your p99 instead of disappearing from it.</p>
+      <div class="install">
+        <div class="cmd"><code id="install-cmd">go install github.com/optimm/Gmeter/cmd/gmeter@latest</code><button class="copy" type="button" data-copy="install-cmd">Copy</button></div>
+        <span class="note">One binary. Go 1.26 or newer.</span>
+      </div>
+
+      <figure class="chart" aria-labelledby="chart-caption">
+        <div class="lane lane-sent">
+          <div class="lane-head">
+            <div class="lane-title">From when each request was sent <span>what a closed-loop tester reports</span></div>
+            <div class="lane-value js-value">p90 <b>897µs</b></div>
+          </div>
+          <svg id="lane-sent" role="img" aria-label="Requests measured from when they were sent: a few requests in flight at the freeze wait up to a second, then nothing is sent until the server recovers."></svg>
+        </div>
+        <div class="lane lane-due">
+          <div class="lane-head">
+            <div class="lane-title">From when each request was due <span>what Gmeter reports</span></div>
+            <div class="lane-value js-value">p90 <b>505.2ms</b></div>
+          </div>
+          <svg id="lane-due" role="img" aria-label="Requests measured from when they were due: every request due during the freeze is plotted, each waiting until the freeze ends, forming a falling ramp from one second to zero."></svg>
+        </div>
+        <div class="chart-foot">
+          <p id="chart-caption">A server that answers instantly, except for a one-second freeze two seconds in, tested at
+            200 requests a second for 5 seconds. Each dot is a request, placed at the time it was sent or due, and as
+            high as its latency. The p90s are from the real run in the README; the dots are thinned to 30 a second so
+            you can see them.</p>
+          <button class="again" type="button" id="replay">Play again</button>
+        </div>
+      </figure>
+    </section>
+
+    <section class="section" aria-labelledby="why">
+      <div class="split">
+        <h2 id="why">The requests a stall delays are the ones most testers never send.</h2>
+        <div class="prose">
+          <p>Most load testers send a request, wait for the reply, then send the next. When the server freezes, they
+            freeze with it. The requests real users would have sent during that second are never sent, so they are never
+            measured, and the percentiles come out looking healthy. This is called coordinated omission.</p>
+          <p>Gmeter schedules request <em>n</em> at <code>start + n / rate</code> and never waits for the server to
+            decide. A request that goes out late, because the server or Gmeter itself was busy, is still timed from when
+            it was due. Both numbers are in every report, side by side, so you can see how much of the latency came from
+            the stall.</p>
+          <dl class="figures">
+            <div><dt>service p90, from send</dt><dd class="blue">897µs</dd></div>
+            <div><dt>corrected p90, from due time</dt><dd class="red">505.2ms</dd></div>
+            <div><dt>requests due during the freeze</dt><dd>200 of 1000</dd></div>
+            <div><dt>corrected p99 with 20 or 2 workers</dt><dd>952ms, 957ms</dd></div>
+          </dl>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="commands" aria-labelledby="commands-title">
+      <h2 id="commands-title">Six commands, one honest clock.</h2>
+      <div class="commands">
+        <div class="tabs" role="tablist" aria-label="Gmeter commands">
+          <button class="tab" role="tab" id="t-run" aria-controls="p-run" aria-selected="true"><code>gmeter</code><small>Run at a rate or a profile</small></button>
+          <button class="tab" role="tab" id="t-find" aria-controls="p-find" aria-selected="false" tabindex="-1"><code>gmeter find</code><small>Find the rate that meets an SLO</small></button>
+          <button class="tab" role="tab" id="t-replay" aria-controls="p-replay" aria-selected="false" tabindex="-1"><code>gmeter replay</code><small>Send real traffic at its real pace</small></button>
+          <button class="tab" role="tab" id="t-diff" aria-controls="p-diff" aria-selected="false" tabindex="-1"><code>gmeter diff</code><small>Compare two runs, gate a build</small></button>
+          <button class="tab" role="tab" id="t-grpc" aria-controls="p-grpc" aria-selected="false" tabindex="-1"><code>gmeter grpc</code><small>Load-test a unary gRPC method</small></button>
+          <button class="tab" role="tab" id="t-agents" aria-controls="p-agents" aria-selected="false" tabindex="-1"><code>-agents</code><small>Spread one test over machines</small></button>
+        </div>
+
+        <div class="panel" role="tabpanel" id="p-run" aria-labelledby="t-run" tabindex="0">
+          <h3>Run at a rate, a step test or a ramp</h3>
+          <p>Constant rate, <code>-stages</code> for steps and ramps, Poisson arrivals with a seed you can replay. The
+            report has corrected and service latency, a per-second timeline that puts a time on every spike, a breakdown
+            of where each request's time went, and a line where Gmeter checks its own timing.</p>
+<pre class="term"><span class="p">$ gmeter -rate 200 -duration 5s -workers 20 http://127.0.0.1:18080/</span>
+requests   1000 scheduled   1000 ok   0 bad status   0 failed   0 dropped
+achieved   200.1 rps (target 200) over 5.00s
+generator  timer lag p99 1.1ms, max 14.3ms   late 163 (16.3%)
+
+latency, corrected (from each request's intended send time)
+  p50 572µs   p90 <span class="r">505.2ms</span>   p99 951.6ms   p99.9 996.7ms   max 1.00s
+latency, service (from when the request was actually sent)
+  p50 518µs   p90 897µs   p99 951.6ms   p99.9 996.7ms   max 1.00s
+
+timeline (1s windows)
+  p99  ▁▁<span class="r">█</span>▁▁   worst 992.0ms in the window ending at 3.0s
+  rps  ▆▄█▆   lowest 114 in the window ending at 2.0s</pre>
+          <p class="more"><a href="https://github.com/optimm/Gmeter#what-it-looks-like">Reading the report</a>,
+            <a href="https://github.com/optimm/Gmeter#where-the-time-goes">where the time goes</a> and
+            <a href="https://github.com/optimm/Gmeter#load-profiles-steps-and-ramps">load profiles</a> in the README.</p>
+        </div>
+
+        <div class="panel" role="tabpanel" id="p-find" aria-labelledby="t-find" tabindex="0" hidden>
+          <h3>Find the most it can take within your target</h3>
+          <p>Give it a latency target and an error budget. It doubles the rate until a trial misses, bisects, then
+            re-runs the answer to see whether it holds. It also tells you when the answer needs a caveat, and when the
+            limit it hit was Gmeter's rather than the server's.</p>
+<pre class="term"><span class="p">$ gmeter find -slo p99=50ms -trial 5s -warmup 1s http://127.0.0.1:18082/</span>
+   #  phase         rate        p99  errors  result
+   1  grow           100      8.2ms    0.0%  <span class="g">pass</span>
+   2  grow           200      7.7ms    0.0%  <span class="g">pass</span>
+   3  grow           400      9.1ms    0.0%  <span class="g">pass</span>
+   4  grow           800    183.1ms    0.0%  <span class="r">FAIL</span>  p99 is 183.1ms, over the 50ms target
+   5  bisect         600     12.7ms    0.0%  <span class="g">pass</span>
+   6  bisect         700     26.8ms    0.0%  <span class="g">pass</span>
+   7  bisect         750     52.9ms    0.0%  <span class="r">FAIL</span>  p99 is 52.9ms, over the 50ms target
+   8  bisect         725     34.5ms    0.0%  <span class="g">pass</span>
+   9  confirm        725     39.1ms    0.0%  <span class="g">pass</span>
+  10  confirm        725     38.8ms    0.0%  <span class="g">pass</span>
+
+result  the highest rate meeting p99 ≤ 50ms is about 725 rps
+        held in 2 of 2 re-runs at 725 rps</pre>
+          <p class="more"><a href="https://github.com/optimm/Gmeter#finding-the-highest-rate-that-meets-a-target-gmeter-find">How the search works and how far to trust it</a></p>
+        </div>
+
+        <div class="panel" role="tabpanel" id="p-replay" aria-labelledby="t-replay" tabindex="0" hidden>
+          <h3>Replay production traffic, bursts included</h3>
+          <p>Feed it an nginx or Apache access log, or JSON Lines, and it sends each request when it was recorded, with
+            the real mix of endpoints. Results come per endpoint. It sends only <code>GET</code> and <code>HEAD</code>
+            unless you say otherwise, so a log full of <code>DELETE</code>s can't change your staging data by accident.</p>
+<pre class="term"><span class="p"># a 10-second trace at about 300 rps, against a server with four slots</span>
+endpoints, busiest first (corrected latency)
+  endpoint             scheduled     bad  failed       p50       p99       max
+  GET /orders/:id           1961       0       0     4.3ms    72.9ms    89.0ms
+  GET /search                625       0       0    42.6ms   105.3ms   118.9ms
+  GET /users/:id/cart        459       0       0     4.3ms    70.6ms    80.5ms</pre>
+          <p>The same 4,000 requests at 400 a second on average gave a p99 of 5.4ms when evenly spaced and 121.1ms at
+            their recorded pace, because the bursts queue. An average rate hides that.</p>
+          <p class="more"><a href="https://github.com/optimm/Gmeter#replaying-real-traffic-gmeter-replay">Trace formats, pacing and safety</a></p>
+        </div>
+
+        <div class="panel" role="tabpanel" id="p-diff" aria-labelledby="t-diff" tabindex="0" hidden>
+          <h3>Compare two runs, and fail the build on a regression</h3>
+          <p>Every run can be saved with its full latency histograms. <code>diff</code> compares two runs from those
+            histograms, warns when the runs weren't set up the same way, and with <code>-threshold</code> exits 1 when
+            p99 grew too much.</p>
+<pre class="term"><span class="p">$ gmeter diff -threshold 20 before.json after.json</span>
+                            A            B    change
+achieved rps            200.1        200.1     +0.0%
+latency, corrected
+  p50                   442µs        572µs    +29.3%
+  p99                   3.0ms      951.6ms <span class="r">+31966.3%</span>
+
+share of B's requests that are slower than A's percentiles
+  slower than A's p99 (3.0ms): <span class="r">21.8%</span>   (at most 1.0% if nothing changed)</pre>
+          <p>The last line is something two percentiles can't tell you: how many more of your requests got slow.</p>
+          <p class="more"><a href="https://github.com/optimm/Gmeter#comparing-runs">Errors, phases and per-endpoint gates</a></p>
+        </div>
+
+        <div class="panel" role="tabpanel" id="p-grpc" aria-labelledby="t-grpc" tabindex="0" hidden>
+          <h3>gRPC on the same clock</h3>
+          <p>Call any unary method by name. The schema comes from server reflection or a descriptor set, so there's no
+            code to generate. The request is checked against the method's input type before anything is sent, and the
+            results are counted by status code.</p>
+<pre class="term"><span class="p">$ gmeter grpc -plaintext -call gmeter.demo.Echo/Say \
+    -data '{"name":"ann","delay_ms":5}' -rate 1000 -duration 10s 127.0.0.1:18097</span>
+requests   10000 scheduled   10000 ok   0 bad status   0 failed   0 dropped
+achieved   999.4 rps (target 1000) over 10.01s
+codes      OK: 10000
+generator  timer lag p99 417ns, max 1.3ms   late 1 (0.0%)
+
+latency, corrected (from each request's intended send time)
+  p50 5.2ms   p90 5.3ms   p99 5.3ms   p99.9 6.2ms   max 8.3ms</pre>
+          <p class="more"><a href="https://github.com/optimm/Gmeter#grpc-gmeter-grpc">Flags, status codes and what it doesn't do</a></p>
+        </div>
+
+        <div class="panel" role="tabpanel" id="p-agents" aria-labelledby="t-agents" tabindex="0" hidden>
+          <h3>More load than one machine can send</h3>
+          <p>When the generator runs out of CPU, its requests go out late and the report blames the server. Gmeter warns
+            you when that happens. To fix it, run <code>gmeter agent</code> on a few machines and give the controller
+            <code>-agents</code>. The agents send back full histograms and the controller adds them up, so the merged
+            p99 is the p99 of every request, never an average of p99s.</p>
+<pre class="term"><span class="p">$ export GMETER_TOKEN='a long random password'</span>
+<span class="p">$ gmeter -agents gen1:7070,gen2:7070,gen3:7070,gen4:7070 -rate 40000 -duration 10s -workers 64 http://target/</span>
+
+<span class="p"># measured on one 10-core Mac: 40,000 rps for 10s, two runs where two are given</span>
+generator                    achieved      corrected p99   late
+one CPU                      33,265 rps    <span class="r">2.00s, 2.02s</span>    100%
+four agents, one CPU each    39,998 rps    579µs, 4.4ms    0.6%, 1.0%
+no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
+          <p class="more"><a href="https://github.com/optimm/Gmeter#several-generators--agents">How the load is shared, and what to know first</a></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="compare" aria-labelledby="compare-title">
+      <h2 id="compare-title">How it compares.</h2>
+      <p class="prose">There are excellent load testers already. Gmeter is for when the question is "what latency will my users
+        actually see at this load", and you want an answer you don't have to second-guess.</p>
+      <div class="table-scroll" role="region" aria-labelledby="compare-title" tabindex="0">
+        <table>
+          <thead>
+            <tr><th scope="col"><span class="visually-hidden">Feature</span></th><th scope="col" class="us">Gmeter</th><th scope="col">wrk</th><th scope="col">wrk2</th><th scope="col">Vegeta</th><th scope="col">k6</th><th scope="col">Locust</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Sends on a fixed schedule, whatever the server does</th>
+              <td class="us">Yes</td><td class="no">No</td><td><span class="y">Yes</span></td><td><span class="y">Yes</span></td><td>With the arrival-rate executors</td><td class="no">No</td></tr>
+            <tr><th scope="row">Measures latency from when each request was due</th>
+              <td class="us">Yes</td><td class="no">No</td><td><span class="y">Yes</span></td><td>From when sent; adds workers to stay on time</td><td>From when sent; iterations it can't start are dropped and counted</td><td class="no">No</td></tr>
+            <tr><th scope="row">Checks its own timing and says when it is the bottleneck</th>
+              <td class="us">Timer lag and late sends, with warnings</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td>Counts dropped iterations</td><td>Warns on high CPU</td></tr>
+            <tr><th scope="row">Searches for the highest rate that meets a latency target</th>
+              <td class="us">Yes</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
+            <tr><th scope="row">Replays an access log at its recorded pace</th>
+              <td class="us">Yes, per endpoint</td><td class="no">No</td><td class="no">No</td><td>Its requests, not their timing</td><td>By scripting it</td><td>By scripting it</td></tr>
+            <tr><th scope="row">Splits each request into dns, connect, tls, send, wait, transfer</th>
+              <td class="us">Yes, with Gmeter's own queueing too</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td><span class="y">Yes</span></td><td class="no">No</td></tr>
+            <tr><th scope="row">Compares two runs and gates a build on the difference</th>
+              <td class="us">Yes, from full histograms</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td>Pass or fail thresholds per run</td><td class="no">No</td></tr>
+            <tr><th scope="row">HTTP/2</th>
+              <td class="us">Yes, TLS and h2c</td><td class="no">No</td><td class="no">No</td><td><span class="y">Yes</span></td><td><span class="y">Yes</span></td><td class="no">Not built in</td></tr>
+            <tr><th scope="row">gRPC</th>
+              <td class="us">Unary</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td><span class="y">Yes</span>, streaming too</td><td>With a custom client</td></tr>
+            <tr><th scope="row">Several machines, one merged result</th>
+              <td class="us">Yes, histograms added</td><td class="no">No</td><td class="no">No</td><td>Merge the result files yourself</td><td>k6 Operator or Grafana Cloud</td><td><span class="y">Yes</span>, built in</td></tr>
+            <tr><th scope="row">Scripted user journeys</th>
+              <td class="us no">No</td><td>Lua</td><td>Lua</td><td class="no">No</td><td><span class="y">JavaScript</span></td><td><span class="y">Python</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="table-note">Based on each project's documentation and source as of November 2026. If a cell is out of date,
+        <a href="https://github.com/optimm/Gmeter/issues">open an issue</a> and it will be fixed.</p>
+
+      <div class="else">
+        <h3>When to use something else</h3>
+        <ul>
+          <li>Multi-step user journeys with logins, state and think time: k6 or Locust.</li>
+          <li>Streaming gRPC methods: k6 or ghz.</li>
+          <li>A browser in the loop: k6's browser module or Playwright.</li>
+          <li>A hosted dashboard for a team to share: Grafana Cloud k6 or Locust's web UI.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="hood-title">
+      <h2 id="hood-title">Under the hood.</h2>
+      <dl class="facts">
+        <div><dt>Never averages percentiles</dt>
+          <dd>Every result keeps its full log-linear histogram: about 250KB, with at most 0.1% error at any size.
+            Stages, windows and agents are combined by adding histograms together.</dd></div>
+        <div><dt>No drift over millions of requests</dt>
+          <dd>Request <em>n</em>'s due time is computed from <em>n</em>, never by adding up intervals, so rounding
+            errors can't accumulate. A generator that falls behind catches up, and each late request keeps its due
+            time.</dd></div>
+        <div><dt>Precise timing, at a small CPU cost</dt>
+          <dd>The scheduler sleeps, then busy-waits the last 200µs. At 100 rps that brought the corrected p50 from 2.4ms
+            down to 601µs, against a service p50 of 541µs. The busy-wait is capped at a quarter of a core and turns itself off above
+            about 5,000 rps.</dd></div>
+        <div><dt>Recording without locks</dt>
+          <dd>Each worker records into its own atomic histogram, padded to a 128-byte cache line, and a sampler reads
+            them. With 8 goroutines recording at once, padding took a record from 2.0–3.1ns down to 0.92ns.</dd></div>
+        <div><dt>Two dependencies, both pinned</dt>
+          <dd>Everything is Go's standard library except gRPC support, which pins grpc v1.85.0 and protobuf
+            v1.36.12.</dd></div>
+        <div><dt>Safe by default</dt>
+          <dd>Replays send only GET and HEAD unless you say otherwise. Agents listen on localhost unless told otherwise,
+            and read their password from an environment variable, never a flag. Passwords in URLs are redacted
+            everywhere they're printed or saved.</dd></div>
+      </dl>
+    </section>
+
+    <section class="start" aria-labelledby="start-title">
+      <div class="split">
+        <h2 id="start-title">Point it at something.</h2>
+        <div>
+<pre class="term"><span class="p">$ go install github.com/optimm/Gmeter/cmd/gmeter@latest</span>
+<span class="p">$ gmeter -rate 500 -duration 30s http://localhost:8080/health</span>
+<span class="p">$ gmeter -stages '30s@200,30s@400,30s@800' -arrivals poisson http://localhost:8080/</span>
+<span class="p">$ gmeter find -slo p99=50ms http://localhost:8080/health</span></pre>
+          <p>Every flag and every caveat is in the <a href="https://github.com/optimm/Gmeter#readme">README</a>, with
+            real output from real runs.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Gmeter, an open-loop load generator written in Go.</span>
+    <a href="https://github.com/optimm/Gmeter">github.com/optimm/Gmeter</a>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  /* copy */
+  document.querySelectorAll("[data-copy]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var text = document.getElementById(btn.getAttribute("data-copy")).textContent;
+      var done = function () { btn.textContent = "Copied"; setTimeout(function () { btn.textContent = "Copy"; }, 1600); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () { btn.textContent = "Select and copy"; });
+      } else {
+        btn.textContent = "Select and copy";
+      }
+    });
+  });
+
+  /* tabs */
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
+  function select(tab, focus) {
+    tabs.forEach(function (t) {
+      var on = t === tab;
+      t.setAttribute("aria-selected", on ? "true" : "false");
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+    });
+    if (focus) tab.focus();
+  }
+  tabs.forEach(function (tab, i) {
+    tab.addEventListener("click", function () { select(tab, false); });
+    tab.addEventListener("keydown", function (e) {
+      var next = null;
+      if (e.key === "ArrowDown" || e.key === "ArrowRight") next = tabs[(i + 1) % tabs.length];
+      else if (e.key === "ArrowUp" || e.key === "ArrowLeft") next = tabs[(i - 1 + tabs.length) % tabs.length];
+      else if (e.key === "Home") next = tabs[0];
+      else if (e.key === "End") next = tabs[tabs.length - 1];
+      if (next) { e.preventDefault(); select(next, true); }
+    });
+  });
+
+  /* the strip chart */
+  var NS = "http://www.w3.org/2000/svg";
+  var T = 5, F0 = 2, F1 = 3, PER_SEC = 30, CONNS = 4, YMAX = 1.08, PLAY_MS = 4200;
+
+  // A tiny deterministic jitter, so the baseline looks measured rather than ruled.
+  function jitter(i) { var x = Math.sin(i * 12.9898) * 43758.5453; return x - Math.floor(x); }
+
+  function build() {
+    var due = [], sent = [], blocked = 0;
+    for (var i = 0; i < PER_SEC * T; i++) {
+      var t = i / PER_SEC, stalled = t >= F0 && t < F1;
+      due.push({ t: t, lat: stalled ? F1 - t : 0, j: jitter(i) });
+      if (stalled) {
+        // a closed-loop tester with CONNS connections: each one sends, then waits for the frozen server
+        if (blocked < CONNS) { sent.push({ t: t, lat: F1 - t, j: jitter(i + 7) }); blocked++; }
+      } else {
+        sent.push({ t: t, lat: 0, j: jitter(i + 7) });
+      }
+    }
+    return { due: due, sent: sent };
+  }
+  var data = build();
+
+  function el(name, attrs, parent) {
+    var n = document.createElementNS(NS, name);
+    for (var k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+
+  var lanes = [
+    { svg: document.getElementById("lane-sent"), points: data.sent, color: "var(--blue)", note: "nothing sent, so nothing measured", axis: false },
+    { svg: document.getElementById("lane-due"), points: data.due, color: "var(--red)", note: "every request due here waited for the freeze", axis: true }
+  ];
+
+  function draw() {
+    lanes.forEach(function (lane) {
+      var svg = lane.svg, W = svg.clientWidth || svg.parentNode.clientWidth;
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      var padL = 40, padR = 8, padT = 10, H = Math.round(Math.max(110, Math.min(170, W * 0.17)));
+      var axisH = lane.axis ? 26 : 6, total = padT + H + axisH;
+      svg.setAttribute("viewBox", "0 0 " + W + " " + total);
+      svg.setAttribute("height", total);
+      var x = function (t) { return padL + (t / T) * (W - padL - padR); };
+      var y = function (lat) { return padT + H - (lat / YMAX) * H; };
+
+      // freeze band
+      el("rect", { x: x(F0), y: padT, width: x(F1) - x(F0), height: H, fill: "var(--red-wash)" }, svg);
+      // grid
+      for (var s = 0; s <= T * 2; s++) {
+        el("line", { x1: x(s / 2), x2: x(s / 2), y1: padT, y2: padT + H, stroke: "var(--grid)", "stroke-width": s % 2 ? 0.5 : 1 }, svg);
+      }
+      [0.5, 1].forEach(function (v) {
+        el("line", { x1: padL, x2: W - padR, y1: y(v), y2: y(v), stroke: "var(--grid)", "stroke-width": 1 }, svg);
+        var lab = el("text", { x: padL - 8, y: y(v) + 4, "text-anchor": "end" }, svg); lab.textContent = v === 1 ? "1s" : "0.5s";
+      });
+      var zero = el("text", { x: padL - 8, y: y(0) + 4, "text-anchor": "end" }, svg); zero.textContent = "0";
+      el("line", { x1: padL, x2: W - padR, y1: y(0), y2: y(0), stroke: "var(--ink-2)", "stroke-width": 1 }, svg);
+      if (lane.axis) {
+        for (var k = 0; k <= T; k++) {
+          var tl = el("text", { x: x(k), y: padT + H + 18, "text-anchor": k === 0 ? "start" : k === T ? "end" : "middle" }, svg);
+          tl.textContent = k + "s";
+        }
+      }
+      if (x(F1) - x(F0) > 150) {
+        // right-aligned in the freeze band, clear of the dots: the sent lane's are top left, the due lane's fall to the right
+        var nx = x(F1) - 8, ny = lane.axis ? padT + 16 : y(0.5);
+        var note = el("text", { x: nx, y: ny, "text-anchor": "end" }, svg); note.textContent = lane.note;
+        if (lane.note.length * 6.7 > x(F1) - x(F0) - 12) {
+          // split over two lines when the band is narrow
+          var words = lane.note.split(" "), half = Math.ceil(words.length / 2);
+          note.textContent = words.slice(0, half).join(" ");
+          var note2 = el("text", { x: nx, y: ny + 14, "text-anchor": "end" }, svg); note2.textContent = words.slice(half).join(" ");
+        }
+      }
+      lane.dots = lane.points.map(function (p) {
+        return el("circle", { cx: x(p.t), cy: y(p.lat) - p.j * 2.5, r: W < 600 ? 1.9 : 2.6, fill: lane.color }, svg);
+      });
+      lane.head = el("line", { x1: x(0), x2: x(0), y1: padT - 4, y2: padT + H, stroke: "var(--ink)", "stroke-width": 1.5 }, svg);
+      lane.x = x;
+    });
+  }
+
+  var values = document.querySelectorAll(".js-value");
+  var progress = T, raf = 0;
+  function paint(t) {
+    lanes.forEach(function (lane) {
+      lane.points.forEach(function (p, i) { lane.dots[i].style.visibility = p.t <= t ? "visible" : "hidden"; });
+      var hx = lane.x(Math.min(t, T));
+      lane.head.setAttribute("x1", hx); lane.head.setAttribute("x2", hx);
+      lane.head.style.visibility = t < T ? "visible" : "hidden";
+    });
+    values.forEach(function (v) { v.classList.toggle("is-hidden", t < T); });
+  }
+  function play() {
+    cancelAnimationFrame(raf);
+    if (reduce.matches) { progress = T; paint(T); return; }
+    var start = null;
+    var step = function (now) {
+      if (start === null) start = now;
+      progress = Math.min(T, ((now - start) / PLAY_MS) * T);
+      paint(progress);
+      if (progress < T) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+  }
+
+  draw();
+  paint(reduce.matches ? T : 0);
+  document.getElementById("replay").addEventListener("click", play);
+
+  var lastW = 0;
+  var redraw = function () {
+    var w = lanes[0].svg.clientWidth;
+    if (w === lastW) return;
+    lastW = w; draw(); paint(progress);
+  };
+  if ("ResizeObserver" in window) new ResizeObserver(redraw).observe(document.querySelector(".chart"));
+  else window.addEventListener("resize", redraw);
+
+  // play once the chart is on screen
+  if ("IntersectionObserver" in window && !reduce.matches) {
+    var io = new IntersectionObserver(function (entries) {
+      if (entries[0].isIntersecting) { io.disconnect(); play(); }
+    }, { threshold: 0.35 });
+    io.observe(document.querySelector(".chart"));
+  } else {
+    play();
+  }
+})();
+</script>
+</body>
+</html>

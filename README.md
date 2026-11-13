@@ -3,6 +3,8 @@
 An open-loop HTTP load generator in Go that reports **honest latency**, and tells you when the generator
 itself is the problem.
 
+Website: [optimm.github.io/Gmeter](https://optimm.github.io/Gmeter/)
+
 Most load testers send a request, wait for the reply, then send the next one. When the server stalls, they
 stop sending, so the requests that *would have* arrived during the stall are never measured and the p99 looks
 fine while real users suffer. This is **coordinated omission**.

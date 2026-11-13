@@ -1,6 +1,7 @@
 package hist
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -62,6 +63,26 @@ func FromDump(d Dump) (*Histogram, error) {
 	}
 	h.sum, h.min, h.max = d.SumNs, d.MinNs, d.MaxNs
 	return h, nil
+}
+
+// MarshalJSON encodes h as its Dump, so that anything holding a histogram (a
+// run's result sent from one machine to another) keeps the whole distribution.
+func (h *Histogram) MarshalJSON() ([]byte, error) {
+	return json.Marshal(h.Dump())
+}
+
+// UnmarshalJSON reads a Dump into h, refusing one FromDump would refuse.
+func (h *Histogram) UnmarshalJSON(raw []byte) error {
+	var d Dump
+	if err := json.Unmarshal(raw, &d); err != nil {
+		return err
+	}
+	got, err := FromDump(d)
+	if err != nil {
+		return err
+	}
+	*h = *got
+	return nil
 }
 
 // FractionAbove returns the share of samples that are slower than v, from 0

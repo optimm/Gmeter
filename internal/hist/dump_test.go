@@ -106,3 +106,37 @@ func TestFractionAboveCountsTheShareOfSlowerSamples(t *testing.T) {
 		t.Errorf("FractionAbove on an empty histogram = %v, want 0", got)
 	}
 }
+
+func TestAHistogramEncodesAsItsDumpAndComesBackExactly(t *testing.T) {
+	h := New()
+	feed(50_000, h)
+
+	raw, err := json.Marshal(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Dump // the encoding is the dump, readable by anything that reads dumps
+	if err := json.Unmarshal(raw, &d); err != nil || d.PrecisionBits != sigBits || len(d.Buckets) == 0 {
+		t.Fatalf("a histogram encodes as %.80s..., want its dump (%v)", raw, err)
+	}
+	var got *Histogram
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	sameSummary(t, got, h)
+}
+
+func TestDecodingAHistogramRefusesADumpItCannotTrust(t *testing.T) {
+	h := New()
+	h.Record(time.Millisecond)
+	d := h.Dump()
+	d.PrecisionBits = 7
+	raw, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got *Histogram
+	if err := json.Unmarshal(raw, &got); err == nil {
+		t.Fatal("decoded a dump of another bucket layout")
+	}
+}

@@ -115,9 +115,17 @@ func (c *phaseClock) split(intended, sent, finished time.Time) phaseTimes {
 
 	p := phaseTimes{queue: sent.Sub(intended)}
 	if !c.reused {
-		p.dns = span(c.dnsStart, c.dnsDone)
-		p.connect = span(c.connectStart, c.connectDone)
-		p.tls = span(c.tlsStart, c.tlsDone)
+		// On HTTP/2 a request can join a dial another request began before this
+		// one was sent: only what it waited for, from when it was sent, is its own.
+		from := func(t time.Time) time.Time {
+			if t.IsZero() || t.After(sent) {
+				return t
+			}
+			return sent
+		}
+		p.dns = span(from(c.dnsStart), c.dnsDone)
+		p.connect = span(from(c.connectStart), c.connectDone)
+		p.tls = span(from(c.tlsStart), c.tlsDone)
 	}
 	if !c.first.IsZero() {
 		p.transfer = max(0, finished.Sub(c.first))
@@ -126,6 +134,17 @@ func (c *phaseClock) split(intended, sent, finished time.Time) phaseTimes {
 		}
 	}
 	p.send = finished.Sub(sent) - p.dns - p.connect - p.tls - p.wait - p.transfer
+	// Hooks reported out of order (a dial that finished after the response
+	// began) can make the phases overlap. The connection phases give way, the
+	// last first, so that none is negative and they still add up exactly.
+	for _, d := range []*time.Duration{&p.tls, &p.connect, &p.dns} {
+		if p.send >= 0 {
+			break
+		}
+		cut := min(*d, -p.send)
+		*d -= cut
+		p.send += cut
+	}
 	return p
 }
 

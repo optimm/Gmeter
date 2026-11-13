@@ -136,7 +136,7 @@ func TestTheClientNeverOffersHTTP2(t *testing.T) {
 		"without a TLS configuration": nil,
 		"with a TLS configuration":    {InsecureSkipVerify: true},
 	} {
-		tr := newClient(4, cfg).Transport.(*http.Transport)
+		tr := newClient(4, cfg, false).Transport.(*http.Transport)
 		if tr.TLSNextProto == nil || len(tr.TLSNextProto) != 0 || tr.ForceAttemptHTTP2 {
 			t.Errorf("%s: TLSNextProto = %v, ForceAttemptHTTP2 = %v, want an empty map and false: the phases need one request at a time on a connection",
 				name, tr.TLSNextProto, tr.ForceAttemptHTTP2)

@@ -81,6 +81,11 @@ type Config struct {
 	// verifies the server's certificate against the system's roots.
 	TLS *tls.Config
 
+	// HTTP2 sends every request over HTTP/2 and nothing else: negotiated by
+	// TLS for https, and with prior knowledge (h2c) for http. A server that does
+	// not speak it fails the requests rather than being measured over HTTP/1.1.
+	HTTP2 bool
+
 	// Spin is how long before each request's due time the scheduler stops
 	// sleeping and busy-waits instead. Zero uses a plain timer, which on some
 	// systems (macOS especially) wakes milliseconds late, and that lateness
@@ -191,6 +196,10 @@ type Result struct {
 	Corrected *hist.Histogram
 	Service   *hist.Histogram
 
+	// Protocols counts the responses by the protocol they came over, e.g.
+	// "HTTP/1.1" or "HTTP/2.0".
+	Protocols map[string]uint64
+
 	// Logged compares the responses with the statuses the traffic log recorded.
 	Logged LoggedStatuses
 
@@ -269,7 +278,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, err
 	}
 
-	client := newClient(cfg.Workers, cfg.TLS)
+	client := newClient(cfg.Workers, cfg.TLS, cfg.HTTP2)
 	defer client.CloseIdleConnections()
 
 	start := time.Now()
@@ -368,6 +377,7 @@ loop:
 		Dropped:   dropped,
 		Statuses:  map[int]uint64{},
 		Errors:    map[string]uint64{},
+		Protocols: map[string]uint64{},
 		Corrected: hist.New(),
 		Service:   hist.New(),
 		TimerLag:  timerLag,
@@ -406,6 +416,9 @@ loop:
 		}
 		for kind, c := range t.errors {
 			res.Errors[kind] += c
+		}
+		for proto, c := range t.protocols {
+			res.Protocols[proto] += c
 		}
 		res.Logged.Compared += t.loggedCompared
 		for pair, c := range t.loggedChanges {
@@ -522,22 +535,31 @@ func (c Config) normalize() (Config, error) {
 	return c, nil
 }
 
-// newClient returns an HTTP/1.1 client capped at conns connections that
-// neither follows redirects (a 302 is a result, not a reason to send another
-// request) nor honours proxy environment variables.
-func newClient(conns int, tlsConfig *tls.Config) *http.Client {
+// newClient returns a client capped at conns connections that neither follows
+// redirects (a 302 is a result, not a reason to send another request) nor
+// honours proxy environment variables. It speaks HTTP/1.1 only, or with http2
+// HTTP/2 only: over TLS for https and with prior knowledge (h2c) for http.
+func newClient(conns int, tlsConfig *tls.Config, http2 bool) *http.Client {
+	tr := &http.Transport{
+		DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		MaxIdleConns:        conns,
+		MaxIdleConnsPerHost: conns,
+		MaxConnsPerHost:     conns,
+		IdleConnTimeout:     90 * time.Second,
+		DisableCompression:  true,
+		TLSClientConfig:     tlsConfig.Clone(), // nil stays nil
+	}
+	if http2 {
+		var p http.Protocols
+		p.SetHTTP2(true)
+		p.SetUnencryptedHTTP2(true)
+		tr.Protocols = &p
+	} else {
+		// A non-nil empty map keeps HTTP/2 off, even when the server offers it.
+		tr.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+	}
 	return &http.Client{
-		Transport: &http.Transport{
-			DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-			MaxIdleConns:        conns,
-			MaxIdleConnsPerHost: conns,
-			MaxConnsPerHost:     conns,
-			IdleConnTimeout:     90 * time.Second,
-			DisableCompression:  true,
-			TLSClientConfig:     tlsConfig.Clone(), // nil stays nil
-			// A non-nil empty map disables HTTP/2: v0 is HTTP/1.1 only.
-			TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{},
-		},
+		Transport:     tr,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 }
@@ -640,6 +662,7 @@ type tally struct {
 	corrected, service *hist.Recorder
 	statuses           map[int]uint64
 	errors             map[string]uint64
+	protocols          map[string]uint64
 	loggedCompared     uint64
 	loggedChanges      map[[2]int]uint64 // {logged class, got class} -> responses, for those that differ
 }
@@ -650,6 +673,7 @@ func newTally() *tally {
 		service:   hist.NewRecorder(),
 		statuses:  map[int]uint64{},
 		errors:    map[string]uint64{},
+		protocols: map[string]uint64{},
 
 		loggedChanges: map[[2]int]uint64{},
 	}
@@ -788,6 +812,7 @@ func (w *worker) do(ctx context.Context, j job) {
 	var status int
 	if err == nil {
 		status = resp.StatusCode
+		w.t.protocols[resp.Proto]++
 		// Drain so the connection goes back to the pool for reuse.
 		_, err = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
@@ -886,6 +911,8 @@ func classify(err error) string {
 		return "connection_reset"
 	case errors.As(err, &dns):
 		return "dns"
+	case isProtocolFailure(err):
+		return "protocol"
 	case isTLSFailure(err):
 		return "tls"
 	case errors.As(err, &netErr) && netErr.Timeout():
@@ -893,6 +920,15 @@ func classify(err error) string {
 	default:
 		return "other"
 	}
+}
+
+// isProtocolFailure reports whether err is the server not speaking the
+// protocol asked for: over TLS it agreed on none Gmeter offered (HTTP/2 only,
+// to a server without it), or over cleartext it answered an HTTP/2 connection
+// in HTTP/1.1, or broke HTTP/2's rules. Go reports both only in the message.
+func isProtocolFailure(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "tls: no application protocol") || strings.Contains(msg, "http2: ")
 }
 
 // isTLSFailure reports whether err is the server's certificate being refused or

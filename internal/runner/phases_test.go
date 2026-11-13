@@ -363,3 +363,57 @@ func benchmarkRequest(b *testing.B, traced bool) {
 
 func BenchmarkPhaseTraceOff(b *testing.B) { benchmarkRequest(b, false) }
 func BenchmarkPhaseTraceOn(b *testing.B)  { benchmarkRequest(b, true) }
+
+// On HTTP/2 a request can join a connection another request began dialling
+// before this one was sent. Only the part of the dial it waited for is its own.
+func TestADialThatBeganBeforeTheRequestCountsOnlyFromWhenItWasSent(t *testing.T) {
+	clock := newStepClock()
+	c := newPhaseClock(clock.now)
+	tr := c.trace()
+
+	clock.at(-10 * ms)
+	tr.ConnectStart("tcp", "10.0.0.1:443")
+	clock.at(5 * ms)
+	tr.ConnectDone("tcp", "10.0.0.1:443", nil)
+	tr.GotConn(httptrace.GotConnInfo{Reused: false})
+	clock.at(8 * ms)
+	tr.WroteRequest(httptrace.WroteRequestInfo{})
+	clock.at(18 * ms)
+	tr.GotFirstResponseByte()
+	clock.at(20 * ms)
+
+	got := c.split(clock.base, clock.base, clock.t)
+	want := phaseTimes{connect: 5 * ms, send: 3 * ms, wait: 10 * ms, transfer: 2 * ms}
+	if got != want {
+		t.Errorf("split = %+v, want %+v", got, want)
+	}
+}
+
+// Whatever order the hooks report, the phases never go negative and always add
+// up to the request's latency.
+func TestPhasesThatOverlapStillAddUpWithNoneNegative(t *testing.T) {
+	clock := newStepClock()
+	c := newPhaseClock(clock.now)
+	tr := c.trace()
+
+	clock.at(1 * ms)
+	tr.ConnectStart("tcp", "10.0.0.1:443")
+	tr.GotConn(httptrace.GotConnInfo{Reused: false})
+	clock.at(2 * ms)
+	tr.WroteRequest(httptrace.WroteRequestInfo{})
+	clock.at(6 * ms)
+	tr.GotFirstResponseByte()
+	clock.at(8 * ms)
+	tr.ConnectDone("tcp", "10.0.0.1:443", nil) // reported after the response had begun
+	clock.at(10 * ms)
+
+	got := c.split(clock.base, clock.base, clock.t)
+	for i, d := range got.list() {
+		if d < 0 {
+			t.Errorf("phase %s is %v: negative", PhaseNames[i], d)
+		}
+	}
+	if got.sum() != 10*ms {
+		t.Errorf("phases %+v add up to %v, want the request's 10ms", got, got.sum())
+	}
+}

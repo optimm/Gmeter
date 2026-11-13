@@ -41,6 +41,9 @@ func main() {
 // run is main without the process-global parts. It returns the exit code:
 // 0 success, 2 bad usage or configuration, 1 failure while running.
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 1 && (args[0] == "-version" || args[0] == "--version" || args[0] == "version") {
+		return printVersion(stdout)
+	}
 	if len(args) > 0 && args[0] == "diff" { // a URL always has a scheme, so this cannot be one
 		return runDiff(args[1:], stdout, stderr)
 	}

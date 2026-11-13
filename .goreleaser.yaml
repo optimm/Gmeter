@@ -1,0 +1,57 @@
+# Release build: on a pushed v* tag, .github/workflows/release.yml runs this.
+# It builds gmeter for macOS and Linux, attaches the archives to a GitHub
+# Release, and pushes a Homebrew cask to github.com/optimm/homebrew-tap, so
+# `brew install optimm/tap/gmeter` works.
+version: 2
+project_name: gmeter
+
+builds:
+  - id: gmeter
+    main: ./cmd/gmeter
+    binary: gmeter
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+
+homebrew_casks:
+  - name: gmeter
+    binaries: [gmeter]
+    homepage: https://optimm.github.io/Gmeter/
+    description: Open-loop load generator for HTTP and gRPC that measures latency from when each request was due
+    repository:
+      owner: optimm
+      name: homebrew-tap
+      branch: main
+      git:
+        url: git@github.com:optimm/homebrew-tap.git
+        # a deploy key that can write to the tap and nothing else
+        private_key: "{{ .Env.HOMEBREW_TAP_DEPLOY_KEY }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "gmeter {{ .Tag }}"
+    hooks:
+      post:
+        # the binaries are not signed by Apple, so clear the download quarantine
+        # or macOS refuses to run gmeter
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/gmeter"]
+          end

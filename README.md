@@ -12,6 +12,17 @@ fine while real users suffer. This is **coordinated omission**.
 Gmeter schedules requests by the clock instead. Request *n* is due at `start + n / rate` no matter what the
 server is doing, and latency is measured from that **intended** send time.
 
+## Install
+
+```bash
+brew install optimm/tap/gmeter                      # macOS and Linux, with Homebrew
+go install github.com/optimm/Gmeter/cmd/gmeter@latest  # or with Go 1.26 or newer
+gmeter -version
+```
+
+Prebuilt archives for macOS and Linux (amd64 and arm64) are on the
+[releases page](https://github.com/optimm/Gmeter/releases).
+
 ## Quick start
 
 ```bash

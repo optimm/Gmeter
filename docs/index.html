@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Gmeter: load testing that keeps time</title>
-<meta name="description" content="Gmeter is an open-loop load generator for HTTP and gRPC. Every request is due at a fixed moment, and its latency is measured from that moment, so a stalled server shows up in your p99 instead of vanishing from it.">
-<meta property="og:title" content="Gmeter: load testing that keeps time">
+<title>Gmeter: load testing in Go</title>
+<meta name="description" content="Gmeter is a load testing tool for HTTP and gRPC services, written in Go. Every request is due at a fixed moment, and its latency is measured from that moment, so a stalled server shows up in your p99 instead of vanishing from it.">
+<meta property="og:title" content="Gmeter: load testing in Go">
 <meta property="og:description" content="An open-loop load generator for HTTP and gRPC that measures latency from when each request was due.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://optimm.github.io/Gmeter/">
@@ -136,17 +136,23 @@ p { margin: 0 0 1em; }
 /* hero */
 .hero { padding: 36px 0 56px; }
 .hero h1 {
-  font-size: clamp(2.5rem, 6.3vw, 5rem);
-  line-height: 1;
+  font-size: clamp(2.4rem, 5.6vw, 4.5rem);
+  line-height: 1.02;
+  max-width: 13em;
   letter-spacing: -0.03em;
   font-weight: 760;
   font-variation-settings: "wdth" 84, "opsz" 96;
   margin: 0 0 28px;
 }
-.hero h1 .num { font-variant-numeric: tabular-nums; }
-.hero h1 .sent { color: var(--blue); text-shadow: 0 0 28px rgba(127, 168, 245, 0.45); }
-.hero h1 .due { color: var(--red); text-shadow: 0 0 28px rgba(255, 92, 114, 0.5); }
-.hero h1 .or { color: var(--ink-2); font-weight: 500; }
+.hero .num { font-variant-numeric: tabular-nums; }
+.hero .sent { color: var(--blue); text-shadow: 0 0 24px rgba(127, 168, 245, 0.45); }
+.hero .due { color: var(--red); text-shadow: 0 0 24px rgba(255, 92, 114, 0.5); }
+.hero .or { color: var(--ink-2); font-weight: 500; }
+.demo { margin-top: 96px; }
+.demo h2 {
+  font-size: clamp(1.9rem, 4vw, 3.1rem); line-height: 1.05; letter-spacing: -0.025em;
+  font-weight: 740; font-variation-settings: "wdth" 86, "opsz" 72; margin: 0 0 18px;
+}
 .hero-row { display: flex; flex-direction: column; gap: 24px; }
 .lede { font-size: clamp(1.08rem, 1.5vw, 1.22rem); line-height: 1.5; max-width: 44em; color: var(--ink-2); margin: 0; }
 .lede strong { font-weight: 650; color: var(--ink); }
@@ -297,18 +303,23 @@ footer { padding: 72px 0 40px; font-size: 14.5px; color: var(--ink-2); display: 
 
   <main>
     <section class="hero on-panel" aria-labelledby="title">
-      <h1 id="title"><span class="num sent">897µs</span> <span class="or">or</span> <span class="num due">505.2ms</span><br>Same run, different clock.</h1>
+      <h1 id="title">Load testing for HTTP and gRPC, written in Go.</h1>
       <div class="hero-row">
-        <p class="lede">That's the p90 of one test, timed from when each request was sent, and from when it was due. Most
-          load testers only show you the first. Gmeter, an open-loop load generator for HTTP and gRPC, keeps sending on
-          schedule through a stall and <strong>times every request from the moment it was due</strong>, so the stall
-          lands in your p99 instead of vanishing.</p>
+        <p class="lede">Gmeter sends requests at the rate you set and reports latency percentiles, throughput and
+          errors. It can ramp through a load profile, find the highest rate your service holds under an SLO, replay real
+          traffic, compare two runs in CI, and spread one test across machines. One binary, no scripts to write.</p>
         <div class="install">
           <div class="cmd"><code id="install-cmd">go install github.com/optimm/Gmeter/cmd/gmeter@latest</code><button class="copy" type="button" data-copy="install-cmd">Copy</button></div>
-          <span class="note">One binary. Go 1.26 or newer.</span>
+          <span class="note">Go 1.26 or newer.</span>
         </div>
       </div>
 
+      <div class="demo">
+        <h2 id="clocks"><span class="num sent">897µs</span> <span class="or">or</span> <span class="num due">505.2ms</span><br>Same run, different clock.</h2>
+        <p class="lede">Both numbers are the p90 of the same test: one timed from when each request was sent, the
+          other from when it was due. Most load testers only show you the first. Gmeter keeps sending on schedule through a
+          stall and <strong>times every request from the moment it was due</strong>, so the stall lands in your p99
+          instead of vanishing.</p>
       <figure class="chart" aria-labelledby="chart-caption">
         <div class="lane lane-sent">
           <div class="lane-head">
@@ -332,6 +343,7 @@ footer { padding: 72px 0 40px; font-size: 14.5px; color: var(--ink-2); display: 
           <button class="again" type="button" id="replay">Play again</button>
         </div>
       </figure>
+      </div>
     </section>
 
     <section class="section" aria-labelledby="why">

@@ -1026,6 +1026,52 @@ full latency `histograms` (sparse: only non-empty buckets). A password in the UR
 saved. A query string is kept as given, so don't put secrets in it. `diff` refuses files with a missing or
 different `version`, and histograms it cannot rebuild.
 
+## Using it from Go
+
+The engine is a Go package, so a test, a benchmark or a deploy check can run a load and assert on it, with no process
+to start and no output to parse.
+
+```
+go get github.com/optimm/Gmeter
+```
+
+```go
+res, err := gmeter.Run(ctx, gmeter.Config{
+	URL:  srv.URL,
+	Rate: 500, Duration: 10 * time.Second,
+	Requests: []gmeter.Request{{Path: "/cart"}, {Method: "POST", Path: "/checkout", Body: []byte(`{}`)}},
+})
+if err != nil {
+	t.Fatal(err) // the Config could not run at all
+}
+if err := res.Meets(gmeter.SLO{Quantile: 0.99, Latency: 80 * time.Millisecond, MaxErrorRate: 0.001}); err != nil {
+	t.Error(err) // e.g. "target missed: errors 0.4% over the 0.1% budget; p99 is 212ms, over the 80ms target"
+}
+```
+
+`Run` takes what the flags take: a `Rate` for a `Duration`, or `Stages` for steps and ramps; `Poisson` and `Seed`; a set of
+`Requests` sent in turn; `Header`, `Body`, `Workers`, `Timeout`; `TLS` (a `*tls.Config`, which is also how to give
+a client certificate or skip verification); `HTTP2`; and `OnRequest`, called with every request as it ends. The
+`Result` has the counts (`Scheduled`, `OK`, `BadStatus`, `Failed`, `ErrorRate`, `Statuses`, `Errors`), the latency at any
+quantile by both clocks (`Corrected(0.99)` from when a request was due, `Service(0.99)` from when it was sent), and
+`WriteText` and `WriteJSON` for the report the command prints and the file `gmeter diff` compares.
+
+`Meets` is the check. It fails when the latency at the target's quantile is over the limit, when more requests failed
+than the error budget allows, when requests were left unsent, and when Gmeter could not keep time itself, because then
+a good-looking result would be the generator's and not the server's. The error wraps `gmeter.ErrTargetMissed` and says
+which part was missed. A target can also be read from the command line's spelling with `gmeter.ParseSLO("p99=50ms")`.
+
+`FindCapacity` is `gmeter find` as a function: it takes a `Config` with no load, a target and `SearchOptions`, and returns
+the highest rate that met the target, the lowest that did not, whether the generator may be the limit, and every trial.
+
+```go
+got, err := gmeter.FindCapacity(ctx, gmeter.Config{URL: srv.URL}, gmeter.SLO{Quantile: 0.99, Latency: 50 * time.Millisecond},
+	gmeter.SearchOptions{Start: 50, Max: 2000})
+fmt.Printf("holds %.0f requests per second (at least: %v)\n", got.MaxRPS, got.LowerBound)
+```
+
+The package covers HTTP, not gRPC, and the saved-results file, `plot`, agents and `replay` of a trace file stay in the command.
+
 ## Every request, and a chart (`gmeter plot`)
 
 The summary says how the run went; `-results` keeps every request of it, to look at later or with other tools. It
@@ -1213,3 +1259,6 @@ the live windows pinpoint when a stall happened.
 - [x] **v3a**: HTTP/2 (`-http2`), over TLS and h2c
 - [x] **v3b**: several generators: `gmeter agent` and `-agents`, merging histograms, not averaging percentiles
 - [x] **v3c**: `gmeter grpc`: unary gRPC methods, by server reflection or a descriptor set
+- [x] **v3d**: client certificates for mutual TLS (`-cert`, `-key`)
+- [x] **v3e**: every request saved as CSV (`-results`) and drawn as one HTML page (`gmeter plot`)
+- [x] **v3f**: a Go package: `gmeter.Run`, `Result.Meets` for a latency target, and `FindCapacity`

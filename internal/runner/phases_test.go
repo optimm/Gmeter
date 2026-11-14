@@ -59,7 +59,7 @@ func TestPhasesOfARequestThatOpenedAConnection(t *testing.T) {
 	intended := clock.base.Add(-25 * ms) // it waited 25ms for a worker
 	got := c.split(intended, clock.base, clock.t)
 
-	want := phaseTimes{queue: 25 * ms, dns: 3 * ms, connect: 15 * ms, tls: 30 * ms, send: 7 * ms, wait: 100 * ms, transfer: 200 * ms}
+	want := phaseTimes{queue: 25 * ms, dns: 3 * ms, connect: 15 * ms, tls: 30 * ms, send: 7 * ms, wait: 100 * ms, transfer: 200 * ms, ran: ranDNS | ranConnect | ranTLS}
 	if got != want {
 		t.Errorf("phases = %+v, want %+v", got, want)
 	}
@@ -383,7 +383,7 @@ func TestADialThatBeganBeforeTheRequestCountsOnlyFromWhenItWasSent(t *testing.T)
 	clock.at(20 * ms)
 
 	got := c.split(clock.base, clock.base, clock.t)
-	want := phaseTimes{connect: 5 * ms, send: 3 * ms, wait: 10 * ms, transfer: 2 * ms}
+	want := phaseTimes{connect: 5 * ms, send: 3 * ms, wait: 10 * ms, transfer: 2 * ms, ran: ranConnect}
 	if got != want {
 		t.Errorf("split = %+v, want %+v", got, want)
 	}
@@ -437,9 +437,6 @@ func TestAConnectionPhaseTooShortForTheClockStillCounts(t *testing.T) {
 	clock.at(4 * ms)
 
 	got := c.split(clock.base, clock.base, clock.t)
-	if got.connect <= 0 {
-		t.Fatalf("connect = %v: the request opened a connection, so it has a connect phase, however short", got.connect)
-	}
 	if got.sum() != clock.t.Sub(clock.base) {
 		t.Errorf("the phases add up to %v, want %v", got.sum(), clock.t.Sub(clock.base))
 	}

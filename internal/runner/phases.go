@@ -28,6 +28,26 @@ const numPhases = len(PhaseNames)
 // phaseTimes is how long one request spent in each phase.
 type phaseTimes struct {
 	queue, dns, connect, tls, send, wait, transfer time.Duration
+
+	// ran says which of the optional phases (dns, connect, tls) the request had.
+	// It is not the same as a duration above zero: where the clock advances in
+	// steps (Windows) a short dial starts and ends at the same reading, and
+	// where hooks arrive out of order a phase gives way to send, so a phase that
+	// ran can read zero.
+	ran uint8
+}
+
+// the bits of phaseTimes.ran, by phase number
+const (
+	ranDNS     = 1 << 1
+	ranConnect = 1 << 2
+	ranTLS     = 1 << 3
+)
+
+// counts reports whether phase i is a sample of this request: every request has
+// the always-present phases, and only those that ran have dns, connect and tls.
+func (p phaseTimes) counts(i int) bool {
+	return !optionalPhase(i) || p.ran&(1<<i) != 0
 }
 
 func (p phaseTimes) list() [numPhases]time.Duration {
@@ -126,6 +146,14 @@ func (c *phaseClock) split(intended, sent, finished time.Time) phaseTimes {
 		p.dns = span(from(c.dnsStart), c.dnsDone)
 		p.connect = span(from(c.connectStart), c.connectDone)
 		p.tls = span(from(c.tlsStart), c.tlsDone)
+		for _, ph := range []struct {
+			bit         uint8
+			start, done time.Time
+		}{{ranDNS, c.dnsStart, c.dnsDone}, {ranConnect, c.connectStart, c.connectDone}, {ranTLS, c.tlsStart, c.tlsDone}} {
+			if !ph.start.IsZero() && !ph.done.IsZero() {
+				p.ran |= ph.bit
+			}
+		}
 	}
 	if !c.first.IsZero() {
 		p.transfer = max(0, finished.Sub(c.first))
@@ -149,15 +177,11 @@ func (c *phaseClock) split(intended, sent, finished time.Time) phaseTimes {
 }
 
 // span is how long from start to end, or zero if either did not happen.
-// span is how long a phase took, or 0 if it did not happen. A phase that
-// happened never reads zero: where the clock advances in steps (Windows, by a
-// millisecond or more) a short dial starts and ends at the same reading, and
-// 0 would make it look like a request that never connected.
 func span(start, end time.Time) time.Duration {
 	if start.IsZero() || end.IsZero() {
 		return 0
 	}
-	return max(time.Nanosecond, end.Sub(start))
+	return max(0, end.Sub(start))
 }
 
 // PhaseResult is the time every request that got a response spent in one phase.
@@ -184,12 +208,12 @@ func newPhaseTally() *phaseTally {
 	return t
 }
 
-// record adds one request. A connection phase that did not happen (a zero) is
-// not a sample: the average connect time is of the requests that connected.
+// record adds one request. A connection phase that did not happen is not a
+// sample: the average connect time is of the requests that connected.
 func (t *phaseTally) record(p phaseTimes) {
 	t.mu.Lock()
 	for i, d := range p.list() {
-		if d > 0 || !optionalPhase(i) {
+		if p.counts(i) {
 			t.h[i].Record(d)
 		}
 	}
@@ -222,7 +246,7 @@ type phaseSums struct {
 // phaseTally.record does.
 func (s *phaseSums) add(p phaseTimes) {
 	for i, d := range p.list() {
-		if d > 0 || !optionalPhase(i) {
+		if p.counts(i) {
 			s.requests[i]++
 			s.total[i] += d
 		}

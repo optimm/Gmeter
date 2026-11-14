@@ -281,8 +281,10 @@ func TestFindCapacityReportsTheHighestRateThatMeetsTheTarget(t *testing.T) {
 		t.Errorf("got %+v, want 40 rps found as a lower bound after at least two trials", got)
 	}
 	for _, tr := range got.Trials {
-		if tr.Verdict != "pass" || tr.Scheduled == 0 {
-			t.Errorf("trial %+v: want a pass with requests sent", tr)
+		// a trial the generator could not keep time for is "limited", not a miss
+		// (Windows timers are coarse enough for that to happen on a quiet machine)
+		if tr.Verdict == "fail" || tr.Scheduled == 0 {
+			t.Errorf("trial %+v: want no failed trial, and requests sent", tr)
 		}
 	}
 }

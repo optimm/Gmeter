@@ -69,10 +69,10 @@ func TestBadPlotUsageIsAnError(t *testing.T) {
 	}{
 		"no file":       {[]string{"plot"}, "results file"},
 		"two files":     {[]string{"plot", csv, csv}, "exactly one"},
-		"missing":       {[]string{"plot", filepath.Join(t.TempDir(), "nope.csv")}, "no such file"},
+		"missing":       {[]string{"plot", filepath.Join(t.TempDir(), "nope.csv")}, "nope.csv"},
 		"not a results": {[]string{"plot", notResults}, "not a gmeter results file"},
 		"bad buckets":   {[]string{"plot", "-buckets", "0", csv}, "-buckets"},
-		"cannot write":  {[]string{"plot", "-o", filepath.Join(t.TempDir(), "no", "x.html"), csv}, "no such file"},
+		"cannot write":  {[]string{"plot", "-o", filepath.Join(t.TempDir(), "no", "x.html"), csv}, "x.html"},
 	} {
 		code, _, stderr := exec(t, tc.args...)
 		if code != 2 || !strings.Contains(stderr, tc.want) {

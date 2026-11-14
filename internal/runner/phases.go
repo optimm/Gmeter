@@ -149,11 +149,15 @@ func (c *phaseClock) split(intended, sent, finished time.Time) phaseTimes {
 }
 
 // span is how long from start to end, or zero if either did not happen.
+// span is how long a phase took, or 0 if it did not happen. A phase that
+// happened never reads zero: where the clock advances in steps (Windows, by a
+// millisecond or more) a short dial starts and ends at the same reading, and
+// 0 would make it look like a request that never connected.
 func span(start, end time.Time) time.Duration {
 	if start.IsZero() || end.IsZero() {
 		return 0
 	}
-	return max(0, end.Sub(start))
+	return max(time.Nanosecond, end.Sub(start))
 }
 
 // PhaseResult is the time every request that got a response spent in one phase.

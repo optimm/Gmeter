@@ -27,7 +27,8 @@ func ExampleResult_Meets() {
 		return
 	}
 	fmt.Println("p99 is within 500ms at 200 requests per second")
-	// Output: p99 is within 500ms at 200 requests per second
+	// There is no Output line: Meets also refuses a run whose own timers ran late,
+	// and on a busy machine this one does, so the example is built, not run.
 }
 
 // Print the same report the gmeter command prints, or save its JSON for

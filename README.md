@@ -1193,6 +1193,11 @@ cores), and when the OS does not schedule the generator at all, no pacing strate
 not the tails. Gmeter's own check still catches that case: the timer-lag and late-dispatch warnings do not depend on
 `-spin`. For sub-millisecond tails, use a quiet machine, ideally Linux.
 
+**On Windows** the tests pass and the binary works, but its pacing and its phase timings are not measured the way
+the Mac's are above. On the CI runner, Go's clock read a loopback connect as taking no time at all; Gmeter still
+counts that connect as a connect, but treat sub-millisecond figures there as rough. Compare runs made on the same
+system, and read the generator line.
+
 ## How it works
 
 ```

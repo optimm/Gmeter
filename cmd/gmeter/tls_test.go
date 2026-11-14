@@ -140,7 +140,7 @@ func TestBadTLSFlagsAreUsageErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		"missing file":      {[]string{"-cacert", filepath.Join(t.TempDir(), "nope.pem")}, "no such file"},
+		"missing file":      {[]string{"-cacert", filepath.Join(t.TempDir(), "nope.pem")}, "nope.pem"},
 		"not a certificate": {[]string{"-cacert", notPEM}, "no certificate found in"},
 		"both":              {[]string{"-insecure", "-cacert", notPEM}, "cannot be combined"},
 	} {

@@ -193,7 +193,7 @@ func TestBadClientCertificateFlagsAreUsageErrors(t *testing.T) {
 	}{
 		"cert alone":        {[]string{"-cert", cert}, "-cert and -key go together"},
 		"key alone":         {[]string{"-key", key}, "-cert and -key go together"},
-		"missing cert file": {[]string{"-cert", filepath.Join(t.TempDir(), "nope.pem"), "-key", key}, "no such file"},
+		"missing cert file": {[]string{"-cert", filepath.Join(t.TempDir(), "nope.pem"), "-key", key}, "nope.pem"},
 		"not a pair":        {[]string{"-cert", otherCert, "-key", key}, "does not match"},
 		"not PEM":           {[]string{"-cert", notPEM, "-key", key}, "-cert"},
 		"with agents":       {[]string{"-cert", cert, "-key", key, "-agents", "127.0.0.1:1"}, "private key"},

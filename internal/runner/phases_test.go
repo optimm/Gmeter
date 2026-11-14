@@ -417,3 +417,36 @@ func TestPhasesThatOverlapStillAddUpWithNoneNegative(t *testing.T) {
 		t.Errorf("phases %+v add up to %v, want the request's 10ms", got, got.sum())
 	}
 }
+
+// Windows' clock advances in steps of a millisecond or more, so a dial on the
+// loopback starts and ends at the same reading. That dial happened, and its
+// request must still count as one that connected: a phase measured as zero is
+// not the same as a phase that did not happen.
+func TestAConnectionPhaseTooShortForTheClockStillCounts(t *testing.T) {
+	clock := newStepClock()
+	c := newPhaseClock(clock.now)
+	tr := c.trace()
+
+	tr.ConnectStart("tcp", "127.0.0.1:80")
+	tr.ConnectDone("tcp", "127.0.0.1:80", nil) // the clock did not move
+	tr.GotConn(httptrace.GotConnInfo{Reused: false})
+	clock.at(1 * ms)
+	tr.WroteRequest(httptrace.WroteRequestInfo{})
+	clock.at(3 * ms)
+	tr.GotFirstResponseByte()
+	clock.at(4 * ms)
+
+	got := c.split(clock.base, clock.base, clock.t)
+	if got.connect <= 0 {
+		t.Fatalf("connect = %v: the request opened a connection, so it has a connect phase, however short", got.connect)
+	}
+	if got.sum() != clock.t.Sub(clock.base) {
+		t.Errorf("the phases add up to %v, want %v", got.sum(), clock.t.Sub(clock.base))
+	}
+
+	tally := newPhaseTally()
+	tally.record(got)
+	if n := tally.h[2].Count(); n != 1 {
+		t.Errorf("connect has %d samples, want 1: the request connected", n)
+	}
+}

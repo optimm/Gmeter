@@ -62,6 +62,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "grpc" {
 		return runGRPC(ctx, args[1:], stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "mcp" {
+		return runMCP(ctx, args[1:], mcpInput, stdout, stderr)
+	}
 
 	fs := flag.NewFlagSet("gmeter", flag.ContinueOnError)
 	fs.SetOutput(stderr)

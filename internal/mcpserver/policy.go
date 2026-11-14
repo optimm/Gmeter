@@ -166,3 +166,39 @@ func (p Policy) CheckLoad(rate float64, duration time.Duration, workers int) err
 	}
 	return nil
 }
+
+// Validate refuses a policy that could never work as written: an allow entry
+// that is a malformed range, or a negative limit. A zero limit is fine, it takes
+// the default.
+func (p Policy) Validate() error {
+	for _, a := range p.Allow {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			return fmt.Errorf("an empty entry in the allow list")
+		}
+		if strings.Contains(a, "/") {
+			if _, _, err := net.ParseCIDR(a); err != nil {
+				return fmt.Errorf("allow %q is not a CIDR range such as 10.0.0.0/8", a)
+			}
+		}
+	}
+	switch {
+	case p.MaxRate < 0:
+		return fmt.Errorf("the rate limit cannot be negative")
+	case p.MaxDuration < 0:
+		return fmt.Errorf("the duration limit cannot be negative")
+	case p.MaxWorkers < 0:
+		return fmt.Errorf("the workers limit cannot be negative")
+	}
+	return nil
+}
+
+// Describe says what the policy allows, for the operator to read at start-up.
+func (p Policy) Describe() string {
+	p = p.withDefaults()
+	hosts := "loopback only"
+	if len(p.Allow) > 0 {
+		hosts = "loopback and " + strings.Join(p.Allow, ", ")
+	}
+	return fmt.Sprintf("targets: %s; at most %.0f requests/s, %v per run, %d workers", hosts, p.MaxRate, p.MaxDuration, p.MaxWorkers)
+}

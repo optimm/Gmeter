@@ -129,3 +129,29 @@ func TestDefaultsAreSetWhereTheCallerLeftThemZero(t *testing.T) {
 		t.Errorf("withDefaults() = %+v, want every limit set", p)
 	}
 }
+
+func TestValidateRefusesWhatCouldNeverWork(t *testing.T) {
+	for name, p := range map[string]Policy{
+		"bad cidr":       {Allow: []string{"10.0.0.0/99"}},
+		"empty entry":    {Allow: []string{" "}},
+		"negative rate":  {MaxRate: -1},
+		"negative time":  {MaxDuration: -time.Second},
+		"negative count": {MaxWorkers: -3},
+	} {
+		if err := p.Validate(); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+	}
+	if err := (Policy{Allow: []string{"*", "a.example", "*.b.example", "10.0.0.0/8", "::1"}}).Validate(); err != nil {
+		t.Errorf("a good policy: %v", err)
+	}
+}
+
+func TestDescribeSaysWhatThePolicyAllows(t *testing.T) {
+	got := Policy{Allow: []string{"api.test"}, MaxRate: 250}.Describe()
+	for _, want := range []string{"loopback", "api.test", "250", "2m0s", "200"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Describe() = %q, want it to mention %q", got, want)
+		}
+	}
+}

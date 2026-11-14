@@ -1275,29 +1275,15 @@ The tests include one that proves the correction (one connection, the server fre
 request, and the corrected p90 must show the queueing while the service p90 stays small) and one that proves
 the live windows pinpoint when a stall happened.
 
-## Roadmap
+## Coming soon
 
-- [x] **v0**: open-loop HTTP, corrected and service latency, JSON output
-- [x] **v1a**: live per-window stats in the progress line, generator health (timer lag, late dispatches) and
-      warnings
-- [x] **v1b**: per-window timeline in the report and JSON, full histograms in the JSON, `gmeter diff a.json b.json`
-      with a `-threshold` gate
-- [x] **v1c**: precise pacing: sleep, then busy-wait the last stretch (`-spin`), bounded in CPU cost
-- [x] **v2a**: load profiles (steps, ramps, pauses), Poisson arrivals with a reproducible seed, per-stage results
-- [x] **v2b**: `gmeter find`: the highest rate that meets a latency target, with confirmation and caveats
-- [x] **v2c**: `gmeter replay`: a traffic log (JSON Lines or an access log) at its recorded pace or a fixed rate
-- [x] **v2d**: a per-endpoint breakdown for replays (`-endpoints`)
-- [x] **v2e**: `gmeter diff` per endpoint (`-endpoint-threshold`)
-- [x] **v2f**: per-phase timings (`-phases`): queue, dns, connect, tls, send, wait, transfer
-- [x] **v2g**: phases in `gmeter diff`, and per endpoint (in the report and in `diff`)
-- [x] **v3a**: HTTP/2 (`-http2`), over TLS and h2c
-- [x] **v3b**: several generators: `gmeter agent` and `-agents`, merging histograms, not averaging percentiles
-- [x] **v3c**: `gmeter grpc`: unary gRPC methods, by server reflection or a descriptor set
-- [x] **v3d**: client certificates for mutual TLS (`-cert`, `-key`)
-- [x] **v3e**: every request saved as CSV (`-results`) and drawn as one HTML page (`gmeter plot`)
-- [x] **v3f**: a Go package: `gmeter.Run`, `Result.Meets` for a latency target, and `FindCapacity`
-- [x] **v3g**: the Go package calls unary gRPC too (`Config.GRPC`, `Result.Codes`)
-- [x] **v3h**: Windows builds (`.zip`, amd64 and arm64) and a Docker image (`ghcr.io/optimm/gmeter`)
+The next set of features:
+
+- **Prometheus / OpenMetrics export**: push or expose a run's metrics, so a load test shows up on the same
+  dashboards as the service under test
+- **`-connect-to` and unix sockets**: send to a different address than the URL names, and to a service that
+  listens on a unix socket
+- **gRPC streaming**: server-streaming, client-streaming and bidirectional methods, beyond unary
 
 ## License
 

@@ -33,22 +33,27 @@ type GRPCInput struct {
 	Metadata  map[string][]string `json:"metadata,omitempty" jsonschema:"metadata sent with every call, gRPC's counterpart of headers"`
 }
 
-// LoadTestInput is what the load_test tool takes.
-type LoadTestInput struct {
+// TargetInput says what to send load to: the part of a request every tool shares.
+type TargetInput struct {
 	URL      string            `json:"url" jsonschema:"what to load: http://host:port/path or https://..., or host:port for gRPC"`
 	Method   string            `json:"method,omitempty" jsonschema:"HTTP method, default GET; not for gRPC"`
 	Headers  map[string]string `json:"headers,omitempty" jsonschema:"HTTP headers sent with every request; not for gRPC"`
 	Body     string            `json:"body,omitempty" jsonschema:"HTTP request body sent with every request; not for gRPC"`
 	GRPC     *GRPCInput        `json:"grpc,omitempty" jsonschema:"call a unary gRPC method instead of sending HTTP requests"`
-	Rate     float64           `json:"rate,omitempty" jsonschema:"requests per second, held for duration; give this and duration, or stages"`
-	Duration string            `json:"duration,omitempty" jsonschema:"how long to send at rate, such as 10s"`
-	Stages   []StageInput      `json:"stages,omitempty" jsonschema:"a load profile of steps and ramps, instead of rate and duration"`
-	Poisson  bool              `json:"poisson,omitempty" jsonschema:"spread requests at random with the same average rate, as real traffic arrives in bursts"`
-	Seed     uint64            `json:"seed,omitempty" jsonschema:"with poisson, repeat the same arrival times"`
 	Workers  int               `json:"workers,omitempty" jsonschema:"most requests in flight, which is also the most connections; default 50"`
 	Timeout  string            `json:"timeout,omitempty" jsonschema:"per request, such as 5s; default 10s"`
 	HTTP2    bool              `json:"http2,omitempty" jsonschema:"send over HTTP/2 only"`
 	Insecure bool              `json:"insecure_skip_verify,omitempty" jsonschema:"do not verify the server's TLS certificate, for a self-signed one"`
+}
+
+// LoadTestInput is what the load_test tool takes.
+type LoadTestInput struct {
+	TargetInput
+	Rate     float64      `json:"rate,omitempty" jsonschema:"requests per second, held for duration; give this and duration, or stages"`
+	Duration string       `json:"duration,omitempty" jsonschema:"how long to send at rate, such as 10s"`
+	Stages   []StageInput `json:"stages,omitempty" jsonschema:"a load profile of steps and ramps, instead of rate and duration"`
+	Poisson  bool         `json:"poisson,omitempty" jsonschema:"spread requests at random with the same average rate, as real traffic arrives in bursts"`
+	Seed     uint64       `json:"seed,omitempty" jsonschema:"with poisson, repeat the same arrival times"`
 }
 
 // LatencyMS is a latency distribution in milliseconds.
@@ -114,23 +119,47 @@ func (s *service) addTools(srv *mcp.Server) {
 		Description: loadTestDescription,
 		Annotations: &mcp.ToolAnnotations{OpenWorldHint: ptr(true), DestructiveHint: ptr(false)},
 	}, s.loadTest)
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "find_capacity",
+		Title:       "Find the highest rate a service holds",
+		Description: capacityDescription,
+		Annotations: &mcp.ToolAnnotations{OpenWorldHint: ptr(true), DestructiveHint: ptr(false)},
+	}, s.findCapacity)
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "check_slo",
+		Title:       "Check a service against a latency target",
+		Description: checkDescription,
+		Annotations: &mcp.ToolAnnotations{OpenWorldHint: ptr(true), DestructiveHint: ptr(false)},
+	}, s.checkSLO)
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "compare_runs",
+		Title:       "Compare two runs",
+		Description: compareDescription,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, s.compareRuns)
+	srv.AddResourceTemplate(&mcp.ResourceTemplate{
+		URITemplate: runURIPrefix + "{run_id}",
+		Name:        "run",
+		Title:       "A run's full report",
+		Description: "The full JSON report of a run made by this server, including its latency histograms, as gmeter diff reads it.",
+		MIMEType:    "application/json",
+	}, s.readRun)
 }
 
 func ptr[T any](v T) *T { return &v }
 
-// config turns the tool's input into a gmeter.Config, refusing what the policy
-// does not allow. It returns the highest rate and the total duration, which are
-// what the policy limits.
-func (s *service) config(ctx context.Context, in LoadTestInput) (cfg gmeter.Config, peak float64, total time.Duration, err error) {
+// target turns the target settings into a gmeter.Config with no load, refusing a
+// target the policy does not allow.
+func (s *service) target(ctx context.Context, in TargetInput) (cfg gmeter.Config, err error) {
 	if in.URL == "" {
-		return cfg, 0, 0, fmt.Errorf("url is required")
+		return cfg, fmt.Errorf("url is required")
 	}
 	if err := s.policy.CheckTarget(ctx, in.URL); err != nil {
-		return cfg, 0, 0, err
+		return cfg, err
 	}
-	cfg = gmeter.Config{
-		URL: in.URL, Method: in.Method, Body: []byte(in.Body), Poisson: in.Poisson, Seed: in.Seed,
-		Workers: in.Workers, HTTP2: in.HTTP2,
+	cfg = gmeter.Config{URL: in.URL, Method: in.Method, Workers: in.Workers, HTTP2: in.HTTP2}
+	if in.Body != "" { // an empty body is not "no body" to a gRPC call, which refuses one
+		cfg.Body = []byte(in.Body)
 	}
 	if len(in.Headers) > 0 {
 		cfg.Header = http.Header{}
@@ -140,24 +169,47 @@ func (s *service) config(ctx context.Context, in LoadTestInput) (cfg gmeter.Conf
 	}
 	if in.Timeout != "" {
 		if cfg.Timeout, err = time.ParseDuration(in.Timeout); err != nil {
-			return cfg, 0, 0, fmt.Errorf("timeout %q is not a duration such as 5s", in.Timeout)
+			return cfg, fmt.Errorf("timeout %q is not a duration such as 5s", in.Timeout)
 		}
 	}
 	if in.Insecure {
 		cfg.TLS = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // asked for, for a self-signed server
 	}
 	if g := in.GRPC; g != nil {
-		cfg.GRPC = &gmeter.GRPC{Method: g.Method, Data: []byte(g.Data), Plaintext: g.Plaintext, Metadata: g.Metadata}
+		cfg.GRPC = &gmeter.GRPC{Method: g.Method, Plaintext: g.Plaintext, Metadata: g.Metadata}
+		if g.Data != "" {
+			cfg.GRPC.Data = []byte(g.Data)
+		}
 	}
+	return cfg, nil
+}
 
+// effectiveWorkers is how many workers a config runs with.
+func effectiveWorkers(cfg gmeter.Config) int {
+	if cfg.Workers == 0 {
+		return 50
+	}
+	return cfg.Workers
+}
+
+// config turns the tool's input into a gmeter.Config, refusing what the policy
+// does not allow. It returns the total duration of the load, which is what the
+// progress is measured against.
+func (s *service) config(ctx context.Context, in LoadTestInput) (cfg gmeter.Config, total time.Duration, err error) {
+	if cfg, err = s.target(ctx, in.TargetInput); err != nil {
+		return cfg, 0, err
+	}
+	cfg.Poisson, cfg.Seed = in.Poisson, in.Seed
+
+	var peak float64
 	switch {
 	case len(in.Stages) > 0 && (in.Rate != 0 || in.Duration != ""):
-		return cfg, 0, 0, fmt.Errorf("give either rate and duration, or stages, not both")
+		return cfg, 0, fmt.Errorf("give either rate and duration, or stages, not both")
 	case len(in.Stages) > 0:
 		for i, st := range in.Stages {
 			d, err := time.ParseDuration(st.Duration)
 			if err != nil || d <= 0 {
-				return cfg, 0, 0, fmt.Errorf("stage %d: duration %q is not a positive duration such as 30s", i+1, st.Duration)
+				return cfg, 0, fmt.Errorf("stage %d: duration %q is not a positive duration such as 30s", i+1, st.Duration)
 			}
 			cfg.Stages = append(cfg.Stages, gmeter.Stage{Duration: d, From: st.From, To: st.To})
 			total += d
@@ -165,38 +217,42 @@ func (s *service) config(ctx context.Context, in LoadTestInput) (cfg gmeter.Conf
 		}
 	case in.Rate > 0 && in.Duration != "":
 		if cfg.Duration, err = time.ParseDuration(in.Duration); err != nil || cfg.Duration <= 0 {
-			return cfg, 0, 0, fmt.Errorf("duration %q is not a positive duration such as 10s", in.Duration)
+			return cfg, 0, fmt.Errorf("duration %q is not a positive duration such as 10s", in.Duration)
 		}
 		cfg.Rate, peak, total = in.Rate, in.Rate, cfg.Duration
 	default:
-		return cfg, 0, 0, fmt.Errorf("give a load: rate and duration (such as rate 100, duration 10s), or stages")
+		return cfg, 0, fmt.Errorf("give a load: rate and duration (such as rate 100, duration 10s), or stages")
 	}
-
-	workers := cfg.Workers
-	if workers == 0 {
-		workers = 50
-	}
-	return cfg, peak, total, s.policy.CheckLoad(peak, total, workers)
+	return cfg, total, s.policy.CheckLoad(peak, total, effectiveWorkers(cfg))
 }
 
 func (s *service) loadTest(ctx context.Context, req *mcp.CallToolRequest, in LoadTestInput) (*mcp.CallToolResult, LoadTestResult, error) {
-	cfg, _, _, err := s.config(ctx, in)
+	out, _, err := s.runLoad(ctx, req, in)
+	return nil, out, err
+}
+
+// runLoad runs the load and records the run. It returns the gmeter.Result as
+// well, for a tool that judges it.
+func (s *service) runLoad(ctx context.Context, req *mcp.CallToolRequest, in LoadTestInput) (LoadTestResult, *gmeter.Result, error) {
+	cfg, total, err := s.config(ctx, in)
 	if err != nil {
-		return nil, LoadTestResult{}, err
+		return LoadTestResult{}, nil, err
 	}
+	stop := reportProgress(ctx, req, "load test", total)
 	started := time.Now()
 	res, err := gmeter.Run(ctx, cfg)
+	stop()
 	if err != nil {
-		return nil, LoadTestResult{}, err
+		return LoadTestResult{}, nil, err
 	}
 	sum, err := summarize(res)
 	if err != nil {
-		return nil, LoadTestResult{}, err
+		return LoadTestResult{}, nil, err
 	}
 	sum.Run = runInfo(cfg, started)
 	out := resultOf(sum)
 	out.RunID = s.runs.add(sum)
-	return nil, out, nil
+	return out, res, nil
 }
 
 // summarize reads the report a Result writes, which is the one record of a run
@@ -300,7 +356,11 @@ func sentence(r LoadTestResult) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Sent %d requests at %.0f/s target (%.0f/s achieved): %d ok", r.Scheduled, r.TargetRPS, r.AchievedRPS, r.OK)
 	if r.BadStatus > 0 {
-		fmt.Fprintf(&b, ", %d bad status (%s)", r.BadStatus, counts(r.Statuses, func(k string) bool { return k >= "400" }))
+		bad := counts(r.Statuses, func(k string) bool { return k >= "400" })
+		if codes := counts(r.Codes, func(k string) bool { return k != "OK" }); codes != "" {
+			bad = codes
+		}
+		fmt.Fprintf(&b, ", %d bad status (%s)", r.BadStatus, bad)
 	}
 	if r.Failed > 0 {
 		fmt.Fprintf(&b, ", %d failed (%s)", r.Failed, counts(r.Errors, nil))

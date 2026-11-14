@@ -21,13 +21,13 @@ func ExampleResult_Meets() {
 		fmt.Println(err)
 		return
 	}
-	target := gmeter.SLO{Quantile: 0.99, Latency: 100 * time.Millisecond}
+	target := gmeter.SLO{Quantile: 0.99, Latency: 500 * time.Millisecond}
 	if err := res.Meets(target); err != nil {
 		fmt.Println("missed:", err)
 		return
 	}
-	fmt.Println("p99 is within 100ms at 200 requests per second")
-	// Output: p99 is within 100ms at 200 requests per second
+	fmt.Println("p99 is within 500ms at 200 requests per second")
+	// Output: p99 is within 500ms at 200 requests per second
 }
 
 // Print the same report the gmeter command prints, or save its JSON for

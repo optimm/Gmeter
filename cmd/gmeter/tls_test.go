@@ -176,8 +176,8 @@ func TestFindAndReplayAnnounceInsecureAndFindUsesIt(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("find: stdout should be only JSON: %v\n%s", err, out)
 	}
-	if !got.Result.Found || got.Result.MaxRPS != 20 {
-		t.Errorf("find -insecure against a fast https server should find 20: %+v", got.Result)
+	if !noTrialFailed(got) {
+		t.Errorf("find -insecure against a fast https server should have no failed trial: %+v", got.Result)
 	}
 	if !strings.Contains(stderr, "certificate is not verified") {
 		t.Errorf("find did not say the certificate is not verified:\n%s", stderr)

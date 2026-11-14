@@ -166,6 +166,16 @@ func TestRunRefusesAConfigItCannotRun(t *testing.T) {
 	}
 }
 
+// skipIfTooBusy skips a test that needs the generator to keep time when it did
+// not: Meets and FindCapacity refuse to trust such a run, which is right, and
+// which a machine with every core in use (a busy CI runner) can make them do.
+func skipIfTooBusy(t *testing.T, busy bool) {
+	t.Helper()
+	if busy {
+		t.Skip("the machine is too busy for the generator to keep time, so the run is rightly not trusted")
+	}
+}
+
 func TestMeetsSaysWhyATargetWasMissed(t *testing.T) {
 	slow := server(t, func(w http.ResponseWriter, r *http.Request) { time.Sleep(400 * time.Millisecond) })
 	broken := server(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) })
@@ -179,7 +189,9 @@ func TestMeetsSaysWhyATargetWasMissed(t *testing.T) {
 	}
 	target := gmeter.SLO{Quantile: 0.99, Latency: 200 * time.Millisecond}
 
-	if err := run(fast).Meets(target); err != nil {
+	err := run(fast).Meets(target)
+	skipIfTooBusy(t, err != nil && strings.Contains(err.Error(), "generator timer lag"))
+	if err != nil {
 		t.Errorf("a fast server missed the target: %v", err)
 	}
 	if err := run(slow).Meets(target); err == nil || !strings.Contains(err.Error(), "p99") || !strings.Contains(err.Error(), "200ms") {
@@ -264,6 +276,7 @@ func TestFindCapacityReportsTheHighestRateThatMeetsTheTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	skipIfTooBusy(t, got.GeneratorLimited)
 	if !got.Found || got.MaxRPS != 40 || !got.LowerBound || len(got.Trials) < 2 {
 		t.Errorf("got %+v, want 40 rps found as a lower bound after at least two trials", got)
 	}

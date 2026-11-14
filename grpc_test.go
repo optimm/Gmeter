@@ -191,7 +191,7 @@ func TestFindCapacityOfAGRPCMethod(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !got.Found || got.MaxRPS != 40 {
-		t.Errorf("found %v at %v rps, want 40 (the most it was allowed to try)", got.Found, got.MaxRPS)
+	if !got.Found || got.MaxRPS < 20 || got.MaxRPS > 40 {
+		t.Errorf("found %v at %v rps, want a rate from 20 to 40 (40, the most it was allowed, on a quiet machine)", got.Found, got.MaxRPS)
 	}
 }

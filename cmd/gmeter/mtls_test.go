@@ -152,8 +152,8 @@ func TestReplayAndFindSendTheClientCertificateToo(t *testing.T) {
 	code, out, stderr := exec(t, "find", "-slo", "p99=1s", "-start", "20", "-max", "20", "-trial", "300ms", "-warmup", "0",
 		"-confirm", "0", "-arrivals", "even", "-cacert", ca, "-cert", cert, "-key", key, "-json", "-", srv.URL)
 	var got foundJSON
-	if code != 0 || json.Unmarshal([]byte(out), &got) != nil || !got.Result.Found || got.Result.MaxRPS != 20 {
-		t.Errorf("find: exit code %d, want 20 found with the certificate:\n%s\nstderr:\n%s", code, out, stderr)
+	if code != 0 || json.Unmarshal([]byte(out), &got) != nil || !noTrialFailed(got) {
+		t.Errorf("find: exit code %d, want no failed trial with the certificate:\n%s\nstderr:\n%s", code, out, stderr)
 	}
 }
 

@@ -142,7 +142,7 @@ func TestCheckSLOAllowsTheErrorsItWasGiven(t *testing.T) {
 	call(t, cs, "check_slo", args, &strict)
 	args["max_error_rate"] = 0.2
 	call(t, cs, "check_slo", args, &lenient)
-	if strict.Run.GeneratorLimited {
+	if strict.Run.GeneratorLimited || lenient.Run.GeneratorLimited {
 		t.Skip("the generator could not keep time")
 	}
 	if strict.Pass || !lenient.Pass {

@@ -53,8 +53,12 @@ func TestHTTP2AgainstAnHTTP1ServerIsReportedNotHidden(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if !strings.Contains(stdout, "protocol: 10") || !strings.Contains(stdout, "did not speak HTTP/2") {
-		t.Errorf("want 10 protocol errors and the warning explaining them:\n%s", stdout)
+	// A server that closes the connection on seeing the HTTP/2 preface can make
+	// a request see the reset first (Windows does, now and then), so the
+	// protocol errors are most of the 10, not always all of them.
+	if !strings.Contains(stdout, "10 failed") || !strings.Contains(stdout, "0 ok") ||
+		!strings.Contains(stdout, "protocol: ") || !strings.Contains(stdout, "did not speak HTTP/2") {
+		t.Errorf("want all 10 failed, mostly as protocol errors, and the warning explaining them:\n%s", stdout)
 	}
 }
 

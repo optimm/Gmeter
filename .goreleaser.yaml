@@ -1,7 +1,8 @@
 # Release build: on a pushed v* tag, .github/workflows/release.yml runs this.
-# It builds gmeter for macOS and Linux, attaches the archives to a GitHub
-# Release, and pushes a Homebrew cask to github.com/optimm/homebrew-tap, so
-# `brew install optimm/tap/gmeter` works.
+# It builds gmeter for macOS, Linux and Windows, attaches the archives to a
+# GitHub Release, pushes a Homebrew cask to github.com/optimm/homebrew-tap (so
+# `brew install optimm/tap/gmeter` works), and publishes a multi-arch image to
+# ghcr.io/optimm/gmeter.
 version: 2
 project_name: gmeter
 
@@ -11,7 +12,7 @@ builds:
     binary: gmeter
     env:
       - CGO_ENABLED=0
-    goos: [darwin, linux]
+    goos: [darwin, linux, windows]
     goarch: [amd64, arm64]
     flags:
       - -trimpath
@@ -21,8 +22,30 @@ builds:
 archives:
   - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     files:
       - README.md
+      - LICENSE
+
+# The image holds the linux binary and nothing else (see Dockerfile), so GoReleaser
+# builds it from the binaries above instead of compiling again.
+dockers_v2:
+  - images:
+      - ghcr.io/optimm/gmeter
+    tags:
+      - "{{ .Version }}"
+      - latest
+    dockerfile: Dockerfile
+    platforms: [linux/amd64, linux/arm64]
+    labels:
+      org.opencontainers.image.title: gmeter
+      org.opencontainers.image.description: Open-loop load generator for HTTP and gRPC
+      org.opencontainers.image.source: https://github.com/optimm/Gmeter
+      org.opencontainers.image.licenses: MIT
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
 
 checksum:
   name_template: checksums.txt

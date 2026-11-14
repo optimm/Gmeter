@@ -1,5 +1,6 @@
 # On a pushed v* tag: test, then build and publish the release with GoReleaser
-# (.goreleaser.yaml): archives on the GitHub Release, a cask in optimm/homebrew-tap.
+# (.goreleaser.yaml): archives on the GitHub Release, a cask in optimm/homebrew-tap,
+# and an image at ghcr.io/optimm/gmeter.
 name: release
 
 on:
@@ -8,6 +9,7 @@ on:
 
 permissions:
   contents: write # create the GitHub Release and upload its archives
+  packages: write # push the image to ghcr.io
 
 jobs:
   release:
@@ -23,6 +25,12 @@ jobs:
         # -short skips the two tests that measure this machine's timer precision
         # (busy-wait wake-ups within 250µs), which a shared runner cannot promise
         run: go test -race -short -count=1 ./...
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser

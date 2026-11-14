@@ -32,7 +32,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/optimm/Gmeter/internal/hist"
@@ -1073,9 +1072,9 @@ func classify(err error) string {
 		return "timeout"
 	case errors.Is(err, context.Canceled):
 		return "canceled"
-	case errors.Is(err, syscall.ECONNREFUSED):
+	case isConnRefused(err):
 		return "connection_refused"
-	case errors.Is(err, syscall.ECONNRESET):
+	case isConnReset(err):
 		return "connection_reset"
 	case errors.As(err, &dns):
 		return "dns"

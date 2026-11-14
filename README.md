@@ -20,8 +20,19 @@ go install github.com/optimm/Gmeter/cmd/gmeter@latest  # or with Go 1.26 or newe
 gmeter -version
 ```
 
-Prebuilt archives for macOS and Linux (amd64 and arm64) are on the
-[releases page](https://github.com/optimm/Gmeter/releases).
+Prebuilt archives for macOS, Linux and Windows (amd64 and arm64) are on the
+[releases page](https://github.com/optimm/Gmeter/releases); the Windows ones are `.zip` files holding `gmeter.exe`.
+
+There is also an image, for a CI job or a machine with no Go:
+
+```bash
+docker run --rm ghcr.io/optimm/gmeter -rate 100 -duration 10s http://host.docker.internal:8080/
+```
+
+`host.docker.internal` is how Docker Desktop and OrbStack reach the machine they run on. On Linux, add
+`--network host` and use `localhost`. The image is built for amd64 and arm64, holds only the binary and the CA
+certificates, and runs as a non-root user. To keep a result file, mount a directory and run as yourself so the
+container may write to it: `--user "$(id -u):$(id -g)" -v "$PWD:/out"` and `-results /out/run.csv`.
 
 ## Quick start
 
@@ -1281,6 +1292,7 @@ the live windows pinpoint when a stall happened.
 - [x] **v3e**: every request saved as CSV (`-results`) and drawn as one HTML page (`gmeter plot`)
 - [x] **v3f**: a Go package: `gmeter.Run`, `Result.Meets` for a latency target, and `FindCapacity`
 - [x] **v3g**: the Go package calls unary gRPC too (`Config.GRPC`, `Result.Codes`)
+- [x] **v3h**: Windows builds (`.zip`, amd64 and arm64) and a Docker image (`ghcr.io/optimm/gmeter`)
 
 ## License
 

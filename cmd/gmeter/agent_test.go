@@ -166,6 +166,7 @@ func TestStoppingTheAgentCommandStopsItsJob(t *testing.T) {
 	if code := <-done; code != 0 {
 		t.Errorf("exit %d", code)
 	}
+	time.Sleep(100 * time.Millisecond) // a request already on the wire when the job stopped may still land
 	after := hits.Load()
 	time.Sleep(300 * time.Millisecond)
 	if more := hits.Load() - after; more > 0 {

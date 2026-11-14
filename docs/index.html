@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Gmeter: load testing in Go</title>
-<meta name="description" content="Gmeter is a load testing tool for HTTP and gRPC services, written in Go. Every request is due at a fixed moment, and its latency is measured from that moment, so a stalled server shows up in your p99 instead of vanishing from it.">
-<meta property="og:title" content="Gmeter: load testing in Go">
-<meta property="og:description" content="An open-loop load generator for HTTP and gRPC that measures latency from when each request was due.">
+<title>Gmeter: an agent-friendly load tester</title>
+<meta name="description" content="Gmeter is an agent-friendly load tester for HTTP and gRPC services, written in Go. It has a built-in MCP server so an AI agent can run it, and it measures every request from the moment it was due, so a stalled server shows up in your p99 instead of vanishing from it.">
+<meta property="og:title" content="Gmeter: an agent-friendly load tester">
+<meta property="og:description" content="An agent-friendly, open-loop load tester for HTTP and gRPC, with a built-in MCP server, that measures latency from when each request was due.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://optimm.github.io/Gmeter/">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2317233F'/%3E%3Cpath d='M4 24h8l1-15 6 13h9' fill='none' stroke='%23FF5C72' stroke-width='3' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E">
@@ -309,12 +309,13 @@ footer { padding: 72px 0 40px; font-size: 14px; color: var(--ink-2); display: fl
 
   <main>
     <section class="hero on-panel" aria-labelledby="title">
-      <h1 id="title">Load testing for HTTP and gRPC, written in Go</h1>
+      <h1 id="title">An agent-friendly load tester for HTTP and gRPC</h1>
       <div class="hero-row">
         <p class="lede">Gmeter sends requests at the rate you set and reports latency percentiles, throughput and
           errors. It can ramp through a load profile, find the highest rate your service holds under an SLO, replay real
-          traffic, compare two runs in CI, spread one test across machines, chart every request, and run from a Go test. One
-          binary, no scripts to write.</p>
+          traffic, compare two runs in CI, spread one test across machines, chart every request, and run from a Go test. It
+          also runs as an MCP server, so an AI agent can load test a service, read an honest answer, and be stopped where
+          you draw the line. One binary, no scripts to write.</p>
         <div class="install">
           <div class="cmd"><code id="install-cmd">brew install optimm/tap/gmeter</code><button class="copy" type="button" data-copy="install-cmd">Copy</button></div>
           <span class="note">Or with Go 1.26 or newer: <code>go install github.com/optimm/Gmeter/cmd/gmeter@latest</code>. Windows zips and a Docker image (<code>ghcr.io/optimm/gmeter</code>) are on the <a href="https://github.com/optimm/Gmeter/releases">releases page</a>.</span>
@@ -375,7 +376,7 @@ footer { padding: 72px 0 40px; font-size: 14px; color: var(--ink-2); display: fl
     </section>
 
     <section class="section" id="commands" aria-labelledby="commands-title">
-      <h2 id="commands-title">Eight ways in, one honest clock</h2>
+      <h2 id="commands-title">Nine ways in, one honest clock</h2>
       <div class="commands">
         <div class="tabs" role="tablist" aria-label="Gmeter commands">
           <button class="tab" role="tab" id="t-run" aria-controls="p-run" aria-selected="true"><code>gmeter</code><small>Run at a rate or a profile</small></button>
@@ -386,6 +387,7 @@ footer { padding: 72px 0 40px; font-size: 14px; color: var(--ink-2); display: fl
           <button class="tab" role="tab" id="t-agents" aria-controls="p-agents" aria-selected="false" tabindex="-1"><code>-agents</code><small>Spread one test over machines</small></button>
           <button class="tab" role="tab" id="t-plot" aria-controls="p-plot" aria-selected="false" tabindex="-1"><code>gmeter plot</code><small>Chart every request of a run</small></button>
           <button class="tab" role="tab" id="t-go" aria-controls="p-go" aria-selected="false" tabindex="-1"><code>import "…/Gmeter"</code><small>Gate a Go test on latency</small></button>
+          <button class="tab" role="tab" id="t-mcp" aria-controls="p-mcp" aria-selected="false" tabindex="-1"><code>gmeter mcp</code><small>Let an AI agent run it, safely</small></button>
         </div>
 
         <div class="panel" role="tabpanel" id="p-run" aria-labelledby="t-run" tabindex="0">
@@ -530,6 +532,25 @@ err = res.Meets(gmeter.SLO{Quantile: 0.99, Latency: 80 * time.Millisecond, MaxEr
 <span class="r">target missed: errors 0.4% over the 0.1% budget; p99 is 212ms, over the 80ms target</span></pre>
           <p class="more"><a href="https://github.com/optimm/Gmeter#using-it-from-go">The config, the result and what the package leaves out</a></p>
         </div>
+
+        <div class="panel" role="tabpanel" id="p-mcp" aria-labelledby="t-mcp" tabindex="0" hidden>
+          <h3>Let an AI agent load test, with limits you set</h3>
+          <p><code>gmeter mcp</code> serves Gmeter over the Model Context Protocol. An agent can run a load, find the highest
+            rate a service holds, check a latency target and compare two runs. Each answer starts with a sentence and a
+            verdict, and says when Gmeter could not keep time itself, so the agent doesn't draw a conclusion from numbers
+            that were the generator's.</p>
+          <p>An agent that can send load is a risk, so by default it can target only your own machine, and its rate,
+            run time and connections are capped. Cloud metadata addresses are refused even when you allow everything
+            else.</p>
+<pre class="term"><span class="p">$ claude mcp add gmeter -- gmeter mcp -allow staging.example.com -max-rate 500</span>
+
+check_slo   url=http://127.0.0.1:8080/  rate=100  duration=1s  slo=p99=200ms
+Met p99=200ms: corrected p99 7.0ms over 100 requests.
+
+load_test   url=http://93.184.216.34/  rate=10  duration=1s
+<span class="r">93.184.216.34 is not allowed: an agent may only target loopback unless the server was started with -allow 93.184.216.34</span></pre>
+          <p class="more"><a href="https://github.com/optimm/Gmeter#using-it-from-an-ai-agent-gmeter-mcp">The tools, the limits and the config for your client</a></p>
+        </div>
       </div>
     </section>
 
@@ -601,13 +622,14 @@ err = res.Meets(gmeter.SLO{Quantile: 0.99, Latency: 80 * time.Millisecond, MaxEr
         <div><dt>Recording without locks</dt>
           <dd>Each worker records into its own atomic histogram, padded to a 128-byte cache line, and a sampler reads
             them. With 8 goroutines recording at once, padding took a record from 2.0–3.1ns down to 0.92ns.</dd></div>
-        <div><dt>Two dependencies, both pinned</dt>
+        <div><dt>Three dependencies, all pinned</dt>
           <dd>Everything is Go's standard library except gRPC support, which pins grpc v1.85.0 and protobuf
-            v1.36.12.</dd></div>
+            v1.36.12, and the MCP server, which pins the official Go SDK v1.8.0.</dd></div>
         <div><dt>Safe by default</dt>
           <dd>Replays send only GET and HEAD unless you say otherwise. Agents listen on localhost unless told otherwise,
             and read their password from an environment variable, never a flag. Passwords in URLs are redacted
-            everywhere they're printed or saved.</dd></div>
+            everywhere they're printed or saved. The MCP server targets only loopback until you allow more, and caps
+            the load an agent can ask for.</dd></div>
       </dl>
     </section>
 
@@ -627,7 +649,7 @@ err = res.Meets(gmeter.SLO{Quantile: 0.99, Latency: 80 * time.Millisecond, MaxEr
   </main>
 
   <footer class="on-panel">
-    <span>Gmeter, an open-loop load generator written in Go</span>
+    <span>Gmeter, an agent-friendly, open-loop load tester written in Go</span>
     <a href="https://github.com/optimm/Gmeter">github.com/optimm/Gmeter</a>
   </footer>
 </div>

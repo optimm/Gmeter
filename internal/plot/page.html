@@ -6,46 +6,51 @@
 <title>{{.Title}}</title>
 <style>
 :root {
-  --paper: #F2F4F1; --panel: #FFFFFF; --grid: #D5DED8; --rule: #C3CDC7;
+  --paper: #F2F4F1; --paper-2: #E8EDE9; --grid: #D5DED8; --rule: #C3CDC7;
   --ink: #17233F; --ink-2: #4E5B70; --red: #C21E3A; --blue: #2F5DA8; --amber: #A66A00;
+  /* a file that opens offline cannot fetch a web font, so the figures use the machine's own monospace */
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #0F1620; --panel: #16202C; --grid: #1F2B38; --rule: #2A3847;
+    --paper: #0F1620; --paper-2: #16202C; --grid: #1F2B38; --rule: #2A3847;
     --ink: #E4EAF0; --ink-2: #97A5B7; --red: #FF5C72; --blue: #79A3F0; --amber: #E0A93B;
     color-scheme: dark;
   }
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-main { max-width: 1040px; margin: 0 auto; padding: 32px 16px 64px; }
-h1 { font-size: 24px; font-weight: 600; margin: 0 0 4px; text-wrap: balance; }
-h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
-.sub { color: var(--ink-2); margin: 0 0 24px; }
-.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin: 0 0 32px; padding: 16px 0; border-block: 1px solid var(--rule); }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1040px; margin: 0 auto; padding: 40px 24px 72px; }
+@media (max-width: 600px) { main { padding: 24px 16px 48px; } }
+h1 { font: 500 22px/1.25 var(--mono); margin: 0 0 6px; overflow-wrap: anywhere; text-wrap: balance; }
+h2 { font-size: 17px; font-weight: 650; margin: 0 0 6px; }
+.sub { color: var(--ink-2); font: 13px/1.5 var(--mono); margin: 0 0 28px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 20px 16px; margin: 0 0 20px; padding: 18px 0; border-block: 1px solid var(--rule); }
 .facts dt { color: var(--ink-2); font-size: 13px; }
-.facts dd { margin: 0; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.facts dd small { font-size: 13px; font-weight: 400; color: var(--ink-2); }
-section { margin: 0 0 32px; }
-.note { color: var(--ink-2); font-size: 13px; margin: 0 0 8px; max-width: 70ch; }
-.chart { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 8px; position: relative; }
+.facts dd { margin: 2px 0 0; font: 500 22px/1.3 var(--mono); font-variant-numeric: tabular-nums; }
+.facts dd small { font-size: 12px; font-weight: 400; color: var(--ink-2); }
+.verdict { margin: 0 0 40px; max-width: 64ch; font-size: 16px; }
+section { margin: 0 0 40px; }
+.note { color: var(--ink-2); font-size: 14px; margin: 0 0 10px; max-width: 68ch; }
+.chart { position: relative; padding: 4px 0; }
 svg { display: block; width: 100%; height: auto; overflow: visible; }
-svg text { fill: var(--ink-2); font: 11px system-ui, sans-serif; }
-.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 0; font-size: 13px; color: var(--ink-2); }
-.legend i { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
+svg text { fill: var(--ink-2); font: 11px var(--mono); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 8px 0 0; font-size: 13px; color: var(--ink-2); }
+.legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
 .legend i.dash { border-top-style: dashed; }
-button { font: inherit; font-size: 13px; color: var(--ink); background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 4px 12px; cursor: pointer; }
+button { font: inherit; font-size: 13px; color: var(--ink); background: transparent; border: 1px solid var(--rule); border-radius: 2px; padding: 3px 12px; cursor: pointer; }
+button:hover { border-color: var(--ink-2); }
 button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-button[aria-pressed="true"] { border-color: var(--blue); }
-.tip { position: absolute; pointer-events: none; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 8px; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; display: none; z-index: 1; }
-.tip b { display: block; margin-bottom: 4px; }
-.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; }
-table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
-th, td { text-align: left; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--grid); }
+button[aria-pressed="true"] { border-color: var(--blue); background: var(--paper-2); }
+.tip { position: absolute; pointer-events: none; background: var(--paper); border: 1px solid var(--rule); border-radius: 2px; padding: 8px 10px; font: 12px/1.5 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; display: none; z-index: 1; }
+.tip b { display: block; margin-bottom: 4px; font-weight: 500; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 32px; }
+table { border-collapse: collapse; width: 100%; font: 13px var(--mono); font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 5px 8px 5px 0; border-bottom: 1px solid var(--grid); }
 td:last-child, th:last-child { text-align: right; padding-right: 0; }
-th { font-weight: 600; font-size: 13px; color: var(--ink-2); }
-.none { color: var(--ink-2); }
+th { font: 500 13px system-ui, sans-serif; color: var(--ink-2); }
+.none { color: var(--ink-2); font-family: system-ui, sans-serif; }
 </style>
 </head>
 <body>
@@ -53,6 +58,7 @@ th { font-weight: 600; font-size: 13px; color: var(--ink-2); }
 <h1>{{.Title}}</h1>
 <p class="sub" id="sub"></p>
 <dl class="facts" id="facts"></dl>
+<p class="verdict" id="verdict"></p>
 
 <section>
   <h2>Latency over time</h2>
@@ -96,7 +102,7 @@ th { font-weight: 600; font-size: 13px; color: var(--ink-2); }
 <script>
 const D = {{.Data}};
 const $ = id => document.getElementById(id);
-const fmtMs = v => v === 0 ? "0" : v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 1 : 2) + " s" : v >= 100 ? v.toFixed(0) + " ms" : v >= 1 ? v.toFixed(1) + " ms" : (v * 1000).toFixed(0) + " µs";
+const fmtMs = v => v === 0 ? "0" : v >= 1000 ? +(v / 1000).toFixed(v >= 10000 ? 1 : 2) + " s" : v >= 100 ? v.toFixed(0) + " ms" : v >= 1 ? +v.toFixed(1) + " ms" : (v * 1000).toFixed(0) + " µs";
 const fmtN = n => n.toLocaleString("en-US");
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 
@@ -105,10 +111,16 @@ const fact = (k, v, small) => "<div><dt>" + k + "</dt><dd>" + v + (small ? " <sm
 $("facts").innerHTML =
   fact("Got a response", fmtN(D.ok), D.total ? (100 * D.ok / D.total).toFixed(1) + "%" : "") +
   fact("Failed", fmtN(D.failed)) +
+  fact("Status 400 and up", fmtN(Object.entries(D.statuses).reduce((n, e) => n + (+e[0] >= 400 ? e[1] : 0), 0))) +
   fact("p50, due to done", fmtMs(D.corrected.p50)) +
   fact("p99, due to done", fmtMs(D.corrected.p99)) +
   fact("p99, sent to done", fmtMs(D.service.p99)) +
   fact("Slowest", fmtMs(D.corrected.max));
+
+// say whether the two clocks part, which is what the first chart is for
+$("verdict").textContent = D.corrected.p99 <= D.service.p99 * 1.05 + 0.1
+  ? "The two clocks agree: requests were sent when they were due, so nothing waited."
+  : "Requests waited before they were sent: the p99 is " + fmtMs(D.corrected.p99) + " from when they were due and " + fmtMs(D.service.p99) + " from when they were sent.";
 
 let W = 960, H = 300;
 const M = {l: 56, r: 16, t: 12, b: 28};
@@ -116,11 +128,14 @@ const M = {l: 56, r: 16, t: 12, b: 28};
 const sizeTo = box => { W = Math.max(300, Math.round(box.clientWidth - 16)); H = W < 600 ? 240 : 300; };
 const nice = max => { const p = Math.pow(10, Math.floor(Math.log10(max || 1))); const f = max / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; };
 const ticks = (max, n) => Array.from({length: n + 1}, (_, i) => max * i / n);
+// round steps (1, 2, 5, 10, ...) up to max, so a 20 s run is labelled 0, 5, 10, 15, 20
+const roundTicks = (max, n) => { const raw = max / n, p = Math.pow(10, Math.floor(Math.log10(raw))), step = (raw / p <= 1 ? 1 : raw / p <= 2 ? 2 : raw / p <= 5 ? 5 : 10) * p; return Array.from({length: Math.floor(max / step + 1e-9) + 1}, (_, i) => i * step); };
+const fmtS = v => +v.toFixed(2) + " s";
 
 function frame(box, xmax, xlabel) {
   const svg = {x: v => M.l + (W - M.l - M.r) * v / xmax};
   svg.head = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img">';
-  svg.axisX = ticks(xmax, W < 600 ? 3 : 6).map(v => '<text x="' + svg.x(v) + '" y="' + (H - 8) + '" text-anchor="middle">' + xlabel(v) + '</text>').join("");
+  svg.axisX = roundTicks(xmax, W < 600 ? 3 : 6).map(v => '<text x="' + svg.x(v) + '" y="' + (H - 8) + '" text-anchor="middle">' + xlabel(v) + '</text>').join("");
   return svg;
 }
 function path(pts, color, opts) {
@@ -160,7 +175,7 @@ function drawLatency() {
     const f = log ? (Math.log10(Math.max(v, ymin)) - Math.log10(ymin)) / (Math.log10(ymax) - Math.log10(ymin)) : v / ymax;
     return H - M.b - (H - M.t - M.b) * f;
   };
-  const f = frame(box, D.span || 1, v => v.toFixed(v < 10 ? 1 : 0) + " s");
+  const f = frame(box, D.span || 1, fmtS);
   const yTicks = log ? Array.from({length: Math.round(Math.log10(ymax / ymin)) + 1}, (_, i) => ymin * Math.pow(10, i)) : ticks(ymax, 5);
   let s = f.head + yTicks.map(v => '<line x1="' + M.l + '" x2="' + (W - M.r) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="var(--grid)"/><text x="' + (M.l - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + fmtMs(v) + "</text>").join("") + f.axisX;
   const xs = B.map(b => f.x(b.start + D.bucket_seconds / 2));
@@ -180,7 +195,7 @@ function drawLoad() {
   sizeTo($("load"));
   const B = D.buckets, box = $("load"), w = D.bucket_seconds;
   const top = nice(Math.max(1, ...B.map(b => b.due / w)));
-  const f = frame(box, D.span || 1, v => v.toFixed(v < 10 ? 1 : 0) + " s");
+  const f = frame(box, D.span || 1, fmtS);
   const y = v => H - M.b - (H - M.t - M.b) * v / top;
   const xs = B.map(b => f.x(b.start + w / 2));
   let s = f.head + ticks(top, 5).map(v => '<line x1="' + M.l + '" x2="' + (W - M.r) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="var(--grid)"/><text x="' + (M.l - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + fmtN(Math.round(v)) + "</text>").join("") + f.axisX;
@@ -205,7 +220,8 @@ function drawCurve() {
   const y = v => H - M.b - (H - M.t - M.b) * (Math.log10(Math.max(v, bottom)) - Math.log10(bottom)) / (Math.log10(top) - Math.log10(bottom));
   let s = '<svg viewBox="0 0 ' + W + " " + H + '" role="img">';
   for (let v = bottom; v <= top * 1.001; v *= 10) s += '<line x1="' + M.l + '" x2="' + (W - M.r) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="var(--grid)"/><text x="' + (M.l - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + fmtMs(v) + "</text>";
-  s += pts.filter(p => !labelled || labelled.has(p.q)).map(p => '<text x="' + x(p.q) + '" y="' + (H - 8) + '" text-anchor="middle">' + (p.q === 0 ? "all" : p.q === 0.5 ? "1 in 2" : "1 in " + (n => n < 10 ? String(+n.toFixed(1)) : fmtN(Math.round(n)))(1 / (1 - p.q))) + "</text>").join("");
+  let lastX = -1e9;
+  s += pts.filter(p => !labelled || labelled.has(p.q)).filter(p => { const px = x(p.q); if (px - lastX < 56) return false; lastX = px; return true; }).map((p, i, all) => '<text x="' + x(p.q) + '" y="' + (H - 8) + '" text-anchor="' + (i === all.length - 1 ? "end" : "middle") + '">' + (p.q === 0 ? "all" : p.q === 0.5 ? "1 in 2" : "1 in " + (n => n < 10 ? String(+n.toFixed(1)) : fmtN(Math.round(n)))(1 / (1 - p.q))) + "</text>").join("");
   s += path(pts.map(p => [x(p.q), y(p.corrected)]), "var(--red)") + path(pts.map(p => [x(p.q), y(p.service)]), "var(--blue)", {dash: true});
   s += pts.map(p => '<circle cx="' + x(p.q) + '" cy="' + y(p.corrected) + '" r="3" fill="var(--red)"><title>' + (100 * p.q) + "%: " + fmtMs(p.corrected) + " from due, " + fmtMs(p.service) + " from sent</title></circle>").join("") + "</svg>";
   box.innerHTML = s;

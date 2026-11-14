@@ -12,7 +12,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2317233F'/%3E%3Cpath d='M4 24h8l1-15 6 13h9' fill='none' stroke='%23FF5C72' stroke-width='3' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Fragment+Mono&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
   --paper: #F2F4F1;
@@ -93,7 +93,7 @@ body {
   margin: 0;
   background: var(--paper);
   color: var(--ink);
-  font-family: "Bricolage Grotesque", system-ui, sans-serif;
+  font-family: "Archivo", system-ui, sans-serif;
   font-size: 17px;
   line-height: 1.6;
   font-variation-settings: "wdth" 100;
@@ -101,7 +101,7 @@ body {
 a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 3px; }
 a:hover { color: var(--red); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 2px; }
-code, pre, .mono { font-family: "Fragment Mono", ui-monospace, Menlo, monospace; }
+code, pre, .mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; }
 code { font-size: 0.9em; }
 p { margin: 0 0 1em; }
 h1, h2, h3 { text-wrap: balance; }
@@ -143,9 +143,9 @@ h1, h2, h3 { text-wrap: balance; }
   font-size: clamp(2.4rem, 5.6vw, 4.5rem);
   line-height: 1.04;
   max-width: 13em;
-  letter-spacing: -0.025em;
-  font-weight: 600;
-  font-variation-settings: "wdth" 84, "opsz" 96;
+  letter-spacing: -0.012em;
+  font-weight: 700;
+  font-variation-settings: "wdth" 96;
   margin: 0 0 28px;
 }
 .hero .num { font-variant-numeric: tabular-nums; }
@@ -154,8 +154,8 @@ h1, h2, h3 { text-wrap: balance; }
 .hero .or { color: var(--ink-2); font-weight: 400; }
 .demo { margin-top: 96px; }
 .demo h2 {
-  font-size: clamp(1.9rem, 4vw, 3.1rem); line-height: 1.06; letter-spacing: -0.02em;
-  font-weight: 600; font-variation-settings: "wdth" 86, "opsz" 72; margin: 0 0 16px;
+  font-size: clamp(1.9rem, 4vw, 3.1rem); line-height: 1.06; letter-spacing: -0.01em;
+  font-weight: 700; font-variation-settings: "wdth" 96; margin: 0 0 16px;
 }
 .hero-row { display: flex; flex-direction: column; gap: 24px; }
 .lede { font-size: clamp(1.08rem, 1.5vw, 1.22rem); line-height: 1.5; max-width: 44em; color: var(--ink-2); margin: 0; }
@@ -169,7 +169,7 @@ h1, h2, h3 { text-wrap: balance; }
 .cmd code { overflow-x: auto; white-space: nowrap; font-size: 14px; }
 .cmd code::before { content: "$ "; color: var(--screen-dim); }
 .copy {
-  font: inherit; font-family: "Bricolage Grotesque", system-ui, sans-serif; font-size: 13px; font-weight: 500;
+  font: inherit; font-family: "Archivo", system-ui, sans-serif; font-size: 13px; font-weight: 500;
   background: transparent; color: var(--screen-ink); border: 1px solid var(--screen-dim);
   border-radius: 4px; padding: 4px 12px; cursor: pointer; white-space: nowrap;
   transition: border-color 150ms var(--ease), transform 150ms var(--ease);
@@ -184,14 +184,14 @@ h1, h2, h3 { text-wrap: balance; }
 .lane-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
 .lane-title { font-weight: 500; font-size: 16px; }
 .lane-title span { font-weight: 400; color: var(--ink-2); }
-.lane-value { font-family: "Fragment Mono", ui-monospace, monospace; font-size: 15px; font-variant-numeric: tabular-nums; transition: opacity 400ms var(--ease); }
+.lane-value { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 15px; font-variant-numeric: tabular-nums; transition: opacity 400ms var(--ease); }
 .lane-value b { font-weight: 400; font-size: 22px; }
 .lane-sent .lane-value { color: var(--blue); }
 .lane-due .lane-value { color: var(--red); }
 .lane svg { display: block; width: 100%; overflow: visible; }
 .band { transition: fill 160ms var(--ease); }
 .band.live { fill: rgba(255, 92, 114, 0.26); }
-.lane svg text { font-family: "Fragment Mono", ui-monospace, monospace; font-size: 11px; fill: var(--ink-2); }
+.lane svg text { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; fill: var(--ink-2); }
 .chart-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px 24px; margin-top: 16px; }
 .chart-foot p { font-size: 14px; color: var(--ink-2); max-width: 46em; margin: 0; }
 .again {
@@ -207,8 +207,8 @@ h1, h2, h3 { text-wrap: balance; }
 /* sections */
 .section { padding: 96px 0 0; }
 .section h2, .start h2 {
-  font-size: clamp(1.9rem, 4vw, 2.9rem); line-height: 1.06; letter-spacing: -0.02em;
-  font-weight: 600; font-variation-settings: "wdth" 82, "opsz" 72;
+  font-size: clamp(1.9rem, 4vw, 2.9rem); line-height: 1.06; letter-spacing: -0.01em;
+  font-weight: 700; font-variation-settings: "wdth" 96;
   margin: 0 0 20px; max-width: 18ch;
 }
 .split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 24px 56px; }
@@ -218,7 +218,7 @@ h1, h2, h3 { text-wrap: balance; }
 .figures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; margin-top: 28px; border-top: 1px solid var(--rule); }
 .figures div { padding: 16px 16px 16px 0; border-bottom: 1px solid var(--rule); }
 .figures dt { font-size: 14px; color: var(--ink-2); }
-.figures dd { margin: 4px 0 0; font-family: "Fragment Mono", ui-monospace, monospace; font-size: 20px; font-variant-numeric: tabular-nums; }
+.figures dd { margin: 4px 0 0; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 20px; font-variant-numeric: tabular-nums; }
 .figures .red { color: var(--red); }
 .figures .blue { color: var(--blue); }
 
@@ -311,11 +311,9 @@ footer { padding: 72px 0 40px; font-size: 14px; color: var(--ink-2); display: fl
     <section class="hero on-panel" aria-labelledby="title">
       <h1 id="title">An agent-friendly load tester for HTTP and gRPC</h1>
       <div class="hero-row">
-        <p class="lede">Gmeter sends requests at the rate you set and reports latency percentiles, throughput and
-          errors. It can ramp through a load profile, find the highest rate your service holds under an SLO, replay real
-          traffic, compare two runs in CI, spread one test across machines, chart every request, and run from a Go test. It
-          also runs as an MCP server, so an AI agent can load test a service, read an honest answer, and be stopped where
-          you draw the line. One binary, no scripts to write.</p>
+        <p class="lede">Gmeter sends requests on a fixed schedule and times each one from the moment it was due, so a
+          stalled server cannot hide its slowest requests. Run it from the command line, from a Go test, or as an MCP
+          server that an AI agent can use within limits you set.</p>
         <div class="install">
           <div class="cmd"><code id="install-cmd">brew install optimm/tap/gmeter</code><button class="copy" type="button" data-copy="install-cmd">Copy</button></div>
           <span class="note">Or with Go 1.26 or newer: <code>go install github.com/optimm/Gmeter/cmd/gmeter@latest</code>. Windows zips and a Docker image (<code>ghcr.io/optimm/gmeter</code>) are on the <a href="https://github.com/optimm/Gmeter/releases">releases page</a>.</span>

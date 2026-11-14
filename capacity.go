@@ -64,10 +64,11 @@ func FindCapacity(ctx context.Context, cfg Config, slo SLO, opts SearchOptions) 
 	if err != nil {
 		return nil, err
 	}
-	base, err := cfg.runnerConfig(false)
+	base, closeCalls, err := cfg.runnerConfig(ctx, false)
 	if err != nil {
 		return nil, err
 	}
+	defer closeCalls()
 	base.Phases = false
 	search := find.Config{
 		Start:     cmpOr(opts.Start, 100),

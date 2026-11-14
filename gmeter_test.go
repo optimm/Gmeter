@@ -167,7 +167,7 @@ func TestRunRefusesAConfigItCannotRun(t *testing.T) {
 }
 
 func TestMeetsSaysWhyATargetWasMissed(t *testing.T) {
-	slow := server(t, func(w http.ResponseWriter, r *http.Request) { time.Sleep(30 * time.Millisecond) })
+	slow := server(t, func(w http.ResponseWriter, r *http.Request) { time.Sleep(400 * time.Millisecond) })
 	broken := server(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) })
 	fast := ok(t)
 	run := func(srv *httptest.Server) *gmeter.Result {
@@ -177,13 +177,13 @@ func TestMeetsSaysWhyATargetWasMissed(t *testing.T) {
 		}
 		return res
 	}
-	target := gmeter.SLO{Quantile: 0.99, Latency: 10 * time.Millisecond}
+	target := gmeter.SLO{Quantile: 0.99, Latency: 200 * time.Millisecond}
 
 	if err := run(fast).Meets(target); err != nil {
 		t.Errorf("a fast server missed the target: %v", err)
 	}
-	if err := run(slow).Meets(target); err == nil || !strings.Contains(err.Error(), "p99") || !strings.Contains(err.Error(), "10ms") {
-		t.Errorf("a slow server: err = %v, want one naming p99 and the 10ms target", err)
+	if err := run(slow).Meets(target); err == nil || !strings.Contains(err.Error(), "p99") || !strings.Contains(err.Error(), "200ms") {
+		t.Errorf("a slow server: err = %v, want one naming p99 and the 200ms target", err)
 	}
 	if err := run(broken).Meets(target); err == nil || !strings.Contains(err.Error(), "errors") {
 		t.Errorf("a server answering 500: err = %v, want one about errors", err)

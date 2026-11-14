@@ -1070,7 +1070,25 @@ got, err := gmeter.FindCapacity(ctx, gmeter.Config{URL: srv.URL}, gmeter.SLO{Qua
 fmt.Printf("holds %.0f requests per second (at least: %v)\n", got.MaxRPS, got.LowerBound)
 ```
 
-The package covers HTTP, not gRPC, and the saved-results file, `plot`, agents and `replay` of a trace file stay in the command.
+To load-test a unary gRPC method, set `GRPC` and give the server's `host:port` as the `URL`. Everything else works the same:
+the stages, `Poisson`, `Workers`, `TLS` (for a server that wants a client certificate too), `OnRequest`, `Meets` and
+`FindCapacity`.
+
+```go
+res, err := gmeter.Run(ctx, gmeter.Config{
+	URL:  "orders:9090",
+	Rate: 1000, Duration: 30 * time.Second,
+	GRPC: &gmeter.GRPC{Method: "shop.Orders/Get", Data: []byte(`{"id":"42"}`), Plaintext: true},
+})
+fmt.Println(res.Codes()) // map[NOT_FOUND:3 OK:29997]: the answers by status code; anything but OK counts as an error
+```
+
+`GRPC` takes what the `grpc` command's flags take: `Protoset` (a descriptor set, or the server is asked by reflection),
+`Conns`, `Metadata`, and `Plaintext`. `Method`, `Header`, `Body`, `Requests` and `HTTP2` are for HTTP and are refused
+alongside it. A `Sample` has the call's `Code` where an HTTP one has its `Status`. As in the command, `UNAVAILABLE` counts
+as a failure (`Errors()["unavailable"]`), since gRPC says it both for a broken connection and for a server that is down.
+
+The saved-results file, `plot`, agents and `replay` of a trace file stay in the command.
 
 ## Every request, and a chart (`gmeter plot`)
 

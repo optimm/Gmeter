@@ -1,4 +1,4 @@
-// Package gmeter is an open-loop HTTP load generator you can call from Go code:
+// Package gmeter is an open-loop HTTP and gRPC load generator you can call from Go code:
 // from a test, a benchmark or a deploy check, with the same engine as the
 // gmeter command.
 //
@@ -21,6 +21,10 @@
 //	}
 //
 // Or ask how much the server can take: [FindCapacity].
+//
+// To load-test a unary gRPC method instead, set [Config.GRPC] and give the
+// server's host:port as the URL; the rest works the same, and [Result.Codes]
+// counts the answers by status code.
 package gmeter
 
 import (
@@ -33,7 +37,10 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc/metadata"
+
 	"github.com/optimm/Gmeter/internal/find"
+	"github.com/optimm/Gmeter/internal/grpcload"
 	"github.com/optimm/Gmeter/internal/hist"
 	"github.com/optimm/Gmeter/internal/pacer"
 	"github.com/optimm/Gmeter/internal/report"
@@ -67,17 +74,25 @@ type Sample struct {
 	Due      time.Duration // when the schedule said to send it: Corrected latency runs from here
 	Sent     time.Duration // when it was handed to the client; later than Due if it had to wait for a worker
 	Finished time.Duration // when its response was read, or it failed
-	Status   int           // the HTTP status, or 0 if it got none
+	Status   int           // the HTTP status, or 0 if it got none (or the call was gRPC)
+	Code     string        // the gRPC status code name, such as "OK" or "NOT_FOUND", for a gRPC call that was answered
 	Failure  string        // the kind of failure, such as "timeout" or "connection_refused"; empty if it got an answer
 }
 
 // Config says what to send and how fast. Everything but URL and the load has a
 // default.
 type Config struct {
-	URL    string      // http://host:port or https://..., with an optional path prefix
-	Method string      // default GET
-	Header http.Header // sent with every request
-	Body   []byte      // sent with every request
+	// URL is http://host:port or https://..., with an optional path prefix. With
+	// GRPC set it is the server's host:port instead.
+	URL    string
+	Method string      // default GET; not for gRPC
+	Header http.Header // sent with every request; not for gRPC, which has GRPC.Metadata
+	Body   []byte      // sent with every request; not for gRPC, which has GRPC.Data
+
+	// GRPC, if set, makes every request a call of one unary gRPC method instead
+	// of an HTTP request. Method, Header, Body, Requests and HTTP2 are then
+	// refused, since a call would ignore them.
+	GRPC *GRPC
 
 	// The load is either Rate for Duration, or Stages, not both.
 	Rate     float64       // requests per second
@@ -91,15 +106,15 @@ type Config struct {
 	Seed    uint64
 
 	// Requests, if set, is what to send instead of one request with Method, Header
-	// and Body: the i-th request sent is Requests[i mod len(Requests)].
+	// and Body: the i-th request sent is Requests[i mod len(Requests)]. Not for gRPC.
 	Requests []Request
 
-	Workers int           // most requests in flight, which is also the most connections; default 50
-	Timeout time.Duration // per request; default 10s
+	Workers int           // most requests in flight, which is also the most HTTP connections; default 50
+	Timeout time.Duration // per request, and for a gRPC run also how long connecting and reading the schema may take; default 10s
 
-	// TLS is the client configuration for https: the roots to trust, a client
-	// certificate for mutual TLS, or InsecureSkipVerify. Nil verifies against the
-	// system's roots.
+	// TLS is the client configuration for https, or for gRPC unless it is
+	// plaintext: the roots to trust, a client certificate for mutual TLS, or
+	// InsecureSkipVerify. Nil verifies against the system's roots.
 	TLS *tls.Config
 
 	// HTTP2 sends over HTTP/2 only, negotiated for https and h2c for http. A server
@@ -118,6 +133,36 @@ type Config struct {
 	OnRequest func(Sample)
 }
 
+// GRPC says which unary gRPC method to call, for a [Config] that load-tests gRPC.
+// Streaming methods cannot be load-tested.
+type GRPC struct {
+	// Method is what to call, as "package.Service/Method". Required.
+	Method string
+
+	// Data is the request as JSON in the protobuf mapping; empty is the empty
+	// message. A field the method's request does not have is an error, not
+	// silently sent as empty.
+	Data []byte
+
+	// Protoset is a serialized FileDescriptorSet with the method's service and
+	// everything it imports (protoc --descriptor_set_out=FILE --include_imports).
+	// Nil asks the server for its schema by server reflection.
+	Protoset []byte
+
+	// Plaintext speaks HTTP/2 without TLS, for a server that does not use TLS.
+	// Otherwise Config.TLS applies, or the system's roots if that is nil.
+	Plaintext bool
+
+	// Conns is how many connections to spread the calls over; zero is 1. gRPC
+	// sends all the calls of a connection over it at once, so one connection can be
+	// a bottleneck of its own. It cannot be more than Config.Workers.
+	Conns int
+
+	// Metadata is sent with every call: the gRPC counterpart of headers. Names
+	// starting with "grpc-" are reserved for gRPC itself.
+	Metadata map[string][]string
+}
+
 const (
 	defaultWorkers = 50
 	defaultTimeout = 10 * time.Second
@@ -125,8 +170,43 @@ const (
 )
 
 // runnerConfig converts c, applying the defaults. withLoad says whether a load is
-// required: a capacity search chooses its own.
-func (c Config) runnerConfig(withLoad bool) (runner.Config, error) {
+// required: a capacity search chooses its own. For gRPC it connects, and the
+// returned function closes the connections; call it when the run is over.
+func (c Config) runnerConfig(ctx context.Context, withLoad bool) (runner.Config, func(), error) {
+	rc, err := c.baseConfig(withLoad)
+	if err != nil {
+		return runner.Config{}, nil, err
+	}
+	if c.GRPC == nil {
+		return rc, func() {}, nil
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, rc.Timeout)
+	defer cancel()
+	caller, err := grpcload.Dial(dialCtx, c.GRPC.options(c.URL, c.TLS))
+	if err != nil {
+		msg := strings.TrimPrefix(err.Error(), "grpc: ")
+		switch {
+		case strings.Contains(msg, "certificate"):
+			msg += " (trust its certificate authority in Config.TLS, or skip verification with InsecureSkipVerify)"
+		case strings.Contains(msg, "TLS handshake"):
+			msg += " (if the server does not use TLS, set GRPC.Plaintext)"
+		}
+		return runner.Config{}, nil, errors.New("gmeter: " + msg)
+	}
+	rc.Call = caller.Call
+	return rc, func() { caller.Close() }, nil
+}
+
+func (g *GRPC) options(addr string, cfg *tls.Config) grpcload.Options {
+	md := metadata.MD{}
+	for name, values := range g.Metadata {
+		md.Append(strings.ToLower(name), values...)
+	}
+	return grpcload.Options{Addr: addr, Method: g.Method, Data: g.Data, Protoset: g.Protoset, Plaintext: g.Plaintext, TLS: cfg, Conns: g.Conns, Metadata: md}
+}
+
+// baseConfig validates c and converts it, without connecting.
+func (c Config) baseConfig(withLoad bool) (runner.Config, error) {
 	switch {
 	case c.URL == "":
 		return runner.Config{}, errors.New("gmeter: Config.URL is required")
@@ -136,6 +216,9 @@ func (c Config) runnerConfig(withLoad bool) (runner.Config, error) {
 		return runner.Config{}, fmt.Errorf("gmeter: set Rate and Duration, or Stages, to say what load to send (got Rate %v, Duration %v)", c.Rate, c.Duration)
 	case !withLoad && (c.Rate != 0 || c.Duration != 0 || c.Stages != nil):
 		return runner.Config{}, errors.New("gmeter: a capacity search chooses its own rates: leave Rate, Duration and Stages empty")
+	}
+	if err := c.checkGRPC(); err != nil {
+		return runner.Config{}, err
 	}
 	rc := runner.Config{
 		URL:         c.URL,
@@ -152,6 +235,9 @@ func (c Config) runnerConfig(withLoad bool) (runner.Config, error) {
 		HTTP2:       c.HTTP2,
 		Phases:      true,
 		SampleEvery: time.Second,
+	}
+	if c.GRPC != nil {
+		rc.TLS, rc.Phases = nil, false // the connections are made by the caller, and a call has no phases
 	}
 	switch {
 	case c.Spin == 0:
@@ -170,10 +256,44 @@ func (c Config) runnerConfig(withLoad bool) (runner.Config, error) {
 	}
 	if c.OnRequest != nil {
 		rc.Sink = func(s runner.Sample) {
-			c.OnRequest(Sample{Seq: s.Seq, Label: s.Label, Due: s.Due, Sent: s.Sent, Finished: s.Finished, Status: s.Status, Failure: s.Failure})
+			c.OnRequest(Sample{Seq: s.Seq, Label: s.Label, Due: s.Due, Sent: s.Sent, Finished: s.Finished, Status: s.Status, Code: s.Code, Failure: s.Failure})
 		}
 	}
 	return rc, nil
+}
+
+// checkGRPC refuses what a gRPC call would ignore.
+func (c Config) checkGRPC() error {
+	if c.GRPC == nil {
+		return nil
+	}
+	for _, set := range []struct {
+		name string
+		is   bool
+	}{
+		{"Method", c.Method != ""}, {"Header", c.Header != nil}, {"Body", c.Body != nil}, {"Requests", c.Requests != nil}, {"HTTP2", c.HTTP2},
+	} {
+		if set.is {
+			return fmt.Errorf("gmeter: %s describes an HTTP request, and a GRPC call sends none", set.name)
+		}
+	}
+	workers := cmpOr(c.Workers, defaultWorkers)
+	switch {
+	case c.GRPC.Method == "":
+		return errors.New("gmeter: GRPC.Method is required: the method to call, as package.Service/Method")
+	case strings.Contains(c.URL, "://"):
+		return fmt.Errorf("gmeter: with GRPC the URL is the server as host:port, not a URL, got %q", c.URL)
+	case c.GRPC.Conns < 0:
+		return fmt.Errorf("gmeter: GRPC.Conns must not be negative, got %d", c.GRPC.Conns)
+	case c.GRPC.Conns > workers:
+		return fmt.Errorf("gmeter: GRPC.Conns %d is more than Workers %d: at most %d calls are in flight, so a connection would sit idle", c.GRPC.Conns, workers, workers)
+	}
+	for name := range c.GRPC.Metadata {
+		if strings.HasPrefix(strings.ToLower(name), "grpc-") {
+			return fmt.Errorf("gmeter: GRPC.Metadata %s: names starting with grpc- are reserved for gRPC itself", name)
+		}
+	}
+	return nil
 }
 
 func cmpOr[T comparable](v, fallback T) T {
@@ -190,7 +310,7 @@ func explain(err error) error {
 		return nil
 	}
 	msg := err.Error()
-	for _, prefix := range []string{"runner: ", "find: "} {
+	for _, prefix := range []string{"runner: ", "find: ", "grpc: "} {
 		if rest, ok := strings.CutPrefix(msg, prefix); ok {
 			return errors.New("gmeter: " + rest)
 		}
@@ -202,10 +322,11 @@ func explain(err error) error {
 // cancelled the run stops early and the result covers what ran, with a nil error.
 // An error means the Config could not run at all.
 func Run(ctx context.Context, cfg Config) (*Result, error) {
-	rc, err := cfg.runnerConfig(true)
+	rc, closeCalls, err := cfg.runnerConfig(ctx, true)
 	if err != nil {
 		return nil, err
 	}
+	defer closeCalls()
 	res, err := runner.Run(ctx, rc)
 	if err != nil {
 		return nil, explain(err)
@@ -238,7 +359,17 @@ func (r *Result) Dropped() uint64 { return r.raw.Dropped }
 // Elapsed is how long the run took, to the last request's end.
 func (r *Result) Elapsed() time.Duration { return r.raw.Elapsed }
 
-// Statuses counts the HTTP responses by status code.
+// Codes counts the answers to a gRPC run by the name of their status code, such as
+// "OK" or "NOT_FOUND". It is empty for an HTTP run.
+func (r *Result) Codes() map[string]uint64 {
+	out := make(map[string]uint64, len(r.raw.Codes))
+	for k, v := range r.raw.Codes {
+		out[k] = v
+	}
+	return out
+}
+
+// Statuses counts the HTTP responses by status code. It is empty for a gRPC run.
 func (r *Result) Statuses() map[int]uint64 {
 	out := make(map[int]uint64, len(r.raw.Statuses))
 	for k, v := range r.raw.Statuses {
@@ -264,10 +395,13 @@ func (r *Result) Responses() uint64 {
 	for _, c := range r.raw.Statuses {
 		n += c
 	}
+	for _, c := range r.raw.Codes {
+		n += c
+	}
 	return n
 }
 
-// OK is how many responses had a status from 200 to 399.
+// OK is how many responses had a status from 200 to 399, or for gRPC the code OK.
 func (r *Result) OK() uint64 {
 	var n uint64
 	for code, c := range r.raw.Statuses {
@@ -275,10 +409,11 @@ func (r *Result) OK() uint64 {
 			n += c
 		}
 	}
-	return n
+	return n + r.raw.Codes["OK"]
 }
 
-// BadStatus is how many responses had a status outside 200 to 399.
+// BadStatus is how many responses had a status outside 200 to 399, or for gRPC a
+// code other than OK.
 func (r *Result) BadStatus() uint64 { return r.Responses() - r.OK() }
 
 // Failed is how many requests got no response at all.

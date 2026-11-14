@@ -244,11 +244,13 @@ func TestASecondRequestOnTheSameConnectionHasNoConnectionPhases(t *testing.T) {
 	first, _ := timedGet(t, client, srv.URL)
 	second, _ := timedGet(t, client, srv.URL)
 
-	if first.connect == 0 {
-		t.Errorf("the first request opened a connection but connect = 0")
+	// whether a phase ran, not how long it took: a clock that advances in steps
+	// (Windows) reads a loopback dial as zero
+	if first.ran&ranConnect == 0 {
+		t.Errorf("the first request opened a connection but has no connect phase")
 	}
-	if second.dns != 0 || second.connect != 0 || second.tls != 0 {
-		t.Errorf("second request dns/connect/tls = %v/%v/%v, want 0: the connection was reused", second.dns, second.connect, second.tls)
+	if second.ran != 0 || second.dns != 0 || second.connect != 0 || second.tls != 0 {
+		t.Errorf("second request dns/connect/tls = %v/%v/%v, want none: the connection was reused", second.dns, second.connect, second.tls)
 	}
 }
 
@@ -261,11 +263,11 @@ func TestTLSIsTimedOnlyForHTTPS(t *testing.T) {
 	https, _ := timedGet(t, secure.Client(), secure.URL)
 	http1, _ := timedGet(t, &http.Client{Transport: &http.Transport{}}, plain.URL)
 
-	if https.tls <= 0 || https.connect <= 0 {
-		t.Errorf("https: tls/connect = %v/%v, want both measured", https.tls, https.connect)
+	if https.ran&ranTLS == 0 || https.ran&ranConnect == 0 {
+		t.Errorf("https: tls/connect = %v/%v, want both to have run", https.tls, https.connect)
 	}
-	if http1.tls != 0 {
-		t.Errorf("plain http: tls = %v, want 0", http1.tls)
+	if http1.ran&ranTLS != 0 || http1.tls != 0 {
+		t.Errorf("plain http: tls = %v, want no tls phase", http1.tls)
 	}
 }
 
@@ -277,10 +279,10 @@ func TestDNSIsTimedForAHostNameButNotForAnAddress(t *testing.T) {
 	byName, _ := timedGet(t, &http.Client{Transport: &http.Transport{}}, "http://localhost:"+port)
 	byAddress, _ := timedGet(t, &http.Client{Transport: &http.Transport{}}, srv.URL)
 
-	if byName.dns <= 0 {
-		t.Errorf("a host name: dns = %v, want it measured", byName.dns)
+	if byName.ran&ranDNS == 0 {
+		t.Errorf("a host name: dns = %v, want a dns phase", byName.dns)
 	}
-	if byAddress.dns != 0 {
+	if byAddress.ran&ranDNS != 0 || byAddress.dns != 0 {
 		t.Errorf("an IP address: dns = %v, want 0, there is nothing to look up", byAddress.dns)
 	}
 }

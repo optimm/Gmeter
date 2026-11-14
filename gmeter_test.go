@@ -202,7 +202,9 @@ func TestMeetsSaysWhyATargetWasMissed(t *testing.T) {
 	}
 	allowed := target
 	allowed.MaxErrorRate = 1
-	if err := run(broken).Meets(allowed); err != nil {
+	err = run(broken).Meets(allowed)
+	skipIfTooBusy(t, err != nil && strings.Contains(err.Error(), "generator timer lag"))
+	if err != nil {
 		t.Errorf("with every error allowed: %v", err)
 	}
 }

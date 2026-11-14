@@ -1280,3 +1280,8 @@ the live windows pinpoint when a stall happened.
 - [x] **v3d**: client certificates for mutual TLS (`-cert`, `-key`)
 - [x] **v3e**: every request saved as CSV (`-results`) and drawn as one HTML page (`gmeter plot`)
 - [x] **v3f**: a Go package: `gmeter.Run`, `Result.Meets` for a latency target, and `FindCapacity`
+- [x] **v3g**: the Go package calls unary gRPC too (`Config.GRPC`, `Result.Codes`)
+
+## License
+
+MIT. See [LICENSE](LICENSE).

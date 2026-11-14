@@ -59,3 +59,23 @@ func ExampleFindCapacity() {
 	}
 	fmt.Printf("holds at least %.0f requests per second: %v\n", got.MaxRPS, got.LowerBound)
 }
+
+// Load-test a unary gRPC method: give the server's host:port as the URL, and
+// the method to call. The answers are counted by status code. It has no Output,
+// so it is compiled but not run: there is no orders server here.
+func ExampleGRPC() {
+	res, err := gmeter.Run(context.Background(), gmeter.Config{
+		URL:  "orders:9090",
+		Rate: 1000, Duration: 30 * time.Second,
+		GRPC: &gmeter.GRPC{
+			Method:    "shop.Orders/Get",
+			Data:      []byte(`{"id":"42"}`),
+			Plaintext: true, // the server does not use TLS
+		},
+	})
+	if err != nil {
+		fmt.Println(err) // the Config could not run, or the server could not be reached
+		return
+	}
+	fmt.Println(res.Codes(), res.Meets(gmeter.SLO{Quantile: 0.99, Latency: 50 * time.Millisecond}))
+}

@@ -361,7 +361,7 @@ footer { padding: 72px 0 40px; font-size: 14px; color: var(--ink-2); display: fl
         <div class="chart-foot">
           <p id="chart-caption">A server that answers instantly, except for a one-second freeze two seconds in, tested at
             200 requests a second for 5 seconds. Each dot is a request, placed at the time it was sent or due, and as
-            high as its latency. The p90s are from the real run in the README; the dots are thinned to 30 a second so
+            high as its latency. The p90s are from the real run in the docs; the dots are thinned to 30 a second so
             you can see them.</p>
           <button class="again" type="button" id="replay">Play again</button>
         </div>
@@ -424,9 +424,9 @@ latency, service (from when the request was actually sent)
 timeline (1s windows)
   p99  ▁▁<span class="r">█</span>▁▁   worst 992.0ms in the window ending at 3.0s
   rps  ▆▄█▆   lowest 114 in the window ending at 2.0s</pre>
-          <p class="more"><a href="https://github.com/optimm/Gmeter#what-it-looks-like">Reading the report</a>,
-            <a href="https://github.com/optimm/Gmeter#where-the-time-goes">where the time goes</a> and
-            <a href="https://github.com/optimm/Gmeter#load-profiles-steps-and-ramps">load profiles</a> in the README.</p>
+          <p class="more"><a href="https://github.com/optimm/Gmeter/blob/main/docs/reading-the-report.md#what-it-looks-like">Reading the report</a>,
+            <a href="https://github.com/optimm/Gmeter/blob/main/docs/reading-the-report.md#where-the-time-goes">where the time goes</a> and
+            <a href="https://github.com/optimm/Gmeter/blob/main/docs/running.md#load-profiles-steps-and-ramps">load profiles</a> in the docs.</p>
         </div>
 
         <div class="panel" role="tabpanel" id="p-find" aria-labelledby="t-find" tabindex="0" hidden>
@@ -449,7 +449,7 @@ timeline (1s windows)
 
 result  the highest rate meeting p99 ≤ 50ms is about 725 rps
         held in 2 of 2 re-runs at 725 rps</pre>
-          <p class="more"><a href="https://github.com/optimm/Gmeter#finding-the-highest-rate-that-meets-a-target-gmeter-find">How the search works and how far to trust it</a></p>
+          <p class="more"><a href="https://github.com/optimm/Gmeter/blob/main/docs/find.md#finding-the-highest-rate-that-meets-a-target-gmeter-find">How the search works and how far to trust it</a></p>
         </div>
 
         <div class="panel" role="tabpanel" id="p-replay" aria-labelledby="t-replay" tabindex="0" hidden>
@@ -465,7 +465,7 @@ endpoints, busiest first (corrected latency)
   GET /users/:id/cart        459       0       0     4.3ms    70.6ms    80.5ms</pre>
           <p>The same 4,000 requests at 400 a second on average gave a p99 of 5.4ms when evenly spaced and 121.1ms at
             their recorded pace, because the bursts queue. An average rate hides that.</p>
-          <p class="more"><a href="https://github.com/optimm/Gmeter#replaying-real-traffic-gmeter-replay">Trace formats, pacing and safety</a></p>
+          <p class="more"><a href="https://github.com/optimm/Gmeter/blob/main/docs/replay.md#replaying-real-traffic-gmeter-replay">Trace formats, pacing and safety</a></p>
         </div>
 
         <div class="panel" role="tabpanel" id="p-diff" aria-labelledby="t-diff" tabindex="0" hidden>
@@ -483,7 +483,7 @@ latency, corrected
 share of B's requests that are slower than A's percentiles
   slower than A's p99 (3.0ms): <span class="r">21.8%</span>   (at most 1.0% if nothing changed)</pre>
           <p>The last line is something two percentiles can't tell you: how many more of your requests got slow.</p>
-          <p class="more"><a href="https://github.com/optimm/Gmeter#comparing-runs">Errors, phases and per-endpoint gates</a></p>
+          <p class="more"><a href="https://github.com/optimm/Gmeter/blob/main/docs/comparing-runs.md#comparing-runs">Errors, phases and per-endpoint gates</a></p>
         </div>
 
         <div class="panel" role="tabpanel" id="p-grpc" aria-labelledby="t-grpc" tabindex="0" hidden>
@@ -500,7 +500,7 @@ generator  timer lag p99 417ns, max 1.3ms   late 1 (0.0%)
 
 latency, corrected (from each request's intended send time)
   p50 5.2ms   p90 5.3ms   p99 5.3ms   p99.9 6.2ms   max 8.3ms</pre>
-          <p class="more"><a href="https://github.com/optimm/Gmeter#grpc-gmeter-grpc">Flags, status codes and what it doesn't do</a></p>
+          <p class="more"><a href="https://github.com/optimm/Gmeter/blob/main/docs/grpc.md#grpc-gmeter-grpc">Flags, status codes and what it doesn't do</a></p>
         </div>
 
         <div class="panel" role="tabpanel" id="p-agents" aria-labelledby="t-agents" tabindex="0" hidden>
@@ -517,7 +517,7 @@ generator                    achieved      corrected p99   late
 one CPU                      33,265 rps    <span class="r">2.00s, 2.02s</span>    100%
 four agents, one CPU each    39,998 rps    579µs, 4.4ms    0.6%, 1.0%
 no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
-          <p class="more"><a href="https://github.com/optimm/Gmeter#several-generators--agents">How the load is shared, and what to know first</a></p>
+          <p class="more"><a href="https://github.com/optimm/Gmeter/blob/main/docs/several-generators.md#several-generators--agents">How the load is shared, and what to know first</a></p>
         </div>
 
         <div class="panel" role="tabpanel" id="p-plot" aria-labelledby="t-plot" tabindex="0" hidden>
@@ -531,7 +531,7 @@ no CPU limit (reference)     39,992 rps    364µs           0.5%</pre>
 gmeter plot: wrote run.html</pre>
           <p>The page shows latency over time by both clocks, the load over time, the latency distribution, and what
             answered and what failed. A file of millions of rows takes bounded memory.</p>
-          <p class="more"><a href="https://github.com/optimm/Gmeter#every-request-and-a-chart-gmeter-plot">The columns and the flags</a></p>
+          <p class="more"><a href="https://github.com/optimm/Gmeter/blob/main/docs/running.md#every-request-and-a-chart-gmeter-plot">The columns and the flags</a></p>
         </div>
 
         <div class="panel" role="tabpanel" id="p-go" aria-labelledby="t-go" tabindex="0" hidden>
@@ -545,7 +545,7 @@ res, err := gmeter.Run(ctx, gmeter.Config{URL: srv.URL, Rate: 500, Duration: 10 
 err = res.Meets(gmeter.SLO{Quantile: 0.99, Latency: 80 * time.Millisecond, MaxErrorRate: 0.001})
 
 <span class="r">target missed: errors 0.4% over the 0.1% budget; p99 is 212ms, over the 80ms target</span></pre>
-          <p class="more"><a href="https://github.com/optimm/Gmeter#using-it-from-go">The config, the result and what the package leaves out</a></p>
+          <p class="more"><a href="https://github.com/optimm/Gmeter/blob/main/docs/go-package.md#using-it-from-go">The config, the result and what the package leaves out</a></p>
         </div>
 
         <div class="panel" role="tabpanel" id="p-mcp" aria-labelledby="t-mcp" tabindex="0" hidden>
@@ -564,7 +564,7 @@ Met p99=200ms: corrected p99 7.0ms over 100 requests.
 
 load_test   url=http://93.184.216.34/  rate=10  duration=1s
 <span class="r">93.184.216.34 is not allowed: an agent may only target loopback unless the server was started with -allow 93.184.216.34</span></pre>
-          <p class="more"><a href="https://github.com/optimm/Gmeter#using-it-from-an-ai-agent-gmeter-mcp">The tools, the limits and the config for your client</a></p>
+          <p class="more"><a href="https://github.com/optimm/Gmeter/blob/main/docs/mcp.md#using-it-from-an-ai-agent-gmeter-mcp">The tools, the limits and the config for your client</a></p>
         </div>
       </div>
     </section>
@@ -656,7 +656,7 @@ load_test   url=http://93.184.216.34/  rate=10  duration=1s
 <span class="p">$ gmeter -rate 500 -duration 30s http://localhost:8080/health</span>
 <span class="p">$ gmeter -stages '30s@200,30s@400,30s@800' -arrivals poisson http://localhost:8080/</span>
 <span class="p">$ gmeter find -slo p99=50ms http://localhost:8080/health</span></pre>
-          <p>Every flag and every caveat is in the <a href="https://github.com/optimm/Gmeter#readme">README</a>, with
+          <p>Every flag and every caveat is in the <a href="https://github.com/optimm/Gmeter#documentation">docs</a>, with
             real output from real runs.</p>
         </div>
       </div>

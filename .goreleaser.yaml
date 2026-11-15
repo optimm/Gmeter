@@ -28,6 +28,8 @@ archives:
     files:
       - README.md
       - LICENSE
+      - src: docs/*.md
+        dst: docs
 
 # The image holds the linux binary and nothing else (see Dockerfile), so GoReleaser
 # builds it from the binaries above instead of compiling again.

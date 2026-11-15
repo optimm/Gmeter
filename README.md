@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/gmeter-banner.jpg" alt="Gmeter: a gopher in a chef's hat at a load-testing console, sending a stream of requests to a rack of servers. HTTP load testing in Go." width="100%">
+</p>
+
 # Gmeter
 
 An agent-friendly, open-loop load tester for HTTP and gRPC, in Go, that reports **honest latency** and tells you

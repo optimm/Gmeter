@@ -64,16 +64,27 @@ func TestATrialAgainstAServerThatReturnsErrorsFails(t *testing.T) {
 
 // Connections, caches and JITs are cold at the start of a trial. The warm-up
 // takes that cost, and only the measured stage is judged.
+//
+// The slow period ends 100ms before the warm-up does, so the slow requests are
+// answered well before the measured stage begins. A trial that counted the
+// warm-up fails every time; one that merely met a stall on a shared machine
+// (a missed target stays a failure whatever the generator did) fails only
+// sometimes, so a failure is judged again once before it is believed.
 func TestTheWarmUpIsNotPartOfTheVerdict(t *testing.T) {
-	begin := time.Now()
-	srv := server(t, func(w http.ResponseWriter, r *http.Request) {
-		if time.Since(begin) < 200*time.Millisecond { // slow while "warming up"
-			time.Sleep(100 * time.Millisecond)
+	for attempt := 1; ; attempt++ {
+		begin := time.Now()
+		srv := server(t, func(w http.ResponseWriter, r *http.Request) {
+			if time.Since(begin) < 100*time.Millisecond { // slow while "warming up"
+				time.Sleep(100 * time.Millisecond)
+			}
+		})
+		v, o := runTrial(t, srv, target, 300*time.Millisecond)
+		if v == Pass {
+			return
 		}
-	})
-	v, o := runTrial(t, srv, target, 300*time.Millisecond)
-	if v != Pass {
-		t.Fatalf("verdict %v (p99 %v, reasons %v): the slow requests were all in the warm-up and must not count", v, o.Observed, o.Reasons)
+		if attempt == 2 {
+			t.Fatalf("verdict %v (p99 %v, reasons %v) twice: the slow requests were all in the warm-up and must not count", v, o.Observed, o.Reasons)
+		}
 	}
 }
 

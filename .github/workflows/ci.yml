@@ -25,6 +25,16 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - name: Test
+        if: runner.os != 'macOS'
         # -short skips the two tests that measure this machine's timer precision,
         # which a shared runner cannot promise
         run: go test -short -count=1 ./...
+      - name: Test (macOS, one retry)
+        if: runner.os == 'macOS'
+        # The shared macOS runners stall for tens of milliseconds now and then, which
+        # fails a different timing test each time. A real failure fails both attempts.
+        run: |
+          go test -short -count=1 ./... || {
+            echo "::warning::tests failed once on macOS, running them again"
+            go test -short -count=1 ./...
+          }

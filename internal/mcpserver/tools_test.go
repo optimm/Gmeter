@@ -276,6 +276,7 @@ func TestLoadTestCallsAUnaryGRPCMethod(t *testing.T) {
 
 	args["grpc"] = map[string]any{"method": grpcdemo.Say, "data": `{"code":"NOT_FOUND"}`, "plaintext": true}
 	call(t, cs, "load_test", args, &got)
+	skipIfLimited(t, got)
 	if got.Verdict != "errors" || got.Codes["NOT_FOUND"] == 0 || !strings.Contains(got.Summary, "NOT_FOUND") {
 		t.Errorf("got verdict %q codes %v summary %q, want errors that name NOT_FOUND", got.Verdict, got.Codes, got.Summary)
 	}

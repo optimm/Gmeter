@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/optimm/Gmeter/internal/report"
 )
 
 func okServer(t *testing.T) *httptest.Server {
@@ -214,6 +216,27 @@ func saveRun(t *testing.T, url string) string {
 		t.Fatalf("run against %s exited %d: %s", url, code, stderr)
 	}
 	return path
+}
+
+// skipIfTimersLate skips the test when the generator's timers ran late in the
+// run saved at path: a comparison of two p99s then says nothing about the servers.
+func skipIfTimersLate(t *testing.T, path string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Generator struct {
+			TimerLagP99Ms float64 `json:"timer_lag_p99_ms"`
+		} `json:"generator"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if lag := time.Duration(got.Generator.TimerLagP99Ms * float64(time.Millisecond)); lag > report.TimerLagWarn {
+		t.Skipf("this machine's timers ran late (p99 %v), so the two p99s cannot be compared", lag)
+	}
 }
 
 func savedSpin(t *testing.T, args ...string) float64 {

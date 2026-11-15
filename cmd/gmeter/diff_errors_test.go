@@ -29,6 +29,8 @@ func failingServer(t *testing.T) *httptest.Server {
 func TestDiffErrorThresholdCatchesAServerThatBeganFailingFast(t *testing.T) {
 	working := saveRun(t, slowServer(t, 30*time.Millisecond).URL)
 	broken := saveRun(t, failingServer(t).URL)
+	skipIfTimersLate(t, working)
+	skipIfTimersLate(t, broken)
 
 	code, stdout, _ := exec(t, "diff", "-threshold", "20", working, broken)
 	if code != 0 || !strings.Contains(stdout, "ok: corrected p99") {

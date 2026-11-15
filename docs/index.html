@@ -163,6 +163,13 @@ h1, h2, h3 { text-wrap: balance; }
   font-weight: 700; font-variation-settings: "wdth" 96; margin: 0 0 16px;
 }
 .hero-row { display: flex; flex-direction: column; gap: 24px; }
+.hero-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 420px); gap: 24px 32px; align-items: center; }
+.hero-top h1 { font-size: clamp(2.2rem, 4.6vw, 3.7rem); max-width: 11em; }
+.hero-art { display: block; width: 100%; height: auto; justify-self: end; }
+@media (max-width: 860px) {
+  .hero-top { grid-template-columns: minmax(0, 1fr); }
+  .hero-art { max-width: 300px; justify-self: center; }
+}
 .lede { font-size: clamp(1.08rem, 1.5vw, 1.22rem); line-height: 1.5; max-width: 44em; color: var(--ink-2); margin: 0; }
 .lede strong { font-weight: 500; color: var(--ink); }
 .install { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; }
@@ -314,6 +321,8 @@ footer { padding: 72px 0 40px; font-size: 14px; color: var(--ink-2); display: fl
 
   <main>
     <section class="hero on-panel" aria-labelledby="title">
+      <div class="hero-top">
+      <div class="hero-copy">
       <h1 id="title">An agent-friendly load tester for HTTP and gRPC</h1>
       <div class="hero-row">
         <p class="lede">Gmeter sends requests on a fixed schedule and times each one from the moment it was due, so a
@@ -323,6 +332,9 @@ footer { padding: 72px 0 40px; font-size: 14px; color: var(--ink-2); display: fl
           <div class="cmd"><code id="install-cmd">brew install optimm/tap/gmeter</code><button class="copy" type="button" data-copy="install-cmd">Copy</button></div>
           <span class="note">Or with Go 1.26 or newer: <code>go install github.com/optimm/Gmeter/cmd/gmeter@latest</code>. Windows zips and a Docker image (<code>ghcr.io/optimm/gmeter</code>) are on the <a href="https://github.com/optimm/Gmeter/releases">releases page</a>.</span>
         </div>
+      </div>
+      </div>
+      <img class="hero-art" src="assets/gmeter-gopher.webp" width="960" height="720" alt="The Gmeter gopher in a chef's hat at a control desk with a speed dial and a pulse screen, firing a stream of letters at a server.">
       </div>
 
       <div class="demo">

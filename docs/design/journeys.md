@@ -1,6 +1,10 @@
 # Stateful journeys: design proposal
 
-Back to the [README](../../README.md). This is a design document only. Nothing here is implemented yet.
+Back to the [README](../../README.md). The design is implemented; see
+[docs/journeys.md](../journeys.md) for the user-facing version.
+
+Known simplifications in the implementation: no `gmeter journey` `-agents`
+support yet — journeys run on one machine.
 
 ## The question
 

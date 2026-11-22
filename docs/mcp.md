@@ -33,7 +33,7 @@ container "loopback" is the container, not your machine, so to reach a service o
 
 | Tool | What it does |
 |---|---|
-| `load_test` | Sends a constant or shaped load (`rate` and `duration`, or `stages`) at an HTTP URL or a gRPC method (unary or streaming), and reports the result. |
+| `load_test` | Sends a constant or shaped load (`rate` and `duration`, or `stages`) at an HTTP URL or a gRPC method (unary or streaming), or a [journey](journeys.md) scenario (`journey: {file: "name.yaml", rate: 5, duration: "10s"}`), and reports the result. |
 | `find_capacity` | Finds the highest rate that meets a target such as `p99=50ms`, like `gmeter find`. |
 | `check_slo` | Runs a load and answers yes or no against a target, with the reasons it was missed. |
 | `compare_runs` | Compares two runs made in the session, by `run_id`, and flags a p99 regression. |
@@ -65,6 +65,11 @@ An agent that can send load is not the owner of what it sends it to, so the serv
   (default 100) bounds `send_messages` and `recv_messages` **each**: a gRPC stream is one scheduled request but can
   carry many messages, so the message cap is separate from the rate cap. A call with 100 messages at 10 streams/s
   sends 1000 messages/s on the wire even though the rate cap says 10/s.
+- **Journeys.** A journey's effective request rate is the session rate times the scenario's steps and must fit
+  `-max-rate`; POST/PUT/PATCH/DELETE steps are refused unless the operator enabled `Policy.AllowWriteScenarios`;
+  the scenario file is capped at 1MB and 100 steps, its feeds at 10,000 rows and 100 columns, a rendered
+  path/header/body at 64KB, and an extracted value at 4KB. A stalled session cannot hold a worker forever: the
+  per-request timeout applies to every step. Extracted values never appear in tool output or stored reports.
 - **Refusals say how to change them.** A refused call names the flag, and the server's instructions tell the agent to
   ask you instead of working around it.
 
@@ -72,6 +77,9 @@ An agent that can send load is not the owner of what it sends it to, so the serv
 claude mcp add gmeter -- gmeter mcp -allow staging.example.com -max-rate 500 \
   -max-timeout 30s -max-stream-messages 20
 ```
+
+For journeys, add `-scenario-dir DIR` (a directory of named scenario files,
+see [journeys](journeys.md)); `load_test` then accepts the `journey` input.
 
 The policy in force is printed to stderr when the server starts. Stdout carries only the protocol.
 

@@ -391,13 +391,14 @@ footer { padding: 72px 0 40px; font-size: 14px; color: var(--ink-2); display: fl
     </section>
 
     <section class="section" id="commands" aria-labelledby="commands-title">
-      <h2 id="commands-title">Ten ways in, one honest clock</h2>
+      <h2 id="commands-title">Eleven ways in, one honest clock</h2>
       <div class="commands">
         <div class="tabs" role="tablist" aria-label="Gmeter commands">
           <button class="tab" role="tab" id="t-run" aria-controls="p-run" aria-selected="true"><code>gmeter</code><small>Run at a rate or a profile</small></button>
           <button class="tab" role="tab" id="t-find" aria-controls="p-find" aria-selected="false" tabindex="-1"><code>gmeter find</code><small>Find the rate that meets an SLO</small></button>
           <button class="tab" role="tab" id="t-replay" aria-controls="p-replay" aria-selected="false" tabindex="-1"><code>gmeter replay</code><small>Send real traffic at its real pace</small></button>
           <button class="tab" role="tab" id="t-diff" aria-controls="p-diff" aria-selected="false" tabindex="-1"><code>gmeter diff</code><small>Compare two runs, gate a build</small></button>
+          <button class="tab" role="tab" id="t-journey" aria-controls="p-journey" aria-selected="false" tabindex="-1"><code>gmeter journey</code><small>Run a stateful session of steps</small></button>
           <button class="tab" role="tab" id="t-ci" aria-controls="p-ci" aria-selected="false" tabindex="-1"><code>uses: optimm/Gmeter@…</code><small>Gate a GitHub build</small></button>
           <button class="tab" role="tab" id="t-grpc" aria-controls="p-grpc" aria-selected="false" tabindex="-1"><code>gmeter grpc</code><small>Load-test a gRPC method</small></button>
           <button class="tab" role="tab" id="t-agents" aria-controls="p-agents" aria-selected="false" tabindex="-1"><code>-agents</code><small>Spread one test over machines</small></button>
@@ -488,6 +489,23 @@ share of B's requests that are slower than A's percentiles
   slower than A's p99 (3.0ms): <span class="r">21.8%</span>   (at most 1.0% if nothing changed)</pre>
           <p>The last line is something two percentiles can't tell you: how many more of your requests got slow.</p>
           <p class="more"><a href="https://github.com/optimm/Gmeter/blob/main/docs/comparing-runs.md#comparing-runs">Errors, phases and per-endpoint gates</a></p>
+        </div>
+
+        <div class="panel" role="tabpanel" id="p-journey" aria-labelledby="t-journey" tabindex="0" hidden>
+          <h3>One session of steps, open-loop</h3>
+          <p>A journey starts one session per scheduled time; the steps run in order, each still due at its own
+            time. The report's rows are the journey's steps, the rate is sessions/s, and each step is checked and
+            can feed a value into the next. Scenario YAML: feeds from CSV, checks on status/headers/body/JSON,
+            extraction, templating — see <a href="https://github.com/optimm/Gmeter/blob/main/docs/journeys.md">docs/journeys.md</a>.</p>
+<pre class="term"><span class="p">$ gmeter journey -scenario checkout.yaml -rate 20 -duration 5m http://staging.example.com/</span>
+sessions   342 scheduled   684 ok   0 bad status   0 failed   0 dropped
+journey   342 started, 338 completed, 4 aborted, mean session duration 412.7ms
+
+steps, busiest first (corrected latency; svc p99 is service latency, from when each request was actually sent)
+  step                   scheduled     bad  failed       p50       p99       max
+  sign-in                     342       0       0     2.1ms     3.4ms     4.1ms
+  create-cart                 338       0       0     8.7ms    11.9ms    15.2ms</pre>
+          <p class="more"><a href="https://github.com/optimm/Gmeter/blob/main/docs/journeys.md#journeys-stateful-sessions-of-steps">The scenario format, anchoring and reporting</a></p>
         </div>
 
         <div class="panel" role="tabpanel" id="p-ci" aria-labelledby="t-ci" tabindex="0" hidden>

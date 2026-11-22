@@ -112,3 +112,10 @@ interrupted), `2` bad usage.
 
 `-workers`, `-timeout`, `-method`, `-H`, `-body`, `-spin`, `-arrivals` (default `poisson` here), `-seed`, `-json`,
 `-quiet`, `-phases`, `-insecure`, `-cacert`, `-cert` and `-key` work as for a plain run. Each trial uses the seed plus its number, so a printed seed reproduces the search.
+
+### Journeys
+
+With `-scenario FILE`, the search runs a [journey](journeys.md) instead: `-slo` then searches over **session
+rate** — the trials and the report all say `sessions/s`. Each trial runs warm-up and measured session-rate
+stages with `-trial`/`-warmup` as usual. The error rate includes check, extraction and incomplete-journey
+failures; a trial with too few completed sessions to judge is a failure, not a pass.

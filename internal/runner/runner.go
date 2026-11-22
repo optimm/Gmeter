@@ -249,6 +249,7 @@ type Window struct {
 // Result is the outcome of a run.
 type Result struct {
 	Elapsed   time.Duration  // wall time until the last request finished
+	Workers   int            // workers that ran the load (the sum on a merge)
 	Scheduled uint64         // requests dispatched to workers
 	Dropped   uint64         // owed by the schedule but never dispatched (cancel / hung server)
 	Statuses  map[int]uint64 // HTTP status code -> count
@@ -326,10 +327,65 @@ func (f Failure) Unwrap() error { return f.Err }
 // scheduler blocked, and the requests behind it milliseconds or more late.
 const lateTolerance = time.Millisecond
 
+const (
+	// TimerLagWarn is the timer-lag p99 above which the generator is being
+	// starved: an idle machine's timers wake within microseconds.
+	TimerLagWarn = 5 * time.Millisecond
+	// LateWarnFraction is the share of requests dispatched over a millisecond
+	// late at which their effect on latency is worth a warning.
+	LateWarnFraction = 0.05
+	// QueueWorkersFactor is how many times a fully busy worker pool's service
+	// time a queue may be before the scheduler itself is the bottleneck. With
+	// W workers, requests can only queue behind about W other requests that
+	// each took the mean service time; much more than that is time the
+	// scheduler lost, not time the workers spent answering. The factor leaves
+	// room for skew and for the 1ms late tolerance.
+	QueueWorkersFactor = 4
+)
+
 // reachedLate reports whether the scheduler, finding a request at now that was
 // due at due, was behind schedule by enough to count it as late.
 func reachedLate(now, due time.Time) bool {
 	return now.Sub(due) > lateTolerance
+}
+
+// GeneratorHealth is the part of a run that says whether the generator, rather
+// than the server, set the numbers. CorrectedMean minus ServiceMean is the mean
+// time requests waited inside Gmeter, from due time to being sent.
+type GeneratorHealth struct {
+	Late, Scheduled uint64
+	TimerLagP99     time.Duration
+	CorrectedMean   time.Duration
+	ServiceMean     time.Duration
+	Workers         int
+}
+
+// Limited says whether the generator could not keep time and why. Timer lag is
+// one signal, but it is only recorded for waits the scheduler actually slept
+// through: once it falls behind it stops sleeping and the figure reads near
+// zero. Late dispatches catch that case. They also happen when a slow server
+// ties up every worker, so a high late share alone is not enough: the mean
+// queue must also be much longer than a full worker pool's service time can
+// explain. An unknown worker count (zero) makes only the timer-lag test
+// available.
+func (h GeneratorHealth) Limited() (bool, string) {
+	switch {
+	case h.TimerLagP99 > TimerLagWarn:
+		return true, fmt.Sprintf("generator timer lag p99 is %v, so its timers were starved or slept too long: lower the rate or run Gmeter on a quieter machine", h.TimerLagP99.Round(time.Microsecond))
+	case h.Scheduled == 0:
+		return false, ""
+	}
+	late := float64(h.Late) / float64(h.Scheduled)
+	if late <= LateWarnFraction || h.ServiceMean <= 0 || h.Workers <= 0 {
+		return false, ""
+	}
+	queue := max(0, h.CorrectedMean-h.ServiceMean)
+	byWorkers := time.Duration(QueueWorkersFactor*h.Workers) * h.ServiceMean
+	if queue <= byWorkers {
+		return false, "" // the server's own time fills the workers: it, or -workers, is the limit
+	}
+	return true, fmt.Sprintf("%d of %d requests (%.0f%%) were dispatched over 1ms late with a mean queue of %v; %d workers with a mean service time of %v can explain only about %v of queueing, so the generator itself fell behind: lower the rate or add generators",
+		h.Late, h.Scheduled, late*100, queue.Round(time.Microsecond), h.Workers, h.ServiceMean.Round(time.Microsecond), byWorkers.Round(time.Microsecond))
 }
 
 // StageResult is what happened to the requests that were due during one stage
@@ -339,6 +395,7 @@ func reachedLate(now, due time.Time) bool {
 type StageResult struct {
 	Stage     pacer.Stage
 	Scheduled uint64 // requests dispatched to workers
+	Late      uint64 // dispatched more than 1ms after their due time, in this stage
 	Dropped   uint64 // owed by the stage but never dispatched
 	Failed    uint64 // transport failures
 	BadStatus uint64 // responses outside 200-399
@@ -386,8 +443,8 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if cfg.Phases {
 		phases = newPhaseTally()
 	}
-	scheduledBy := make([]uint64, len(cfg.labels))                                             // per label; only this goroutine writes it
-	scheduledIn, droppedIn := make([]uint64, len(cfg.Stages)), make([]uint64, len(cfg.Stages)) // only this goroutine writes them
+	scheduledBy := make([]uint64, len(cfg.labels))                                                                                      // per label; only this goroutine writes it
+	scheduledIn, droppedIn, lateIn := make([]uint64, len(cfg.Stages)), make([]uint64, len(cfg.Stages)), make([]uint64, len(cfg.Stages)) // only this goroutine writes them
 	jobs := make(chan job, cfg.Workers)
 	var wg sync.WaitGroup
 	for _, t := range tallies {
@@ -421,6 +478,7 @@ loop:
 			timerLag.Record(time.Since(at))
 		} else if reachedLate(now, at) {
 			live.late.Add(1) // behind schedule when we got here
+			lateIn[stage]++
 		}
 		prev = at
 		select {
@@ -453,6 +511,7 @@ loop:
 
 	res := &Result{
 		Elapsed:   time.Since(start),
+		Workers:   cfg.Workers,
 		Scheduled: live.scheduled.Load(),
 		Dropped:   dropped,
 		Statuses:  map[int]uint64{},
@@ -474,6 +533,7 @@ loop:
 		r := StageResult{
 			Stage:     cfg.Stages[i],
 			Scheduled: scheduledIn[i],
+			Late:      lateIn[i],
 			Dropped:   droppedIn[i],
 			Failed:    st.failed,
 			BadStatus: st.badStatus,
@@ -516,6 +576,22 @@ loop:
 		return cmp.Or(cmp.Compare(b.Count, a.Count), cmp.Compare(a.Logged, b.Logged), cmp.Compare(a.Got, b.Got))
 	})
 	return res, nil
+}
+
+// GeneratorHealth returns what is needed to judge whether this run's numbers
+// describe the generator or the server.
+func (r *Result) GeneratorHealth() GeneratorHealth {
+	h := GeneratorHealth{Late: r.Late, Scheduled: r.Scheduled, Workers: r.Workers}
+	if r.TimerLag != nil {
+		h.TimerLagP99 = r.TimerLag.Quantile(0.99)
+	}
+	if r.Corrected != nil {
+		h.CorrectedMean = r.Corrected.Mean()
+	}
+	if r.Service != nil {
+		h.ServiceMean = r.Service.Mean()
+	}
+	return h
 }
 
 // source is where due times come from: a computed Schedule or a recorded Replay.

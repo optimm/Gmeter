@@ -6,9 +6,10 @@ Back to the [README](../README.md).
 
 One machine can only send so much. When the generator runs out of CPU, its requests go out late, and the late
 dispatches are counted toward latency (that is the point of measuring from the intended send time), so the report
-blames the server for the generator's limit. Gmeter says when this happens (the `late` warning in the
-[generator line](reading-the-report.md#reading-the-generator-line)), and `-agents` is what to do about it: run `gmeter agent` on a few
-machines, and let one controller split the test among them.
+blames the server for the generator's limit. Gmeter says when this happens: `generator.limited` and the warning in the
+[generator line](reading-the-report.md#reading-the-generator-line) separate a starved scheduler from a slow server that
+simply filled the workers. `-agents` is what to do about it: run `gmeter agent` on a few machines, and let one controller
+split the test among them.
 
 ```bash
 # on each generator machine: the same gmeter build, the same password

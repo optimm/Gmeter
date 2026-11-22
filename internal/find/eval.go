@@ -76,10 +76,10 @@ type TrialPhases struct {
 //
 // A trial fails if the latency target is missed, the error budget is blown, or
 // requests were left unsent. It passes only if the generator also kept time: a
-// trial that looks fine while the generator's timers ran late is Limited,
-// because the generator, not the server, may have set the numbers. A missed
-// target stays a failure whatever the generator did, since corrected latency
-// is honest either way.
+// trial that looks fine while the generator's timers ran late, or whose stage
+// queued far more than its workers' service time can explain, is Limited. A
+// missed target stays a failure whatever the generator did, since corrected
+// latency is honest either way.
 func Evaluate(slo SLO, rate float64, st runner.StageResult, res *runner.Result) (Verdict, Observation) {
 	o := Observation{Rate: rate, Scheduled: st.Scheduled, Phases: trialPhases(st.Phases)}
 	if st.Scheduled == 0 {
@@ -104,11 +104,30 @@ func Evaluate(slo SLO, rate float64, st runner.StageResult, res *runner.Result) 
 		return Fail, o
 	}
 
-	if lag := res.TimerLag.Quantile(0.99); lag > report.TimerLagWarn {
-		o.Reasons = []string{fmt.Sprintf("generator timer lag p99 is %s, so this result may be the generator's and not the server's", report.FormatDuration(lag))}
+	if limited, reason := stageGeneratorHealth(st, res).Limited(); limited {
+		o.Reasons = []string{reason}
 		return Limited, o
 	}
 	return Pass, o
+}
+
+// stageGeneratorHealth takes the queue from the measured stage, not the whole
+// run: a warm-up stage can be slow without saying anything about the rate being
+// judged. Timer lag is a run-wide signal, since it is sampled by the scheduler.
+func stageGeneratorHealth(st runner.StageResult, res *runner.Result) runner.GeneratorHealth {
+	h := runner.GeneratorHealth{
+		Late: st.Late, Scheduled: st.Scheduled, Workers: res.Workers,
+	}
+	if res.TimerLag != nil {
+		h.TimerLagP99 = res.TimerLag.Quantile(0.99)
+	}
+	if st.Corrected != nil {
+		h.CorrectedMean = st.Corrected.Mean()
+	}
+	if st.Service != nil {
+		h.ServiceMean = st.Service.Mean()
+	}
+	return h
 }
 
 // trialPhases is the mean time per answered request in each phase of a stage,

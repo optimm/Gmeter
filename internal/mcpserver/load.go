@@ -98,7 +98,8 @@ type LoadTestResult struct {
 	Corrected        LatencyMS         `json:"corrected" jsonschema:"latency from when each request was due: what users experienced"`
 	Service          LatencyMS         `json:"service" jsonschema:"latency from when each request was sent: what a closed-loop tester would report"`
 	GeneratorLimited bool              `json:"generator_limited"`
-	TimerLagP99Ms    float64           `json:"timer_lag_p99_ms" jsonschema:"how late the generator's timers fired: over 5 means it was starved"`
+	GeneratorReason  string            `json:"generator_reason,omitempty" jsonschema:"why the generator could not keep time; present only when generator_limited is true"`
+	TimerLagP99Ms    float64           `json:"timer_lag_p99_ms" jsonschema:"how late the generator's timers fired: over 5 is one sign it was starved"`
 	Warnings         []string          `json:"warnings"`
 	Stages           []StageOutput     `json:"stages,omitempty" jsonschema:"one entry per stage, when there was more than one"`
 }
@@ -110,8 +111,8 @@ intended send time ("corrected"), so queueing behind a slow server counts. Give 
 or stages for steps and ramps.
 
 The verdict is ok, errors, or generator_limited. generator_limited means the load generator itself could not
-keep time (timer lag), so the numbers describe the generator and not the server: lower the rate or the workers
-and run again before concluding anything.
+keep time (starved timers, or requests queueing far longer than its workers' service time can explain), so the
+numbers describe the generator and not the server: lower the rate or run elsewhere before concluding anything.
 
 Only loopback targets are allowed unless the operator started the server with -allow; rate, duration,
 workers, timeout and stream messages have ceilings that a refusal names. Do not try to get around a
@@ -327,8 +328,10 @@ func resultOf(sum report.Summary) LoadTestResult {
 		OK: sum.OK, BadStatus: sum.BadStatus, Failed: sum.Failed,
 		Statuses: map[string]uint64{}, Errors: map[string]uint64{},
 		Corrected: latency(sum.Corrected), Service: latency(sum.Service),
-		TimerLagP99Ms: sum.Generator.TimerLagP99Ms,
-		Warnings:      append([]string{}, sum.Warnings...),
+		TimerLagP99Ms:    sum.Generator.TimerLagP99Ms,
+		GeneratorLimited: sum.Generator.Limited,
+		GeneratorReason:  sum.Generator.Reason,
+		Warnings:         append([]string{}, sum.Warnings...),
 	}
 	for code, n := range sum.Statuses {
 		out.Statuses[fmt.Sprint(code)] = n
@@ -342,7 +345,6 @@ func resultOf(sum report.Summary) LoadTestResult {
 			out.Codes[k] = n
 		}
 	}
-	out.GeneratorLimited = sum.Generator.TimerLagP99Ms > float64(report.TimerLagWarn)/float64(time.Millisecond)
 	switch {
 	case out.GeneratorLimited:
 		out.Verdict = "generator_limited"
@@ -383,7 +385,11 @@ func sentence(r LoadTestResult) string {
 	}
 	fmt.Fprintf(&b, ". Corrected p99 %.1fms (p50 %.1fms, max %.1fms); service p99 %.1fms.", r.Corrected.P99Ms, r.Corrected.P50Ms, r.Corrected.MaxMs, r.Service.P99Ms)
 	if r.GeneratorLimited {
-		fmt.Fprintf(&b, " The generator could not keep time (timer lag p99 %.1fms): these latencies are not the server's.", r.TimerLagP99Ms)
+		reason := r.GeneratorReason
+		if reason == "" {
+			reason = fmt.Sprintf("timer lag p99 %.1fms", r.TimerLagP99Ms)
+		}
+		fmt.Fprintf(&b, " The generator could not keep time: %s. These latencies are not the server's.", reason)
 	}
 	return b.String()
 }

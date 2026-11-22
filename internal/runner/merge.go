@@ -56,6 +56,7 @@ func Merge(results ...*Result) (*Result, error) {
 	changes := map[[2]int]uint64{}
 	for _, r := range results {
 		m.Elapsed = max(m.Elapsed, r.Elapsed)
+		m.Workers += r.Workers
 		m.Scheduled += r.Scheduled
 		m.Dropped += r.Dropped
 		m.Late += r.Late
@@ -144,6 +145,7 @@ func mergeStages(results []*Result) []StageResult {
 			m.Stage.From += x.Stage.From
 			m.Stage.To += x.Stage.To
 			m.Scheduled += x.Scheduled
+			m.Late += x.Late
 			m.Dropped += x.Dropped
 			m.Failed += x.Failed
 			m.BadStatus += x.BadStatus

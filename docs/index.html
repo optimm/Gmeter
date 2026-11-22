@@ -409,9 +409,10 @@ footer { padding: 72px 0 40px; font-size: 14px; color: var(--ink-2); display: fl
           <h3>Run at a rate, a step test or a ramp</h3>
           <p>Constant rate, <code>-stages</code> for steps and ramps, Poisson arrivals with a seed you can replay. The
             report has corrected and service latency, a per-second timeline that puts a time on every spike, a breakdown
-            of where each request's time went, and a line where Gmeter checks its own timing. For a server that asks the client
-            for a certificate, give <code>-cert</code> and <code>-key</code>. <code>-prometheus</code> also writes the
-            run's metrics in Prometheus text format, for a dashboard.</p>
+            of where each request's time went, and a line where Gmeter checks its own timing. When the generator, not the
+            server, set the numbers, the report says why and the JSON marks <code>generator.limited</code>. For a server that
+            asks the client for a certificate, give <code>-cert</code> and <code>-key</code>. <code>-prometheus</code> also
+            writes the run's metrics in Prometheus text format, for a dashboard.</p>
 <pre class="term"><span class="p">$ gmeter -rate 200 -duration 5s -workers 20 http://127.0.0.1:18080/</span>
 requests   1000 scheduled   1000 ok   0 bad status   0 failed   0 dropped
 achieved   200.1 rps (target 200) over 5.00s
@@ -434,7 +435,8 @@ timeline (1s windows)
           <h3>Find the most it can take within your target</h3>
           <p>Give it a latency target and an error budget. It doubles the rate until a trial misses, bisects, then
             re-runs the answer to see whether it holds. It also tells you when the answer needs a caveat, and when the
-            limit it hit was Gmeter's rather than the server's.</p>
+            limit it hit was Gmeter's rather than the server's: a starved timer, or a queue far longer than the workers'
+            service time can explain.</p>
 <pre class="term"><span class="p">$ gmeter find -slo p99=50ms -trial 5s -warmup 1s http://127.0.0.1:18082/</span>
    #  phase         rate        p99  errors  result
    1  grow           100      8.2ms    0.0%  <span class="g">pass</span>
@@ -553,8 +555,8 @@ err = res.Meets(gmeter.SLO{Quantile: 0.99, Latency: 80 * time.Millisecond, MaxEr
           <h3>Let an AI agent load test, with limits you set</h3>
           <p><code>gmeter mcp</code> serves Gmeter over the Model Context Protocol. An agent can run a load, find the highest
             rate a service holds, check a latency target and compare two runs. Each answer starts with a sentence and a
-            verdict, and says when Gmeter could not keep time itself, so the agent doesn't draw a conclusion from numbers
-            that were the generator's.</p>
+            verdict, and says when Gmeter could not keep time itself, including the reason in
+            <code>generator_reason</code>, so the agent doesn't draw a conclusion from numbers that were the generator's.</p>
           <p>An agent that can send load is a risk, so by default it can target only your own machine, and its rate,
             run time, connections, per-request timeout and messages per gRPC stream are capped. Cloud metadata
             addresses are refused even when you allow everything else.</p>

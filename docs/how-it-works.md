@@ -66,6 +66,11 @@ Back to the [README](../README.md).
   server look fast.
 - If the server is so slow that the backlog cannot drain, the scheduler gives up on undispatched requests once
   the run is overdue by one `-timeout`, and reports them as `dropped`.
+- A late request can mean either a slow server filling the workers or a starved generator, so Gmeter does not call
+  a run `generator.limited` on late dispatches alone. It also requires timer-lag p99 over 5ms, or a mean queue
+  (`corrected - service`) over `4 × workers × mean service time`: W workers explain about W service times of
+  queueing, and much more than that is time the scheduler lost. The rule is pure arithmetic on measured means, so
+  it needs no timing-sensitive test, and a result's `find` verdict uses the measured stage rather than the warm-up.
 - Precision costs CPU: the default `-spin 200µs` busy-waits, up to about a quarter of a core and only below about
   5000 rps. Turn it off with `-spin 0` if the generator shares a small machine with the thing it is testing.
 - Redirects are not followed (a 302 is a result) and proxy environment variables are ignored.

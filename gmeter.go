@@ -378,6 +378,12 @@ func (r *Result) Scheduled() uint64 { return r.raw.Scheduled }
 // the server hung so long the backlog was abandoned.
 func (r *Result) Dropped() uint64 { return r.raw.Dropped }
 
+// Late is how many requests reached the scheduler more than a millisecond after
+// their due time, so it had no chance to sleep. They still count from the due
+// time in Corrected. A high count can mean a slow server filled the workers, or
+// that Gmeter itself fell behind; the report's generator section says which.
+func (r *Result) Late() uint64 { return r.raw.Late }
+
 // Elapsed is how long the run took, to the last request's end.
 func (r *Result) Elapsed() time.Duration { return r.raw.Elapsed }
 

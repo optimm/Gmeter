@@ -163,14 +163,20 @@ type Generator struct {
 	TimerLagP99Ms float64 `json:"timer_lag_p99_ms"`
 	TimerLagMaxMs float64 `json:"timer_lag_max_ms"`
 	Late          uint64  `json:"late_dispatches"` // reached more than 1ms after their due time
+
+	// Limited says Gmeter, not the server, may have set the latencies. Reason
+	// explains the signal that triggered it, and is empty when Limited is false.
+	Limited bool   `json:"limited"`
+	Reason  string `json:"reason,omitempty"`
 }
 
-// Thresholds beyond which a run gets a warning. Timers on an idle machine wake
-// within microseconds, so a p99 over 5ms means the generator is being starved.
+// Thresholds beyond which a run gets a warning, shared with the decision that
+// marks a result generator-limited. Timers on an idle machine wake within
+// microseconds, so a p99 over 5ms means the generator is being starved.
 const (
 	// TimerLagWarn is the timer-lag p99 above which a run gets a warning.
-	TimerLagWarn     = 5 * time.Millisecond
-	lateWarnFraction = 0.05
+	TimerLagWarn     = runner.TimerLagWarn
+	lateWarnFraction = runner.LateWarnFraction
 )
 
 // Latency is a histogram digest in milliseconds.
@@ -187,6 +193,8 @@ type Latency struct {
 
 // Summarize digests a run. targetRPS is the rate the run was asked to hold.
 func Summarize(res *runner.Result, targetRPS float64) Summary {
+	health := res.GeneratorHealth()
+	limited, reason := health.Limited()
 	s := Summary{
 		ElapsedSeconds: res.Elapsed.Seconds(),
 		TargetRPS:      targetRPS,
@@ -202,6 +210,8 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 			TimerLagP99Ms: ms(res.TimerLag.Quantile(0.99)),
 			TimerLagMaxMs: ms(res.TimerLag.Max()),
 			Late:          res.Late,
+			Limited:       limited,
+			Reason:        reason,
 		},
 		Warnings:  []string{},
 		Version:   SchemaVersion,
@@ -234,14 +244,12 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 		s.AchievedRPS = float64(s.Responses) / s.ElapsedSeconds
 	}
 
-	if lag := res.TimerLag.Quantile(0.99); lag > TimerLagWarn {
-		s.Warnings = append(s.Warnings, fmt.Sprintf(
-			"generator timer lag p99 is %s: Gmeter is struggling to keep time on this machine, so results at this rate may be distorted; lower the rate, free up CPU, or run it somewhere quieter",
-			FormatDuration(lag)))
+	if limited {
+		s.Warnings = append(s.Warnings, reason)
 	}
-	if frac := s.lateFraction(); frac > lateWarnFraction {
+	if frac := s.lateFraction(); frac > lateWarnFraction && !limited {
 		s.Warnings = append(s.Warnings, fmt.Sprintf(
-			"%d of %d requests (%.0f%%) were dispatched more than 1ms after their due time: every worker was busy (raise -workers, or the server is slow) or the generator was starved of CPU; their latency still counts from the due time",
+			"%d of %d requests (%.0f%%) were dispatched more than 1ms after their due time: every worker was busy (raise -workers, or the server is slow); their latency still counts from the due time",
 			s.Generator.Late, s.Scheduled, frac*100))
 	}
 	s.VsLog = vsLog(res.Logged)

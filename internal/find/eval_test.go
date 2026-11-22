@@ -132,6 +132,45 @@ func TestAGeneratorThatCouldNotKeepTimeMakesAPassLimited(t *testing.T) {
 	}
 }
 
+func TestAnUnexplainedQueueMakesAPassLimited(t *testing.T) {
+	// 1000 requests all took 500ms from due time, but only 2ms once sent: the
+	// 40ms a 5-worker pool can explain is far short of the 498ms queue.
+	corrected, service, lag := hist.New(), hist.New(), hist.New()
+	for range 1000 {
+		corrected.Record(500 * time.Millisecond)
+		service.Record(2 * time.Millisecond)
+	}
+	st := runner.StageResult{Scheduled: 1000, Late: 1000, Corrected: corrected, Service: service}
+	res := &runner.Result{Workers: 5, TimerLag: lag, Stages: []runner.StageResult{st}}
+
+	target := SLO{Quantile: 0.99, Latency: time.Second, MaxErrorRate: 0.01}
+	v, o := Evaluate(target, 100, st, res)
+
+	if v != Limited || len(o.Reasons) != 1 || !strings.Contains(o.Reasons[0], "5 workers") {
+		t.Fatalf("verdict %v, reasons %v: want Limited naming the 5 workers", v, o.Reasons)
+	}
+	if !strings.Contains(o.Reasons[0], "late") {
+		t.Fatalf("reason %q does not say why the dispatches were counted", o.Reasons[0])
+	}
+}
+
+func TestASlowServersQueueDoesNotLimitTheTrial(t *testing.T) {
+	corrected, service, lag := hist.New(), hist.New(), hist.New()
+	for range 1000 {
+		corrected.Record(205 * time.Millisecond)
+		service.Record(203 * time.Millisecond)
+	}
+	st := runner.StageResult{Scheduled: 1000, Late: 1000, Corrected: corrected, Service: service}
+	res := &runner.Result{Workers: 50, TimerLag: lag, Stages: []runner.StageResult{st}}
+
+	target := SLO{Quantile: 0.99, Latency: time.Second, MaxErrorRate: 0.01}
+	v, o := Evaluate(target, 100, st, res)
+
+	if v != Pass || len(o.Reasons) != 0 {
+		t.Fatalf("verdict %v, reasons %v: a 2ms queue with 50 workers is the server's, not the generator's", v, o.Reasons)
+	}
+}
+
 func TestTheQuantileComesFromTheTarget(t *testing.T) {
 	c := hist.New()
 	for range 900 {

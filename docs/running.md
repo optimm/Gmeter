@@ -24,6 +24,7 @@ Flags must come before the URL.
 | `-cert`, `-key` | | PEM client certificate and its private key, for a server that asks for one (mutual TLS); give both |
 | `-json` | | also save a JSON summary (timeline and full histograms included) to a path (`-` = only JSON, on stdout) |
 | `-results` | | also save every request to a CSV file, see [Every request, and a chart](#every-request-and-a-chart-gmeter-plot) |
+| `-prometheus` | | also write the run's metrics in Prometheus/OpenMetrics text format to a path (`-` = only the metrics, on stdout) |
 | `-phases` | `true` | split each request's latency into phases, see [Where the time goes](reading-the-report.md#where-the-time-goes); `-phases=false` turns it off |
 | `-quiet` | `false` | no progress output on stderr |
 | `-http2` | `false` | send over HTTP/2 only, see [HTTP/2](#http2) |

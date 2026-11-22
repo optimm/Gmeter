@@ -463,6 +463,10 @@ func (r *Result) WriteText(w io.Writer) error { return r.summary().WriteText(w) 
 // `gmeter diff` compares.
 func (r *Result) WriteJSON(w io.Writer) error { return r.summary().WriteJSON(w) }
 
+// WritePrometheus writes the run's metrics in the Prometheus/OpenMetrics text
+// exposition format.
+func (r *Result) WritePrometheus(w io.Writer) error { return r.summary().WritePrometheus(w) }
+
 func (r *Result) summary() report.Summary { return report.Summarize(r.raw, r.targetRPS) }
 
 // SLO is a target: the latency at one quantile, and how many errors are allowed.

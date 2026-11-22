@@ -39,7 +39,8 @@ type requestFlags struct {
 	headers    headerFlag
 	phases   *bool   // nil for a command that does not offer -phases
 	agents   *string // nil for a command that does not offer -agents
-	results  *string // nil for a command that does not offer -results
+	results    *string // nil for a command that does not offer -results
+	prometheus *string // nil for a command that does not offer -prometheus
 }
 
 // addRequestFlags registers them on fs. The commands differ in the default
@@ -64,8 +65,9 @@ func addHTTP2Flag(fs *flag.FlagSet, r *requestFlags) {
 // gRPC method).
 func addCommonFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers int) *requestFlags {
 	r := &requestFlags{
-		unixSocket: fs.String("unix-socket", "", "connect to this Unix domain socket instead of the host in the URL; the URL's host is still used for the Host header and for TLS verification"),
-		connectTo:  fs.String("connect-to", "", "connect to this address (host:port) instead of the host in the URL; the URL's host is still used for the Host header and for TLS verification"),
+		unixSocket:  fs.String("unix-socket", "", "connect to this Unix domain socket instead of the host in the URL; the URL's host is still used for the Host header and for TLS verification"),
+		connectTo:   fs.String("connect-to", "", "connect to this address (host:port) instead of the host in the URL; the URL's host is still used for the Host header and for TLS verification"),
+		prometheus:  fs.String("prometheus", "", "also write the run's metrics in Prometheus/OpenMetrics text format to this path ('-' writes only the metrics, to stdout)"),
 		workers:    fs.Int("workers", defaultWorkers, "max requests in flight, which is also the max number of connections"),
 		timeout:  fs.Duration("timeout", 10*time.Second, "per-request timeout"),
 		spin:     fs.Duration("spin", 200*time.Microsecond, "busy-wait this long before each request's due time instead of sleeping, for precise timing (0 = plain timer); capped at a quarter of the gap between requests, so it costs about a quarter of one core at most"),

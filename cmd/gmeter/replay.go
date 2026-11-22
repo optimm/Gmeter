@@ -226,7 +226,7 @@ func runReplay(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		Agents:          len(agents),
 		Replay:          info,
 	}
-	return emit(summary, *rf.jsonOut, stdout, stderr)
+	return emit(summary, *rf.jsonOut, *rf.prometheus, stdout, stderr)
 }
 
 // loadTrace reads the trace at path in the given format ("auto" decides from

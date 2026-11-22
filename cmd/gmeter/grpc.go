@@ -167,5 +167,5 @@ func runGRPC(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		StartedAt:       started.Format(time.RFC3339),
 		Protocol:        "gRPC",
 	}
-	return emit(summary, *rf.jsonOut, stdout, stderr)
+	return emit(summary, *rf.jsonOut, *rf.prometheus, stdout, stderr)
 }

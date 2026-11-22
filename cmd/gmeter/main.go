@@ -154,7 +154,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Protocol:        rf.protocol(),
 		Agents:          len(agents),
 	}
-	return emit(summary, *rf.jsonOut, stdout, stderr)
+	return emit(summary, *rf.jsonOut, *rf.prometheus, stdout, stderr)
 }
 
 // profileFlags is the load profile -stages, or -rate and -duration, ask for.
@@ -183,10 +183,17 @@ func progressTo(stderr io.Writer) func(runner.Snapshot) {
 // emit writes the finished run's report as -json asks: the text report (and a
 // JSON file too if a path was given), or only the JSON on stdout for "-". It
 // returns the exit code.
-func emit(summary report.Summary, jsonOut string, stdout, stderr io.Writer) int {
+func emit(summary report.Summary, jsonOut, prometheusOut string, stdout, stderr io.Writer) int {
 	if jsonOut == "-" {
 		if err := summary.WriteJSON(stdout); err != nil {
 			fmt.Fprintf(stderr, "gmeter: writing JSON: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	if prometheusOut == "-" {
+		if err := summary.WritePrometheus(stdout); err != nil {
+			fmt.Fprintf(stderr, "gmeter: writing Prometheus: %v\n", err)
 			return 1
 		}
 		return 0
@@ -198,6 +205,12 @@ func emit(summary report.Summary, jsonOut string, stdout, stderr io.Writer) int 
 	if jsonOut != "" {
 		if err := writeJSONFile(jsonOut, summary); err != nil {
 			fmt.Fprintf(stderr, "gmeter: writing %s: %v\n", jsonOut, err)
+			return 1
+		}
+	}
+	if prometheusOut != "" {
+		if err := writePrometheusFile(prometheusOut, summary); err != nil {
+			fmt.Fprintf(stderr, "gmeter: writing %s: %v\n", prometheusOut, err)
 			return 1
 		}
 	}
@@ -439,6 +452,8 @@ func readBody(v string) ([]byte, error) {
 }
 
 func writeJSONFile(path string, s report.Summary) error { return writeJSONTo(path, s.WriteJSON) }
+
+func writePrometheusFile(path string, s report.Summary) error { return writeJSONTo(path, s.WritePrometheus) }
 
 // writeJSONTo creates path and has write fill it, reporting a failed close.
 func writeJSONTo(path string, write func(io.Writer) error) (err error) {

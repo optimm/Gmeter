@@ -30,7 +30,7 @@ are appended to it. A log can therefore never send a request to another host.
 | `-group` | | name the endpoint of the paths a rule matches, e.g. `/products/:slug` (repeatable; see [Per endpoint](#per-endpoint)) |
 | `-arrivals` / `-seed` | `poisson` | access logs and `-rate` only; see below |
 
-`-workers`, `-timeout`, `-spin`, `-H`, `-json`, `-quiet`, `-insecure`, `-cacert`, `-cert` and `-key` work as for a plain run. `-H` headers go with every
+`-workers`, `-timeout`, `-spin`, `-H`, `-json`, `-prometheus`, `-quiet`, `-insecure`, `-cacert`, `-cert` and `-key` work as for a plain run. `-H` headers go with every
 replayed request, which is how to supply credentials (an access log has no headers). Headers in a JSON Lines
 trace are sent too and replace a `-H` of the same name. No headers or bodies are saved in the results. Exit code
 is `0` when it ran, `1` if the report could not be written, and `2` for bad usage or an unreadable trace.

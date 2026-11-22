@@ -410,7 +410,8 @@ footer { padding: 72px 0 40px; font-size: 14px; color: var(--ink-2); display: fl
           <p>Constant rate, <code>-stages</code> for steps and ramps, Poisson arrivals with a seed you can replay. The
             report has corrected and service latency, a per-second timeline that puts a time on every spike, a breakdown
             of where each request's time went, and a line where Gmeter checks its own timing. For a server that asks the client
-            for a certificate, give <code>-cert</code> and <code>-key</code>.</p>
+            for a certificate, give <code>-cert</code> and <code>-key</code>. <code>-prometheus</code> also writes the
+            run's metrics in Prometheus/OpenMetrics format, for a dashboard.</p>
 <pre class="term"><span class="p">$ gmeter -rate 200 -duration 5s -workers 20 http://127.0.0.1:18080/</span>
 requests   1000 scheduled   1000 ok   0 bad status   0 failed   0 dropped
 achieved   200.1 rps (target 200) over 5.00s

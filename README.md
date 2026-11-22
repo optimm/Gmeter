@@ -63,6 +63,9 @@ gmeter replay -file access.log http://staging:8080
 
 # call a unary gRPC method, found by server reflection
 gmeter grpc -plaintext -call shop.Orders/Get -data '{"id":"42"}' -rate 1000 orders:9090
+
+# time a streaming method too: two messages up, two back, per stream
+gmeter grpc -plaintext -call shop.Orders/Chat -stream-send 2 -stream-recv 2 -rate 50 orders:9090
 ```
 
 Flags must come before the URL. The ones you will reach for first:

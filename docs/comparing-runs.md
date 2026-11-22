@@ -219,8 +219,9 @@ its `phases`: for each phase, how many requests had it, their mean time in it an
 `latency_wait` (the digest of its wait phase), and how many of its responses were compared with the log and differed. A replay whose trace has statuses also gets
 `vs_log` at the top level.)
 
-`version`, `run` (URL, method, workers, duration, profile, arrivals, seed, spin, start time, `protocol`, and `agents`
-for a run on agents), the totals (and `codes` for a gRPC run, by status code),
+`version`, `run` (URL, method, workers, duration, profile, arrivals, seed, spin, start time, `protocol`, `streaming`
+with `stream_send`/`stream_recv` for a gRPC stream, and `agents` for a run on agents), the totals (and `codes` for a gRPC
+run, by status code),
 `generator`, `warnings`, `stages` (one digest per stage of the profile), `phases` (one digest per phase), the
 per-window `timeline`, and the
 full latency `histograms` (sparse: only non-empty buckets). A password in the URL is redacted (`user:xxxxx@host`) in the JSON and everywhere Gmeter prints it, and request headers are never

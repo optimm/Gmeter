@@ -46,13 +46,15 @@ latency, service (from when the request was actually sent)
 | `-stream-recv` | `0` | response messages each stream reads before it ends; 0 reads until the server closes |
 
 `-rate`, `-duration`, `-stages`, `-arrivals`, `-seed`, `-workers` (calls or streams in flight), `-timeout`, `-spin`,
-`-json` and `-quiet` work as for a run.
+`-json`, `-prometheus` and `-quiet` work as for a run.
 
 How it differs from an HTTP run:
 
 - **Answers are counted by status code**: `codes      OK: 10000`, or `codes      RESOURCE_EXHAUSTED: 200`. `OK` is
   ok and every other code is a bad status, timed like any answer. The JSON saves `codes`, `run.protocol` is
   `gRPC` and `run.method` the full method name, so `diff` notes when it is comparing a gRPC run with an HTTP one.
+  For a stream, `run.streaming` is `server`, `client` or `bidi`, and `run.stream_send` and `run.stream_recv` are
+  the message counts.
 - **`UNAVAILABLE` is counted as a failure, not an answer.** gRPC uses the same code for a connection that broke
   and for a server that says it cannot serve right now, and the two cannot be told apart from the client. Like a
   refused connection, it is not timed. A call that runs past `-timeout` is a timeout and is timed from its due

@@ -44,7 +44,7 @@ only as long as the server process runs.
 Every result starts with a `summary` in a sentence or two and a `verdict` of `ok`, `errors` or `generator_limited`, then the
 counts, the statuses and errors, and the **corrected** latency (from when each request was due, what users saw) next to
 the **service** latency (from when it was sent, what a closed-loop tester would report). `generator_limited` means
-Gmeter could not keep time (starved timers, or a queue far larger than its workers' service time can explain), so
+Gmeter could not keep time (timer lag p99 over 5ms). A saturated generator that has stopped sleeping is NOT detected and only gets the late-dispatch warning, so
 the latencies describe the generator and not the server; `generator_reason` says which signal fired. The tool
 descriptions tell the agent to run it again, lower, rather than conclude anything from it. `check_slo` and
 `find_capacity` do not pass such a run, for the same reason `gmeter find` does not. Long calls send progress updates

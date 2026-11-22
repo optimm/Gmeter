@@ -73,8 +73,23 @@ Back to the [README](../README.md).
   plain warning ("N% of requests were dispatched over 1ms late: every worker was busy (raise -workers, or the
   server is slow) or the generator was starved of CPU") and does not change the MCP verdict, because in an
   open-loop run the queue grows whenever the server or the worker pool cannot keep up - a normal outcome of a
-  load test, not a generator failure. The rule is pure arithmetic on measured means, so it needs no
-  timing-sensitive test, and a result's `find` verdict uses the measured stage rather than the warm-up.
+  load test, not a generator failure. The signal is a single threshold on the scheduler's own wake-up latency
+  (p99 over 5ms), so it needs no timing-sensitive test, and a result's `find` verdict uses the measured stage
+  rather than the warm-up. Note that a saturated generator that has stopped sleeping is NOT detected by this
+  signal and only gets the late-dispatch warning.
+
+### What we tried for detecting a saturated generator
+
+We considered using the Go runtime's scheduler latency (`runtime/metrics`
+`/sched/latencies:seconds`) or process CPU utilisation as a signal that the
+generator itself is saturated, which would close the detection gap above (a
+generator that has stopped sleeping reports ~0 timer lag). We did not adopt
+either: the experiment was not run to completion in this pass, and neither
+signal has been shown to separate a saturated generator (case A2) from a slow
+or overloaded server (cases B, C, D) by 10x with no overlap across runs, on
+linux, darwin and windows, without measurable overhead at 80k rps. Until that
+is demonstrated, generator_limited stays timer-lag only and a saturated
+generator only gets the late-dispatch warning.
 - Precision costs CPU: the default `-spin 200µs` busy-waits, up to about a quarter of a core and only below about
   5000 rps. Turn it off with `-spin 0` if the generator shares a small machine with the thing it is testing.
 - Redirects are not followed (a 302 is a result) and proxy environment variables are ignored.

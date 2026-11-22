@@ -437,8 +437,8 @@ timeline (1s windows)
           <h3>Find the most it can take within your target</h3>
           <p>Give it a latency target and an error budget. It doubles the rate until a trial misses, bisects, then
             re-runs the answer to see whether it holds. It also tells you when the answer needs a caveat, and when the
-            limit it hit was Gmeter's rather than the server's: a starved timer, or a queue far longer than the workers'
-            service time can explain.</p>
+            limit it hit was Gmeter's rather than the server's: timer lag p99 over 5ms. A saturated generator that
+            has stopped sleeping is NOT detected by this signal and only gets the late-dispatch warning.</p>
 <pre class="term"><span class="p">$ gmeter find -slo p99=50ms -trial 5s -warmup 1s http://127.0.0.1:18082/</span>
    #  phase         rate        p99  errors  result
    1  grow           100      8.2ms    0.0%  <span class="g">pass</span>

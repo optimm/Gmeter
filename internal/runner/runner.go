@@ -344,13 +344,6 @@ const (
 	// LateWarnFraction is the share of requests dispatched over a millisecond
 	// late at which their effect on latency is worth a warning.
 	LateWarnFraction = 0.05
-	// QueueWorkersFactor is how many times a fully busy worker pool's service
-	// time a queue may be before the scheduler itself is the bottleneck. With
-	// W workers, requests can only queue behind about W other requests that
-	// each took the mean service time; much more than that is time the
-	// scheduler lost, not time the workers spent answering. The factor leaves
-	// room for skew and for the 1ms late tolerance.
-	QueueWorkersFactor = 4
 )
 
 // reachedLate reports whether the scheduler, finding a request at now that was
@@ -379,21 +372,9 @@ type GeneratorHealth struct {
 // a generator failure. An unknown worker count (zero) makes only the timer-lag
 // test available.
 func (h GeneratorHealth) Limited() (bool, string) {
-	switch {
-	case h.TimerLagP99 > TimerLagWarn:
+	if h.TimerLagP99 > TimerLagWarn {
 		return true, fmt.Sprintf("generator timer lag p99 is %v, so its timers were starved or slept too long: lower the rate or run Gmeter on a quieter machine", h.TimerLagP99.Round(time.Microsecond))
-	case h.Scheduled == 0:
-		return false, ""
 	}
-	// Queue-based finding: do not claim the generator is at fault when the
-	// queue is driven by server capacity or insufficient -workers. Instead,
-	// report it as a plain warning below; the MCP verdict is unchanged.
-	late := float64(h.Late) / float64(h.Scheduled)
-	if late <= LateWarnFraction || h.ServiceMean <= 0 || h.Workers <= 0 {
-		return false, ""
-	}
-	// Return false so the MCP verdict is not changed; the queue observation
-	// is reported as a plain warning in the summary instead.
 	return false, ""
 }
 

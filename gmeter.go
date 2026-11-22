@@ -390,7 +390,9 @@ func (r *Result) Dropped() uint64 { return r.raw.Dropped }
 // Late is how many requests reached the scheduler more than a millisecond after
 // their due time, so it had no chance to sleep. They still count from the due
 // time in Corrected. A high count can mean a slow server filled the workers, or
-// that Gmeter itself fell behind; the report's generator section says which.
+// that Gmeter itself fell behind (timer lag p99 over 5ms; a saturated generator
+// that stopped sleeping is NOT detected and only gets the late-dispatch warning);
+// the report's generator section says which.
 func (r *Result) Late() uint64 { return r.raw.Late }
 
 // JourneyStats returns the journey run's stats, when the run was one.

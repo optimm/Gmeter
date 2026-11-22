@@ -135,8 +135,9 @@ intended send time ("corrected"), so queueing behind a slow server counts. Give 
 or stages for steps and ramps, or journey for a stateful scenario.
 
 The verdict is ok, errors, or generator_limited. generator_limited means the load generator itself could not
-keep time (starved timers, or requests queueing far longer than its workers' service time can explain), so the
-numbers describe the generator and not the server: lower the rate or run elsewhere before concluding anything.
+keep time (timer lag p99 over 5ms). A saturated generator that has stopped sleeping is NOT detected by this
+signal and only gets the late-dispatch warning. When it fires, the numbers describe the generator and not the
+server: lower the rate or run elsewhere before concluding anything.
 
 Only loopback targets are allowed unless the operator started the server with -allow; rate, duration,
 workers, timeout and stream messages have ceilings that a refusal names. Do not try to get around a

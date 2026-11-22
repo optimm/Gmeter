@@ -134,8 +134,8 @@ steps and a single stall would be counted three times.
   and all earlier steps, and is the number to use for end-to-end user experience.
 
 This keeps the two questions separate: step p99 says which call got slow, journey p99 says how long a shopper waited.
-Generator-health detection reuses the same rule as a flat run — timer lag, or a queue far larger than the workers'
-service times can explain — but computes the queue per step from that step's corrected and service means.
+Generator-health detection reuses the same rule as a flat run — timer lag p99 over 5ms. A saturated generator
+that has stopped sleeping is NOT detected by this signal and only gets the late-dispatch warning.
 
 ## Checks, extraction and templating details
 

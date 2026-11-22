@@ -391,13 +391,14 @@ footer { padding: 72px 0 40px; font-size: 14px; color: var(--ink-2); display: fl
     </section>
 
     <section class="section" id="commands" aria-labelledby="commands-title">
-      <h2 id="commands-title">Nine ways in, one honest clock</h2>
+      <h2 id="commands-title">Ten ways in, one honest clock</h2>
       <div class="commands">
         <div class="tabs" role="tablist" aria-label="Gmeter commands">
           <button class="tab" role="tab" id="t-run" aria-controls="p-run" aria-selected="true"><code>gmeter</code><small>Run at a rate or a profile</small></button>
           <button class="tab" role="tab" id="t-find" aria-controls="p-find" aria-selected="false" tabindex="-1"><code>gmeter find</code><small>Find the rate that meets an SLO</small></button>
           <button class="tab" role="tab" id="t-replay" aria-controls="p-replay" aria-selected="false" tabindex="-1"><code>gmeter replay</code><small>Send real traffic at its real pace</small></button>
           <button class="tab" role="tab" id="t-diff" aria-controls="p-diff" aria-selected="false" tabindex="-1"><code>gmeter diff</code><small>Compare two runs, gate a build</small></button>
+          <button class="tab" role="tab" id="t-ci" aria-controls="p-ci" aria-selected="false" tabindex="-1"><code>uses: optimm/Gmeter@…</code><small>Gate a GitHub build</small></button>
           <button class="tab" role="tab" id="t-grpc" aria-controls="p-grpc" aria-selected="false" tabindex="-1"><code>gmeter grpc</code><small>Load-test a gRPC method</small></button>
           <button class="tab" role="tab" id="t-agents" aria-controls="p-agents" aria-selected="false" tabindex="-1"><code>-agents</code><small>Spread one test over machines</small></button>
           <button class="tab" role="tab" id="t-plot" aria-controls="p-plot" aria-selected="false" tabindex="-1"><code>gmeter plot</code><small>Chart every request of a run</small></button>
@@ -487,6 +488,20 @@ share of B's requests that are slower than A's percentiles
   slower than A's p99 (3.0ms): <span class="r">21.8%</span>   (at most 1.0% if nothing changed)</pre>
           <p>The last line is something two percentiles can't tell you: how many more of your requests got slow.</p>
           <p class="more"><a href="https://github.com/optimm/Gmeter/blob/main/docs/comparing-runs.md#comparing-runs">Errors, phases and per-endpoint gates</a></p>
+        </div>
+
+        <div class="panel" role="tabpanel" id="p-ci" aria-labelledby="t-ci" tabindex="0" hidden>
+          <h3>Put the same numbers in CI</h3>
+          <p>The root action installs the released binary for its pinned tag, or builds from source for a local
+            <code>uses: ./</code>. Give it an SLO and <code>gmeter find</code> fails the step when the target is missed;
+            give it a baseline and <code>gmeter diff</code> fails on a p99 regression. Every run puts its text report in
+            the job summary and uploads the JSON as an artifact.</p>
+<pre class="term"><span class="p">- uses: optimm/Gmeter@v0.4.0</span>
+  with:
+    url: https://staging.example.com/api
+    slo: p99=50ms
+    find-args: -trial 5s -warmup 1s -confirm 1</pre>
+          <p class="more"><a href="https://github.com/optimm/Gmeter/blob/main/docs/ci.md#gmeter-in-github-actions">Inputs, gates and artifacts</a></p>
         </div>
 
         <div class="panel" role="tabpanel" id="p-grpc" aria-labelledby="t-grpc" tabindex="0" hidden>

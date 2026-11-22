@@ -113,6 +113,7 @@ and whether the generator itself kept up. [Reading the report](docs/reading-the-
 | [gRPC](docs/grpc.md) | `gmeter grpc`: unary and streaming calls found by server reflection or from a schema |
 | [Several generators](docs/several-generators.md) | `-agents`: spread one test over several machines |
 | [Comparing runs](docs/comparing-runs.md) | `gmeter diff`: what changed between two runs, per endpoint and per phase |
+| [GitHub Actions](docs/ci.md) | the root action: SLO and diff gates, job summary and JSON artifact |
 | [Using it from Go](docs/go-package.md) | the `gmeter` package, for a load test inside `go test` |
 | [Using it from an AI agent](docs/mcp.md) | `gmeter mcp`: the tools an agent gets and the limits you set |
 | [How it works](docs/how-it-works.md) | the pacer, the histogram, the runner, and the choices behind the numbers |

@@ -1,0 +1,52 @@
+# Example of the root GitHub Action. Once a tag carrying action.yml is published,
+# replace `uses: ./` with `uses: optimm/Gmeter@<tag>` in either job.
+name: load-test
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Target URL
+        required: true
+        default: http://127.0.0.1:8080/
+
+permissions:
+  contents: read
+
+jobs:
+  slo:
+    name: Gate on a latency target
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Find the highest rate meeting p99=50ms
+        uses: ./
+        with:
+          url: ${{ inputs.url }}
+          slo: p99=50ms
+          find-args: -start 100 -max 2000 -trial 5s -warmup 1s -confirm 1
+          artifact-name: gmeter-slo
+
+  diff:
+    name: Gate on a p99 regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Baseline run
+        uses: ./
+        with:
+          url: ${{ inputs.url }}
+          args: -rate 200 -duration 30s -workers 50
+          output: baseline.json
+          artifact-name: gmeter-baseline
+      - name: Candidate run and comparison
+        uses: ./
+        with:
+          url: ${{ inputs.url }}
+          args: -rate 200 -duration 30s -workers 50
+          baseline: baseline.json
+          threshold: 10
+          output: candidate.json
+          artifact-name: gmeter-candidate

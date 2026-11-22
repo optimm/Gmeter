@@ -127,8 +127,6 @@ The next set of features:
 
 - **Prometheus / OpenMetrics export**: push or expose a run's metrics, so a load test shows up on the same
   dashboards as the service under test
-- **`-connect-to` and unix sockets**: send to a different address than the URL names, and to a service that
-  listens on a unix socket
 - **gRPC streaming**: server-streaming, client-streaming and bidirectional methods, beyond unary
 
 ## License

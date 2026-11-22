@@ -27,6 +27,8 @@ Flags must come before the URL.
 | `-phases` | `true` | split each request's latency into phases, see [Where the time goes](reading-the-report.md#where-the-time-goes); `-phases=false` turns it off |
 | `-quiet` | `false` | no progress output on stderr |
 | `-http2` | `false` | send over HTTP/2 only, see [HTTP/2](#http2) |
+| `-unix-socket` | | connect to this Unix domain socket instead of the host in the URL; the URL's host is still used for the `Host` header and for TLS verification |
+| `-connect-to` | | connect to this address (`host:port`) instead of the host in the URL; the URL's host is still used for the `Host` header and for TLS verification |
 | `-agents` | | run the test on these `gmeter agent`s instead, `host:port,...`, see [Several generators](several-generators.md#several-generators--agents) |
 
 Ctrl-C stops the run early and still prints the report for what ran (but not a run on agents, which has no partial

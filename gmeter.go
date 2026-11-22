@@ -121,6 +121,16 @@ type Config struct {
 	// without it fails the requests instead of being measured over HTTP/1.1.
 	HTTP2 bool
 
+	// UnixSocket, if set, makes every request connect to this Unix domain socket
+	// instead of the host in URL. The URL's host is still used for the Host
+	// header and for TLS server name verification.
+	UnixSocket string
+
+	// ConnectTo, if set, makes every request connect to this address (host:port)
+	// instead of the host in URL. The URL's host is still used for the Host
+	// header and for TLS server name verification.
+	ConnectTo string
+
 	// Spin is how long before each request's due time the scheduler busy-waits
 	// instead of sleeping, for precise timing, at the cost of up to a quarter of a
 	// core. Zero is 200µs; negative uses plain timers.
@@ -233,6 +243,8 @@ func (c Config) baseConfig(withLoad bool) (runner.Config, error) {
 		Spin:        c.Spin,
 		TLS:         c.TLS,
 		HTTP2:       c.HTTP2,
+		UnixSocket:  c.UnixSocket,
+		ConnectTo:   c.ConnectTo,
 		Phases:      true,
 		SampleEvery: time.Second,
 	}

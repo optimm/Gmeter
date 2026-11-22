@@ -27,7 +27,8 @@ if err := res.Meets(gmeter.SLO{Quantile: 0.99, Latency: 80 * time.Millisecond, M
 
 `Run` takes what the flags take: a `Rate` for a `Duration`, or `Stages` for steps and ramps; `Poisson` and `Seed`; a set of
 `Requests` sent in turn; `Header`, `Body`, `Workers`, `Timeout`; `TLS` (a `*tls.Config`, which is also how to give
-a client certificate or skip verification); `HTTP2`; and `OnRequest`, called with every request as it ends. The
+a client certificate or skip verification); `HTTP2`; `UnixSocket` to connect to a Unix domain socket instead of the
+host in `URL`; and `OnRequest`, called with every request as it ends. The
 `Result` has the counts (`Scheduled`, `OK`, `BadStatus`, `Failed`, `ErrorRate`, `Statuses`, `Errors`), the latency at any
 quantile by both clocks (`Corrected(0.99)` from when a request was due, `Service(0.99)` from when it was sent), and
 `WriteText` and `WriteJSON` for the report the command prints and the file `gmeter diff` compares.

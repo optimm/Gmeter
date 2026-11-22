@@ -3,8 +3,10 @@ package runner
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -863,5 +865,47 @@ func TestBadStatusesAreCountedInTheStageTheyWereDueIn(t *testing.T) {
 	}
 	if res.Stages[1].Failed != 0 {
 		t.Errorf("a 500 is a response, not a transport failure, but stage 2 counted %d failures", res.Stages[1].Failed)
+	}
+}
+
+func TestUnixSocketConnects(t *testing.T) {
+	dir, err := os.MkdirTemp("", "gmeter-unix-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := dir + "/s.sock"
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})}
+	go srv.Serve(ln)
+	t.Cleanup(func() { srv.Close() })
+
+	cfg := baseConfig("http://example.test/")
+	cfg.UnixSocket = sock
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Statuses[200] != res.Scheduled || res.Scheduled == 0 {
+		t.Fatalf("statuses=%v scheduled=%d", res.Statuses, res.Scheduled)
+	}
+}
+
+func TestConnectToOverridesDialAddress(t *testing.T) {
+	srv := okServer(t)
+	hostPort := srv.URL[len("http://"):]
+	cfg := baseConfig("http://example.test/")
+	cfg.ConnectTo = hostPort
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Statuses[200] != res.Scheduled || res.Scheduled == 0 {
+		t.Fatalf("statuses=%v scheduled=%d", res.Statuses, res.Scheduled)
 	}
 }

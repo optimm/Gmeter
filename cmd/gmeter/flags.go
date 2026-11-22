@@ -33,8 +33,10 @@ type requestFlags struct {
 	cacert   *string
 	cert     *string
 	key      *string
-	http2    *bool // nil for a command that does not offer -http2
-	headers  headerFlag
+	http2      *bool // nil for a command that does not offer -http2
+	unixSocket *string
+	connectTo  *string
+	headers    headerFlag
 	phases   *bool   // nil for a command that does not offer -phases
 	agents   *string // nil for a command that does not offer -agents
 	results  *string // nil for a command that does not offer -results
@@ -62,7 +64,9 @@ func addHTTP2Flag(fs *flag.FlagSet, r *requestFlags) {
 // gRPC method).
 func addCommonFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers int) *requestFlags {
 	r := &requestFlags{
-		workers:  fs.Int("workers", defaultWorkers, "max requests in flight, which is also the max number of connections"),
+		unixSocket: fs.String("unix-socket", "", "connect to this Unix domain socket instead of the host in the URL; the URL's host is still used for the Host header and for TLS verification"),
+		connectTo:  fs.String("connect-to", "", "connect to this address (host:port) instead of the host in the URL; the URL's host is still used for the Host header and for TLS verification"),
+		workers:    fs.Int("workers", defaultWorkers, "max requests in flight, which is also the max number of connections"),
 		timeout:  fs.Duration("timeout", 10*time.Second, "per-request timeout"),
 		spin:     fs.Duration("spin", 200*time.Microsecond, "busy-wait this long before each request's due time instead of sleeping, for precise timing (0 = plain timer); capped at a quarter of the gap between requests, so it costs about a quarter of one core at most"),
 		arrivals: fs.String("arrivals", defaultArrivals, "how requests are spread within the rate: even (exact spacing) or poisson (random bursts)"),
@@ -133,6 +137,8 @@ func (r *requestFlags) base(url string) (runner.Config, error) {
 		Spin:        *r.spin,
 		Phases:      r.phases != nil && *r.phases,
 		HTTP2:       r.http2 != nil && *r.http2,
+		UnixSocket:  *r.unixSocket,
+		ConnectTo:   *r.connectTo,
 		TLS:         tlsConfig,
 		SampleEvery: sampleEvery, // the same windows whether or not progress is shown
 	}, nil

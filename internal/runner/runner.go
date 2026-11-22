@@ -135,6 +135,18 @@ type Config struct {
 	// buffered writer and return.
 	Sink func(Sample)
 
+	// UnixSocket, if set, makes every request connect to this Unix domain
+	// socket instead of the host in URL. The URL's host is still used for the
+	// request's Host header and for TLS server name verification. Empty uses a
+	// normal TCP connection.
+	UnixSocket string
+
+	// ConnectTo, if set, makes every request connect to this address (host:port)
+	// instead of the host in URL. The URL's host is still used for the request's
+	// Host header and for TLS server name verification. Empty uses the URL's
+	// host. It is ignored when UnixSocket is set.
+	ConnectTo string
+
 	// WindowHistograms keeps each timeline window's latency distribution
 	// (Window.Latency), which a result needs to be merged with others. It costs
 	// a few kilobytes a window.
@@ -346,7 +358,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, err
 	}
 
-	client := newClient(cfg.Workers, cfg.TLS, cfg.HTTP2)
+	client := newClient(cfg.Workers, cfg.TLS, cfg.HTTP2, cfg.UnixSocket, cfg.ConnectTo)
 	defer client.CloseIdleConnections()
 
 	start := time.Now()
@@ -645,9 +657,21 @@ func (c Config) normalize() (Config, error) {
 // redirects (a 302 is a result, not a reason to send another request) nor
 // honours proxy environment variables. It speaks HTTP/1.1 only, or with http2
 // HTTP/2 only: over TLS for https and with prior knowledge (h2c) for http.
-func newClient(conns int, tlsConfig *tls.Config, http2 bool) *http.Client {
+func newClient(conns int, tlsConfig *tls.Config, http2 bool, unixSocket, connectTo string) *http.Client {
+	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
+	dial := dialer.DialContext
+	switch {
+	case unixSocket != "":
+		dial = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "unix", unixSocket)
+		}
+	case connectTo != "":
+		dial = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "tcp", connectTo)
+		}
+	}
 	tr := &http.Transport{
-		DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:         dial,
 		MaxIdleConns:        conns,
 		MaxIdleConnsPerHost: conns,
 		MaxConnsPerHost:     conns,

@@ -28,10 +28,12 @@ if err := res.Meets(gmeter.SLO{Quantile: 0.99, Latency: 80 * time.Millisecond, M
 `Run` takes what the flags take: a `Rate` for a `Duration`, or `Stages` for steps and ramps; `Poisson` and `Seed`; a set of
 `Requests` sent in turn; `Header`, `Body`, `Workers`, `Timeout`; `TLS` (a `*tls.Config`, which is also how to give
 a client certificate or skip verification); `HTTP2`; `UnixSocket` to connect to a Unix domain socket instead of the
-host in `URL`; and `OnRequest`, called with every request as it ends. The
+host in `URL`; `ConnectTo` to dial another `host:port` while keeping the URL's host for the `Host` header and TLS;
+and `OnRequest`, called with every request as it ends. The
 `Result` has the counts (`Scheduled`, `OK`, `BadStatus`, `Failed`, `ErrorRate`, `Statuses`, `Errors`), the latency at any
 quantile by both clocks (`Corrected(0.99)` from when a request was due, `Service(0.99)` from when it was sent), and
-`WriteText` and `WriteJSON` for the report the command prints and the file `gmeter diff` compares.
+`WriteText`, `WriteJSON` and `WritePrometheus` for the report the command prints, the file `gmeter diff` compares,
+and the metrics a Prometheus scrape can read.
 
 `Meets` is the check. It fails when the latency at the target's quantile is over the limit, when more requests failed
 than the error budget allows, when requests were left unsent, and when Gmeter could not keep time itself, because then

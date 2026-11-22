@@ -414,6 +414,8 @@ func TestAJobCarriesEverythingARunNeeds(t *testing.T) {
 		Spin:        time.Millisecond,
 		Phases:      true,
 		HTTP2:       true,
+		UnixSocket:  "/run/service.sock",
+		ConnectTo:   "",
 		SampleEvery: 250 * time.Millisecond,
 	}
 	raw, err := json.Marshal(j)
@@ -432,6 +434,7 @@ func TestAJobCarriesEverythingARunNeeds(t *testing.T) {
 		len(cfg.Stages) != 1 || cfg.Stages[0] != j.Stages[0] || cfg.Arrivals != pacer.Poisson || cfg.Seed != 42 ||
 		len(cfg.Requests) != 1 || cfg.Requests[0].Label != "PUT /x" || cfg.Requests[0].Logged != 503 || cfg.Requests[0].Header.Get("X-B") != "2" ||
 		cfg.Workers != 7 || cfg.Timeout != 3*time.Second || cfg.Spin != time.Millisecond || !cfg.Phases || !cfg.HTTP2 ||
+		cfg.UnixSocket != "/run/service.sock" || cfg.ConnectTo != "" ||
 		cfg.SampleEvery != 250*time.Millisecond || !cfg.WindowHistograms || cfg.TLS != nil {
 		t.Errorf("config = %+v", cfg)
 	}
@@ -444,6 +447,11 @@ func TestAJobCarriesEverythingARunNeeds(t *testing.T) {
 	even := Job{Version: Version, URL: "http://x", Stages: pacer.ConstantRate(10, time.Second), Phase: 0.5, Workers: 1}
 	if cfg, err := roundTrip(t, even).Config(); err != nil || cfg.Phase != 0.5 || cfg.Arrivals != pacer.Even {
 		t.Errorf("even config = %+v, %v", cfg, err)
+	}
+
+	connect := Job{Version: Version, URL: "http://x", ConnectTo: "127.0.0.1:8080", Workers: 1}
+	if cfg, err := roundTrip(t, connect).Config(); err != nil || cfg.ConnectTo != "127.0.0.1:8080" || cfg.UnixSocket != "" {
+		t.Errorf("connect-to config = %+v, %v", cfg, err)
 	}
 
 	insecure := Job{Version: Version, Insecure: true}

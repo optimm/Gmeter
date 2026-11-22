@@ -55,6 +55,10 @@ type Job struct {
 	Spin     time.Duration    `json:"spin"`
 	Phases   bool             `json:"phases,omitempty"`
 	HTTP2    bool             `json:"http2,omitempty"`
+	// UnixSocket and ConnectTo override where the agent dials, as the flags
+	// do; the path or address is the agent's, not the controller's.
+	UnixSocket string `json:"unix_socket,omitempty"`
+	ConnectTo  string `json:"connect_to,omitempty"`
 	// Insecure skips verifying the server's certificate; CACert, PEM, is the
 	// certificate authorities to trust instead of the agent's system roots.
 	Insecure bool   `json:"insecure,omitempty"`
@@ -111,6 +115,8 @@ func (j Job) Config() (runner.Config, error) {
 		Spin:             j.Spin,
 		Phases:           j.Phases,
 		HTTP2:            j.HTTP2,
+		UnixSocket:       j.UnixSocket,
+		ConnectTo:        j.ConnectTo,
 		TLS:              tlsConfig,
 		SampleEvery:      j.SampleEvery,
 		WindowHistograms: true,

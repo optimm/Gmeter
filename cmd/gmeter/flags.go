@@ -20,25 +20,25 @@ import (
 // requestFlags are the flags that say what is sent and how, shared by a plain
 // run and by `gmeter find`. Only the load profile differs between them.
 type requestFlags struct {
-	workers  *int
-	timeout  *time.Duration
-	spin     *time.Duration
-	method   *string
-	body     *string
-	arrivals *string
-	seed     *uint64
-	jsonOut  *string
-	quiet    *bool
-	insecure *bool
-	cacert   *string
-	cert     *string
-	key      *string
+	workers    *int
+	timeout    *time.Duration
+	spin       *time.Duration
+	method     *string
+	body       *string
+	arrivals   *string
+	seed       *uint64
+	jsonOut    *string
+	quiet      *bool
+	insecure   *bool
+	cacert     *string
+	cert       *string
+	key        *string
 	http2      *bool // nil for a command that does not offer -http2
 	unixSocket *string
 	connectTo  *string
 	headers    headerFlag
-	phases   *bool   // nil for a command that does not offer -phases
-	agents   *string // nil for a command that does not offer -agents
+	phases     *bool   // nil for a command that does not offer -phases
+	agents     *string // nil for a command that does not offer -agents
 	results    *string // nil for a command that does not offer -results
 	prometheus *string // nil for a command that does not offer -prometheus
 }
@@ -51,7 +51,21 @@ func addRequestFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers in
 	r.method = fs.String("method", http.MethodGet, "HTTP method")
 	r.body = fs.String("body", "", "request body; prefix with @ to read it from a file")
 	addHTTP2Flag(fs, r)
+	addDialFlags(fs, r)
 	return r
+}
+
+// addDialFlags registers the transport overrides, for the commands that send
+// HTTP requests. A gRPC run does not offer them: its connection is its own.
+func addDialFlags(fs *flag.FlagSet, r *requestFlags) {
+	r.unixSocket = fs.String("unix-socket", "", "connect to this Unix domain socket instead of the host in the URL; the URL's host is still used for the Host header and for TLS verification")
+	r.connectTo = fs.String("connect-to", "", "connect to this address (host:port) instead of the host in the URL; the URL's host is still used for the Host header and for TLS verification")
+}
+
+// addPrometheusFlag registers -prometheus, for the commands whose summary has
+// metrics to export.
+func addPrometheusFlag(fs *flag.FlagSet, r *requestFlags) {
+	r.prometheus = fs.String("prometheus", "", "also write the run's metrics in Prometheus/OpenMetrics text format to this path ('-' writes the metrics to stdout instead of the text report)")
 }
 
 // addHTTP2Flag registers -http2, for the commands that speak HTTP (gRPC is
@@ -65,10 +79,7 @@ func addHTTP2Flag(fs *flag.FlagSet, r *requestFlags) {
 // gRPC method).
 func addCommonFlags(fs *flag.FlagSet, defaultArrivals string, defaultWorkers int) *requestFlags {
 	r := &requestFlags{
-		unixSocket:  fs.String("unix-socket", "", "connect to this Unix domain socket instead of the host in the URL; the URL's host is still used for the Host header and for TLS verification"),
-		connectTo:   fs.String("connect-to", "", "connect to this address (host:port) instead of the host in the URL; the URL's host is still used for the Host header and for TLS verification"),
-		prometheus:  fs.String("prometheus", "", "also write the run's metrics in Prometheus/OpenMetrics text format to this path ('-' writes only the metrics, to stdout)"),
-		workers:    fs.Int("workers", defaultWorkers, "max requests in flight, which is also the max number of connections"),
+		workers:  fs.Int("workers", defaultWorkers, "max requests in flight, which is also the max number of connections"),
 		timeout:  fs.Duration("timeout", 10*time.Second, "per-request timeout"),
 		spin:     fs.Duration("spin", 200*time.Microsecond, "busy-wait this long before each request's due time instead of sleeping, for precise timing (0 = plain timer); capped at a quarter of the gap between requests, so it costs about a quarter of one core at most"),
 		arrivals: fs.String("arrivals", defaultArrivals, "how requests are spread within the rate: even (exact spacing) or poisson (random bursts)"),

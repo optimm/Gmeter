@@ -241,3 +241,42 @@ for stdout) and `-title` names it.
 The file is written from its own goroutine so the workers do not wait for the disk, but if the disk cannot keep up the
 queue fills and they do, and that delay shows up as latency. Write to a fast disk, and expect a file of about 50 bytes
 a request.
+
+## Prometheus / OpenMetrics (`-prometheus`)
+
+`-prometheus FILE` writes the finished run's metrics in the Prometheus text exposition format, so a load test can be
+recorded next to the service it measured. The text report still goes to stdout. It works on a plain run, `replay` and
+`grpc`; `find` runs many trials and has no single run to export.
+
+```
+$ gmeter -rate 500 -duration 30s -prometheus run.prom http://localhost:8080/
+$ grep gmeter_latency_seconds run.prom
+# TYPE gmeter_latency_seconds gauge
+gmeter_latency_seconds{clock="corrected",quantile="p99"} 0.0512
+gmeter_latency_seconds{clock="service",quantile="p99"} 0.0098
+```
+
+The metrics are the run's counters (`gmeter_scheduled_total`, `gmeter_responses_total`, `gmeter_ok_total`,
+`gmeter_failed_total`), its rates (`gmeter_elapsed_seconds`, `gmeter_target_rps`, `gmeter_achieved_rps`,
+`gmeter_error_ratio`), both latency clocks by quantile, the generator's own timer lag, and labelled counters by HTTP
+status, gRPC code, protocol, error kind and endpoint. `-` writes only the metrics to stdout, for a one-off:
+
+```
+$ gmeter -rate 500 -duration 30s -prometheus - http://localhost:8080/ | head
+```
+
+A finished run is a set of counters and gauges, not a live scrape target, so serve it with something that reads a
+file. With the node_exporter textfile collector, write into its directory and let it expose the file:
+
+```
+$ gmeter -rate 500 -duration 30s -prometheus /var/lib/node_exporter/textfile/gmeter.prom http://localhost:8080/
+```
+
+or push it once with the Pushgateway:
+
+```
+$ gmeter -rate 500 -duration 30s -prometheus /tmp/gmeter.prom http://localhost:8080/
+$ curl --data-binary @/tmp/gmeter.prom http://pushgateway:9091/metrics/job/gmeter/instance/staging
+```
+
+`-prometheus -` and `-json -` both claim stdout, so give one of them a path.

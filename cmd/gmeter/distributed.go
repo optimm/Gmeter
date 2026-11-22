@@ -82,6 +82,8 @@ func (r *requestFlags) job(cfg runner.Config) (agent.Job, error) {
 		Spin:        cfg.Spin,
 		Phases:      cfg.Phases,
 		HTTP2:       cfg.HTTP2,
+		UnixSocket:  cfg.UnixSocket,
+		ConnectTo:   cfg.ConnectTo,
 		Insecure:    *r.insecure,
 		SampleEvery: cfg.SampleEvery,
 		StartIn:     agentStartIn,

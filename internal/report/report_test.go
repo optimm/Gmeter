@@ -506,3 +506,83 @@ func TestWritePrometheusContainsCoreMetrics(t *testing.T) {
 		}
 	}
 }
+
+// A label value must be escaped exactly once: backslash, quote and newline.
+// Writing the helper's output with %q escaped it a second time.
+func TestWritePrometheusEscapesLabelValuesOnce(t *testing.T) {
+	s := Summary{
+		Endpoints: []EndpointSummary{{Endpoint: `GET /a"b\c`}},
+		Errors:    map[string]uint64{`x"y\z`: 1},
+		Statuses:  map[int]uint64{200: 1},
+	}
+	var b bytes.Buffer
+	if err := s.WritePrometheus(&b); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, want := range []string{
+		`endpoint="GET /a\"b\\c"`,
+		`kind="x\"y\\z"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output does not contain %s:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, `\\\"`) || strings.Contains(out, `\\\\`) {
+		t.Errorf("a label value was escaped twice:\n%s", out)
+	}
+}
+
+func TestWritePrometheusSortsLabelValues(t *testing.T) {
+	s := Summary{
+		Statuses: map[int]uint64{500: 5, 200: 2, 404: 4},
+		Errors:   map[string]uint64{"zeta": 1, "alpha": 2},
+	}
+	var a, b bytes.Buffer
+	if err := s.WritePrometheus(&a); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WritePrometheus(&b); err != nil {
+		t.Fatal(err)
+	}
+	if a.String() != b.String() {
+		t.Fatalf("two writes of the same summary differ:\n%s\n---\n%s", a.String(), b.String())
+	}
+	out := a.String()
+	for _, pair := range [][2]string{
+		{`status="200"`, `status="404"`},
+		{`status="404"`, `status="500"`},
+		{`kind="alpha"`, `kind="zeta"`},
+	} {
+		if strings.Index(out, pair[0]) > strings.Index(out, pair[1]) {
+			t.Errorf("%s should come before %s:\n%s", pair[0], pair[1], out)
+		}
+	}
+}
+
+func TestWritePrometheusHasOneTypePerFamilyAndGRPCCodes(t *testing.T) {
+	s := Summarize(sampleResult(), 10)
+	s.Codes = map[string]uint64{"OK": 90, "Unavailable": 10}
+
+	var b bytes.Buffer
+	if err := s.WritePrometheus(&b); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, family := range []string{"gmeter_latency_seconds", "gmeter_errors_total", "gmeter_status_responses_total"} {
+		if n := strings.Count(out, "# TYPE "+family+" "); n != 1 {
+			t.Errorf("%d TYPE lines for %s, want 1", n, family)
+		}
+	}
+	for _, want := range []string{
+		`gmeter_grpc_codes_total{code="OK"} 90`,
+		`gmeter_grpc_codes_total{code="Unavailable"} 10`,
+		"gmeter_elapsed_seconds",
+		"gmeter_error_ratio",
+		"gmeter_generator_late_dispatches_total",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output does not contain %q:\n%s", want, out)
+		}
+	}
+}

@@ -77,6 +77,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	addPhasesFlag(fs, rf)
 	addAgentsFlag(fs, rf)
 	addResultsFlag(fs, rf)
+	addPrometheusFlag(fs, rf)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: gmeter [flags] URL\n\nFlags must come before the URL.\n\n")
 		fs.PrintDefaults()
@@ -180,14 +181,25 @@ func progressTo(stderr io.Writer) func(runner.Snapshot) {
 	}
 }
 
-// emit writes the finished run's report as -json asks: the text report (and a
-// JSON file too if a path was given), or only the JSON on stdout for "-". It
-// returns the exit code.
+// emit writes the finished run's report: the text report, plus a JSON or
+// Prometheus file when a path was given. A "-" sends that format to stdout
+// instead of the text report; both cannot go to stdout at once. It returns the
+// exit code.
 func emit(summary report.Summary, jsonOut, prometheusOut string, stdout, stderr io.Writer) int {
+	if jsonOut == "-" && prometheusOut == "-" {
+		fmt.Fprintln(stderr, "gmeter: -json - and -prometheus - both write to stdout; give one of them a file path")
+		return 2
+	}
 	if jsonOut == "-" {
 		if err := summary.WriteJSON(stdout); err != nil {
 			fmt.Fprintf(stderr, "gmeter: writing JSON: %v\n", err)
 			return 1
+		}
+		if prometheusOut != "" {
+			if err := writePrometheusFile(prometheusOut, summary); err != nil {
+				fmt.Fprintf(stderr, "gmeter: writing %s: %v\n", prometheusOut, err)
+				return 1
+			}
 		}
 		return 0
 	}
@@ -195,6 +207,12 @@ func emit(summary report.Summary, jsonOut, prometheusOut string, stdout, stderr 
 		if err := summary.WritePrometheus(stdout); err != nil {
 			fmt.Fprintf(stderr, "gmeter: writing Prometheus: %v\n", err)
 			return 1
+		}
+		if jsonOut != "" {
+			if err := writeJSONFile(jsonOut, summary); err != nil {
+				fmt.Fprintf(stderr, "gmeter: writing %s: %v\n", jsonOut, err)
+				return 1
+			}
 		}
 		return 0
 	}
@@ -451,12 +469,14 @@ func readBody(v string) ([]byte, error) {
 	return []byte(v), nil
 }
 
-func writeJSONFile(path string, s report.Summary) error { return writeJSONTo(path, s.WriteJSON) }
+func writeJSONFile(path string, s report.Summary) error { return writeTo(path, s.WriteJSON) }
 
-func writePrometheusFile(path string, s report.Summary) error { return writeJSONTo(path, s.WritePrometheus) }
+func writePrometheusFile(path string, s report.Summary) error {
+	return writeTo(path, s.WritePrometheus)
+}
 
-// writeJSONTo creates path and has write fill it, reporting a failed close.
-func writeJSONTo(path string, write func(io.Writer) error) (err error) {
+// writeTo creates path and has write fill it, reporting a failed close.
+func writeTo(path string, write func(io.Writer) error) (err error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return err

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -907,5 +908,22 @@ func TestConnectToOverridesDialAddress(t *testing.T) {
 	}
 	if res.Statuses[200] != res.Scheduled || res.Scheduled == 0 {
 		t.Fatalf("statuses=%v scheduled=%d", res.Statuses, res.Scheduled)
+	}
+}
+
+func TestConnectToMustBeHostPort(t *testing.T) {
+	cfg := baseConfig("http://example.test/")
+	cfg.ConnectTo = "localhost"
+	if _, err := cfg.normalize(); err == nil || !strings.Contains(err.Error(), "host:port") {
+		t.Fatalf("err = %v, want a host:port complaint", err)
+	}
+}
+
+func TestUnixSocketAndConnectToCannotBothBeSet(t *testing.T) {
+	cfg := baseConfig("http://example.test/")
+	cfg.UnixSocket = "/tmp/service.sock"
+	cfg.ConnectTo = "127.0.0.1:8080"
+	if _, err := cfg.normalize(); err == nil || !strings.Contains(err.Error(), "cannot both be set") {
+		t.Fatalf("err = %v, want a mutual-exclusion complaint", err)
 	}
 }

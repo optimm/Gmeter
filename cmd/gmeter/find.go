@@ -150,7 +150,7 @@ func runFind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	} else {
 		err = summary.WriteText(stdout)
 		if err == nil && *rf.jsonOut != "" {
-			err = writeJSONTo(*rf.jsonOut, summary.WriteJSON)
+			err = writeTo(*rf.jsonOut, summary.WriteJSON)
 		}
 	}
 	if err != nil {

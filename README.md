@@ -77,6 +77,7 @@ Flags must come before the URL. The ones you will reach for first:
 | `-timeout` | `10s` | per-request timeout |
 | `-method`, `-H`, `-body` | `GET` | the request to send; `-body @file` reads the body from a file |
 | `-json`, `-results` | | save a JSON summary, or every request as a CSV, to a path |
+| `-prometheus` | | save the run's metrics in Prometheus/OpenMetrics text format, for a dashboard (`-` prints them instead of the report) |
 
 Every flag, with HTTP/2 and TLS, is in [running a test](docs/running.md#flags). Ctrl-C stops a run early and still
 prints the report for what ran.

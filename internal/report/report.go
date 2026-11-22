@@ -538,7 +538,6 @@ func FormatDuration(d time.Duration) string {
 	}
 }
 
-
 // WritePrometheus writes s in the Prometheus/OpenMetrics text exposition format.
 func (s Summary) WritePrometheus(w io.Writer) error {
 	write := func(format string, args ...any) error {
@@ -556,10 +555,13 @@ func (s Summary) WritePrometheus(w io.Writer) error {
 		{"Responses with status 200-399 (or gRPC OK).", "counter", "gmeter_ok_total", s.OK},
 		{"Responses with a bad status.", "counter", "gmeter_bad_status_total", s.BadStatus},
 		{"Requests that got no response.", "counter", "gmeter_failed_total", s.Failed},
+		{"Wall time of the run.", "gauge", "gmeter_elapsed_seconds", s.ElapsedSeconds},
 		{"Target requests per second.", "gauge", "gmeter_target_rps", s.TargetRPS},
 		{"Responses per second of wall time.", "gauge", "gmeter_achieved_rps", s.AchievedRPS},
+		{"Share of scheduled requests that failed or got a bad status.", "gauge", "gmeter_error_ratio", s.errorRatio()},
 		{"Generator timer lag p99.", "gauge", "gmeter_generator_timer_lag_p99_seconds", s.Generator.TimerLagP99Ms / 1000.0},
-		{"Requests dispatched more than 1ms late.", "counter", "gmeter_generator_late_dispatches", s.Generator.Late},
+		{"Generator timer lag max.", "gauge", "gmeter_generator_timer_lag_max_seconds", s.Generator.TimerLagMaxMs / 1000.0},
+		{"Requests dispatched more than 1ms late.", "counter", "gmeter_generator_late_dispatches_total", s.Generator.Late},
 	}
 	for _, m := range simple {
 		if err := write("# HELP %s %s\n", m.name, m.help); err != nil {
@@ -603,7 +605,7 @@ func (s Summary) WritePrometheus(w io.Writer) error {
 			}
 		}
 	}
-	// Statuses.
+	// Statuses, in ascending code order so the output is reproducible.
 	if len(s.Statuses) > 0 {
 		if err := write("# HELP gmeter_status_responses_total Responses by HTTP status code.\n"); err != nil {
 			return err
@@ -611,13 +613,41 @@ func (s Summary) WritePrometheus(w io.Writer) error {
 		if err := write("# TYPE gmeter_status_responses_total counter\n"); err != nil {
 			return err
 		}
-		for status, count := range s.Statuses {
-			if err := write("gmeter_status_responses_total{status=%q} %d\n", fmt.Sprintf("%d", status), count); err != nil {
+		for _, status := range sortedKeys(s.Statuses) {
+			if err := write("gmeter_status_responses_total{status=\"%d\"} %d\n", status, s.Statuses[status]); err != nil {
 				return err
 			}
 		}
 	}
-	// Errors.
+	// gRPC status codes, for a gRPC run.
+	if len(s.Codes) > 0 {
+		if err := write("# HELP gmeter_grpc_codes_total gRPC calls by status code.\n"); err != nil {
+			return err
+		}
+		if err := write("# TYPE gmeter_grpc_codes_total counter\n"); err != nil {
+			return err
+		}
+		for _, code := range sortedKeys(s.Codes) {
+			if err := write("gmeter_grpc_codes_total{code=\"%s\"} %d\n", prometheusLabelValue(code), s.Codes[code]); err != nil {
+				return err
+			}
+		}
+	}
+	// Protocols, when the run recorded them.
+	if len(s.Protocols) > 0 {
+		if err := write("# HELP gmeter_protocol_responses_total Responses by protocol.\n"); err != nil {
+			return err
+		}
+		if err := write("# TYPE gmeter_protocol_responses_total counter\n"); err != nil {
+			return err
+		}
+		for _, protocol := range sortedKeys(s.Protocols) {
+			if err := write("gmeter_protocol_responses_total{protocol=\"%s\"} %d\n", prometheusLabelValue(protocol), s.Protocols[protocol]); err != nil {
+				return err
+			}
+		}
+	}
+	// Errors, in name order.
 	if len(s.Errors) > 0 {
 		if err := write("# HELP gmeter_errors_total Requests that got no response, by failure kind.\n"); err != nil {
 			return err
@@ -625,8 +655,8 @@ func (s Summary) WritePrometheus(w io.Writer) error {
 		if err := write("# TYPE gmeter_errors_total counter\n"); err != nil {
 			return err
 		}
-		for kind, count := range s.Errors {
-			if err := write("gmeter_errors_total{kind=%q} %d\n", prometheusLabelValue(kind), count); err != nil {
+		for _, kind := range sortedKeys(s.Errors) {
+			if err := write("gmeter_errors_total{kind=\"%s\"} %d\n", prometheusLabelValue(kind), s.Errors[kind]); err != nil {
 				return err
 			}
 		}
@@ -640,7 +670,7 @@ func (s Summary) WritePrometheus(w io.Writer) error {
 			return err
 		}
 		for _, ep := range s.Endpoints {
-			if err := write("gmeter_endpoint_corrected_p99_seconds{endpoint=%q} %g\n", prometheusLabelValue(ep.Endpoint), ep.Corrected.P99Ms/1000.0); err != nil {
+			if err := write("gmeter_endpoint_corrected_p99_seconds{endpoint=\"%s\"} %g\n", prometheusLabelValue(ep.Endpoint), ep.Corrected.P99Ms/1000.0); err != nil {
 				return err
 			}
 		}
@@ -648,7 +678,19 @@ func (s Summary) WritePrometheus(w io.Writer) error {
 	return nil
 }
 
-// prometheusLabelValue escapes a string for use as a Prometheus label value.
+// errorRatio is the share of scheduled requests that failed or got a bad
+// status, as a ratio rather than a percentage; 0 when nothing was scheduled.
+func (s Summary) errorRatio() float64 {
+	if s.Scheduled == 0 {
+		return 0
+	}
+	return float64(s.Failed+s.BadStatus) / float64(s.Scheduled)
+}
+
+// prometheusLabelValue escapes a string for use as a Prometheus label value:
+// backslash, double quote and newline, the three escapes the text format
+// defines. It must be written with %s inside the quotes, not %q, or the
+// escapes are applied twice.
 func prometheusLabelValue(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "\"", "\\\"")

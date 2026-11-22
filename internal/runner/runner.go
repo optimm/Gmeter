@@ -579,6 +579,11 @@ func (c Config) normalize() (Config, error) {
 	case c.ConnectTo != "" && c.Call != nil:
 		return c, fmt.Errorf("runner: -connect-to applies to HTTP requests, not a gRPC call")
 	}
+	if c.ConnectTo != "" {
+		if _, _, err := net.SplitHostPort(c.ConnectTo); err != nil {
+			return c, fmt.Errorf("runner: -connect-to wants host:port, got %q: %w", c.ConnectTo, err)
+		}
+	}
 	switch {
 	case len(c.Offsets) > 0:
 		if len(c.Stages) > 0 || c.Rate != 0 || c.Duration != 0 {

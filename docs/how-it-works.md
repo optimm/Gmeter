@@ -37,11 +37,12 @@ Back to the [README](../README.md).
   requests as `Requests`, cycled by schedule index. Access-log seconds are spread before the schedule is built,
   so the scheduler never needs to know where its times came from. It also names each request's endpoint and caps
   how many are reported; the runner only sees opaque labels.
-- **`internal/runner`**: scheduler, workers, an HTTP/1.1 client capped at `-workers` connections, live
-  counters (atomics), per-stage and per-label results (a small lock per stage and per label, taken once per
-  response), the generator-health measurements, and the per-request phase clock (`httptrace` hooks behind a
-  mutex, since the transport can fire one after the request returned). A label keeps phase totals, a time and a
-  count per phase, and not histograms, which is what lets a hundred labels have phases.
+- **`internal/runner`**: scheduler, workers, an HTTP/1.1 client capped at `-workers` connections and spread over
+  up to eight idle-connection pools so one pool's lock does not serialize every worker (HTTP/2 keeps one pool,
+  to still multiplex streams), live counters (atomics), per-stage and per-label results (a small lock per stage
+  and per label, taken once per response), the generator-health measurements, and the per-request phase clock
+  (`httptrace` hooks behind a mutex, since the transport can fire one after the request returned). A label keeps
+  phase totals, a time and a count per phase, and not histograms, which is what lets a hundred labels have phases.
 - **`internal/report`**: text and JSON output, the per-window timeline, the per-endpoint tables, and run
   comparison (`diff`), including per endpoint and per phase.
 - **`internal/grpcload`**: `gmeter grpc`'s calls. It reads the schema (server reflection, either version, following

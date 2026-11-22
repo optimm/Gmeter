@@ -131,6 +131,26 @@ func TestATLSConfigurationStaysOnHTTP11(t *testing.T) {
 // An https test server can only be reached with a TLS configuration, and Go
 // leaves HTTP/2 off whenever there is one, so the default client (no
 // configuration) is checked on its transport: HTTP/2 is switched off explicitly.
+func TestNewClientsShardOnlyHTTP1(t *testing.T) {
+	clients := newClients(50, nil, false, "", "")
+	if len(clients) != 8 {
+		t.Fatalf("%d HTTP/1.1 clients, want 8 shards", len(clients))
+	}
+	for i, c := range clients {
+		tr := c.Transport.(*http.Transport)
+		if tr.MaxConnsPerHost != 7 || tr.MaxIdleConnsPerHost != 7 {
+			t.Errorf("shard %d caps %d/%d connections, want 7/7", i, tr.MaxConnsPerHost, tr.MaxIdleConnsPerHost)
+		}
+		c.CloseIdleConnections()
+	}
+	if got := newClients(3, nil, false, "", ""); len(got) != 3 {
+		t.Errorf("%d shards for 3 connections, want one per connection", len(got))
+	}
+	if got := newClients(50, nil, true, "", ""); len(got) != 1 {
+		t.Errorf("%d clients for HTTP/2, want one pool so streams multiplex", len(got))
+	}
+}
+
 func TestTheClientNeverOffersHTTP2(t *testing.T) {
 	for name, cfg := range map[string]*tls.Config{
 		"without a TLS configuration": nil,

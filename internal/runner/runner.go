@@ -415,8 +415,10 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, err
 	}
 
-	client := newClient(cfg.Workers, cfg.TLS, cfg.HTTP2, cfg.UnixSocket, cfg.ConnectTo)
-	defer client.CloseIdleConnections()
+	clients := newClients(cfg.Workers, cfg.TLS, cfg.HTTP2, cfg.UnixSocket, cfg.ConnectTo)
+	for _, c := range clients {
+		defer c.CloseIdleConnections()
+	}
 
 	start := time.Now()
 	sched, err := newSource(start, cfg)
@@ -447,8 +449,8 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	scheduledIn, droppedIn, lateIn := make([]uint64, len(cfg.Stages)), make([]uint64, len(cfg.Stages)), make([]uint64, len(cfg.Stages)) // only this goroutine writes them
 	jobs := make(chan job, cfg.Workers)
 	var wg sync.WaitGroup
-	for _, t := range tallies {
-		w := &worker{start: start, client: client, cfg: cfg, live: &live, t: t, stages: stages, labels: labels, phases: phases}
+	for i, t := range tallies {
+		w := &worker{start: start, client: clients[i%len(clients)], cfg: cfg, live: &live, t: t, stages: stages, labels: labels, phases: phases}
 		wg.Go(func() { w.run(ctx, jobs) })
 	}
 
@@ -740,6 +742,23 @@ func (c Config) normalize() (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// newClients spreads conns over several transports, so their idle-pool locks
+// are not shared by every worker.
+func newClients(conns int, tlsConfig *tls.Config, http2 bool, unixSocket, connectTo string) []*http.Client {
+	// HTTP/2 multiplexes over few connections; separate pools would open one
+	// per shard and undo that. Only HTTP/1.1 contends on the idle-pool lock.
+	if http2 {
+		return []*http.Client{newClient(conns, tlsConfig, http2, unixSocket, connectTo)}
+	}
+	n := min(conns, 8)
+	per := (conns + n - 1) / n
+	out := make([]*http.Client, n)
+	for i := range out {
+		out[i] = newClient(per, tlsConfig, http2, unixSocket, connectTo)
+	}
+	return out
 }
 
 // newClient returns a client capped at conns connections that neither follows

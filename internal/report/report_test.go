@@ -488,3 +488,21 @@ func TestSummarizeExplainsTLSFailuresAndHowToGetPastThem(t *testing.T) {
 		}
 	}
 }
+
+func TestWritePrometheusContainsCoreMetrics(t *testing.T) {
+	s := Summarize(sampleResult(), 10)
+	var b bytes.Buffer
+	if err := s.WritePrometheus(&b); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, want := range []string{
+		"gmeter_scheduled_total",
+		"gmeter_latency_seconds",
+		"gmeter_failed_total",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("prometheus output missing %q", want)
+		}
+	}
+}

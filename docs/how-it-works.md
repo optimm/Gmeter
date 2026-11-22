@@ -80,16 +80,24 @@ Back to the [README](../README.md).
 
 ### What we tried for detecting a saturated generator
 
-We considered using the Go runtime's scheduler latency (`runtime/metrics`
-`/sched/latencies:seconds`) or process CPU utilisation as a signal that the
-generator itself is saturated, which would close the detection gap above (a
-generator that has stopped sleeping reports ~0 timer lag). We did not adopt
-either: the experiment was not run to completion in this pass, and neither
-signal has been shown to separate a saturated generator (case A2) from a slow
-or overloaded server (cases B, C, D) by 10x with no overlap across runs, on
-linux, darwin and windows, without measurable overhead at 80k rps. Until that
-is demonstrated, generator_limited stays timer-lag only and a saturated
-generator only gets the late-dispatch warning.
+We ran the experiment (5 cases x 3 runs, 5s each, darwin/arm64) measuring the
+Go runtime scheduler latency (`runtime/metrics` `/sched/latencies:seconds`,
+snapshot at start/end and subtracted) and process CPU utilisation
+(`getrusage` user+sys over wall, divided by GOMAXPROCS):
+
+| case | sched p99 | sched max | CPU util |
+|---|---|---|---|
+| A (80k, trivial) | ~0.000s | 0.034-0.042s | 28% |
+| A2 (200k, trivial) | 0.002s | 0.029-0.034s | 47% |
+| B (delay 200ms) | ~0.000s | 0.000-0.001s | 6% |
+| C (delay 10ms, 20 workers) | ~0.000s | 0.001-0.002s | 5% |
+| D (delay 10ms, conc 50) | ~0.000s | 0.006-0.008s | 4% |
+
+Neither signal meets the adoption bar: A2's scheduler max (0.029-0.034s)
+overlaps A's (0.034-0.042s), and CPU utilisation is only ~1.7x, not 10x.
+So no signal was adopted: generator_limited stays timer-lag only and a
+saturated generator only gets the late-dispatch warning. A negative result is
+an acceptable outcome.
 - Precision costs CPU: the default `-spin 200µs` busy-waits, up to about a quarter of a core and only below about
   5000 rps. Turn it off with `-spin 0` if the generator shares a small machine with the thing it is testing.
 - Redirects are not followed (a 302 is a result) and proxy environment variables are ignored.

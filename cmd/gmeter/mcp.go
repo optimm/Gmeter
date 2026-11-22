@@ -39,6 +39,7 @@ func runMCP(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	fs.SetOutput(stderr)
 	var allow listFlag
 	fs.Var(&allow, "allow", "a host the agent may load besides loopback: a name, *.example.com, an IP, a CIDR range such as 10.0.0.0/8, or * for any host; repeat it or separate with commas")
+	scenarioDir := fs.String("scenario-dir", "", "a directory of named journey scenarios (see docs/journeys.md); the agent picks one by name in load_test's journey.file")
 	maxRate := fs.Float64("max-rate", mcpserver.DefaultMaxRate, "the most requests per second the agent may ask for")
 	maxDuration := fs.Duration("max-duration", mcpserver.DefaultMaxDuration, "the longest a run, or one trial of a search, may last")
 	maxWorkers := fs.Int("max-workers", mcpserver.DefaultMaxWorkers, "the most requests in flight, which is also connections, the agent may ask for")
@@ -69,7 +70,7 @@ func runMCP(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	}
 
 	fmt.Fprintf(stderr, "gmeter mcp %s: serving on stdin and stdout; %s\n", versionString(), policy.Describe())
-	srv := mcpserver.New(mcpserver.Options{Version: versionString(), Policy: policy})
+	srv := mcpserver.New(mcpserver.Options{Version: versionString(), Policy: policy, ScenarioDir: *scenarioDir})
 	err := srv.Run(ctx, &mcp.IOTransport{Reader: io.NopCloser(stdin), Writer: nopWriteCloser{stdout}})
 	// The client going away, or being told to stop, is how this normally ends.
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) && !strings.Contains(err.Error(), "closed") {

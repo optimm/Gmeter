@@ -27,6 +27,14 @@ type Policy struct {
 	MaxTimeout        time.Duration // how long one request, gRPC stream included, may take
 	MaxStreamMessages int           // messages one streaming call may send or read
 
+	// AllowWriteScenarios lets a journey scenario declare mutating methods
+	// (POST, PUT, PATCH, DELETE). Off by default: a journey an agent reads
+	// and drives should not change anything unless the operator said so.
+	AllowWriteScenarios bool
+	// AllowRawJourneyYAML, with a scenario directory, lets the server read a
+	// scenario by absolute path instead of only by name in the directory.
+	AllowRawJourneyYAML bool
+
 	// lookup resolves a host name; tests replace it.
 	lookup func(context.Context, string) ([]net.IP, error)
 }
@@ -177,6 +185,24 @@ func (p Policy) CheckLoad(rate float64, duration time.Duration, workers int) err
 	return nil
 }
 
+// CheckJourney says whether a journey is within the limits. The effective
+// request rate is the session rate times the step count: a short script can
+// multiply a modest session rate into a large write load.
+func (p Policy) CheckJourney(sessionRate float64, steps int, duration time.Duration, workers int) error {
+	return p.CheckLoad(sessionRate*float64(steps), duration, workers)
+}
+
+// CheckWriteMethod says whether a journey step may use a mutating method
+// (POST, PUT, PATCH or DELETE). It is refused for an agent unless the
+// operator enabled write scenarios; the refusal names the setting to change,
+// as the other refusals do.
+func (p Policy) CheckWriteMethod(method string) error {
+	if p.withDefaults().AllowWriteScenarios {
+		return nil
+	}
+	return fmt.Errorf("%s changes state, and write scenarios are not enabled: the operator can enable them with AllowWriteScenarios", strings.ToUpper(method))
+}
+
 // CheckTimeout says whether one request may take this long. Zero means the
 // default and is fine; a negative duration never is.
 func (p Policy) CheckTimeout(timeout time.Duration) error {
@@ -243,5 +269,12 @@ func (p Policy) Describe() string {
 	if len(p.Allow) > 0 {
 		hosts = "loopback and " + strings.Join(p.Allow, ", ")
 	}
-	return fmt.Sprintf("targets: %s; at most %.0f requests/s, %v per run, %d workers, %v per request, %d messages per stream", hosts, p.MaxRate, p.MaxDuration, p.MaxWorkers, p.MaxTimeout, p.MaxStreamMessages)
+	msg := fmt.Sprintf("targets: %s; at most %.0f requests/s, %v per run, %d workers, %v per request, %d messages per stream", hosts, p.MaxRate, p.MaxDuration, p.MaxWorkers, p.MaxTimeout, p.MaxStreamMessages)
+	if p.AllowWriteScenarios {
+		msg += "; write scenarios enabled"
+	}
+	if p.AllowRawJourneyYAML {
+		msg += "; raw journey YAML allowed"
+	}
+	return msg
 }

@@ -46,6 +46,9 @@ func (f *Feed) load(name string) error {
 		return fmt.Errorf("feed %q: %s has no rows", name, f.File)
 	}
 	header := recs[0]
+	if len(header) > FeedColumnsLimit {
+		return fmt.Errorf("feed %q: %s has %d columns, more than the %d the server reads", name, f.File, len(header), FeedColumnsLimit)
+	}
 	for _, rec := range recs[1:] {
 		row := map[string]string{}
 		for j, col := range header {
@@ -60,6 +63,9 @@ func (f *Feed) load(name string) error {
 	}
 	if len(f.Rows) == 0 {
 		return fmt.Errorf("feed %q: %s has no data rows", name, f.File)
+	}
+	if len(f.Rows) > FeedRowsLimit {
+		return fmt.Errorf("feed %q: %s has more than %d rows, which is more than the server reads", name, f.File, FeedRowsLimit)
 	}
 	return nil
 }

@@ -322,6 +322,9 @@ func (e *extract) apply(vars map[string]any, header http.Header, body []byte) er
 		}
 		return fmt.Errorf("extract %q: no value found to read", e.name)
 	}
+	if len(val) > MaxExtractedValueLen {
+		return fmt.Errorf("extract %q: the value is longer than the %d-byte limit", e.name, MaxExtractedValueLen)
+	}
 	vars[e.name] = val
 	return nil
 }

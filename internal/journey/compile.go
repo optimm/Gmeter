@@ -122,11 +122,17 @@ func (c *compiler) step(s *Step) (runner.JourneyStep, error) {
 		if !strings.HasPrefix(target, "/") {
 			return "", "", nil, nil, fmt.Errorf("the path must be relative to the base URL and start with \"/\", got %q", target)
 		}
+		if len(target) > StepRequestLimit {
+			return "", "", nil, nil, fmt.Errorf("the path renders to %d bytes, over the %d limit", len(target), StepRequestLimit)
+		}
 		var header http.Header
 		for _, name := range slices.Sorted(maps.Keys(headerTmpls)) {
 			v, err := renderText(headerTmpls[name], data)
 			if err != nil {
 				return "", "", nil, nil, fmt.Errorf("rendering header %s: %w", name, err)
+			}
+			if len(v) > StepRequestLimit {
+				return "", "", nil, nil, fmt.Errorf("header %s renders to %d bytes, over the %d limit", name, len(v), StepRequestLimit)
 			}
 			if header == nil {
 				header = http.Header{}
@@ -138,6 +144,9 @@ func (c *compiler) step(s *Step) (runner.JourneyStep, error) {
 			v, err := renderText(bodyTmpl, data)
 			if err != nil {
 				return "", "", nil, nil, fmt.Errorf("rendering the body: %w", err)
+			}
+			if len(v) > StepRequestLimit {
+				return "", "", nil, nil, fmt.Errorf("the body renders to %d bytes, over the %d limit", len(v), StepRequestLimit)
 			}
 			body = []byte(v)
 		}

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -70,6 +71,13 @@ type ExtractSpec struct {
 // templates, bad checks or a missing CSV column — is an error here, before
 // any request is sent.
 func Compile(path string) (*runner.Journey, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("journey: %w", err)
+	}
+	if fi.Size() > ScenarioMaxFileBytes {
+		return nil, fmt.Errorf("journey %s: the scenario is over %d bytes", path, ScenarioMaxFileBytes)
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("journey: %w", err)
@@ -84,6 +92,9 @@ func Compile(path string) (*runner.Journey, error) {
 	}
 	if len(sc.Steps) == 0 {
 		return nil, fmt.Errorf("journey %s: the scenario has no steps", sc.Name)
+	}
+	if len(sc.Steps) > runner.MaxLabels {
+		return nil, fmt.Errorf("journey %s: the scenario has %d steps, more than the %d the report can show", sc.Name, len(sc.Steps), runner.MaxLabels)
 	}
 	seen := map[string]bool{}
 	for i, s := range sc.Steps {
@@ -140,4 +151,49 @@ func decodeScenario(f *os.File) (*Scenario, error) {
 		return nil, err
 	}
 	return &sc, nil
+}
+
+// Caps on a scenario read by a server for agents: how much of a scenario and
+// its feeds an agent can make it read into memory.
+const (
+	// ScenarioMaxFileBytes caps a scenario file.
+	ScenarioMaxFileBytes = 1 << 20 // 1MB
+	// FeedRowsLimit caps the rows of one feed read into memory.
+	FeedRowsLimit = 10000
+	// FeedColumnsLimit caps the columns of one feed read into memory.
+	FeedColumnsLimit = 100
+	// StepRequestLimit caps one rendered path, header or body.
+	StepRequestLimit = 1 << 16 // 64KB
+	// MaxExtractedValueLen caps one extracted session variable's length.
+	MaxExtractedValueLen = 4096
+)
+
+// LoadNamed reads the scenario named in a scenario directory: a file inside
+// dir, resolved with a check that it cannot escape the directory, so an agent
+// can name a scenario and cannot name another file. With allowRaw set it
+// falls back to Compile on the name as given, for an operator who wants raw
+// YAML anywhere.
+func LoadNamed(dir, name string, allowRaw bool) (*runner.Journey, error) {
+	if name == "" {
+		return nil, fmt.Errorf("a journey scenario is required: the name of the scenario file in the scenario directory")
+	}
+	if !allowRaw && filepath.IsAbs(name) {
+		return nil, fmt.Errorf("journey %q: an absolute path is not a scenario name: give the file's name in the scenario directory", name)
+	}
+	path := name
+	if !filepath.IsAbs(path) {
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			return nil, err
+		}
+		path = filepath.Join(dir, name)
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+		if absPath != absDir && !strings.HasPrefix(absPath, absDir+string(filepath.Separator)) {
+			return nil, fmt.Errorf("journey %q is not in the scenario directory %s", name, dir)
+		}
+	}
+	return Compile(path)
 }

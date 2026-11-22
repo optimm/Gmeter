@@ -90,8 +90,8 @@ type Config struct {
 	Body   []byte      // sent with every request; not for gRPC, which has GRPC.Data
 
 	// GRPC, if set, makes every request a call of one gRPC method instead of an
-	// HTTP request. Method, Header, Body, Requests and HTTP2 are then refused,
-	// since a call would ignore them.
+	// HTTP request. Method, Header, Body, Requests, HTTP2, UnixSocket and
+	// ConnectTo are then refused, since a call would ignore them.
 	GRPC *GRPC
 
 	// The load is either Rate for Duration, or Stages, not both.
@@ -293,6 +293,7 @@ func (c Config) checkGRPC() error {
 		is   bool
 	}{
 		{"Method", c.Method != ""}, {"Header", c.Header != nil}, {"Body", c.Body != nil}, {"Requests", c.Requests != nil}, {"HTTP2", c.HTTP2},
+		{"UnixSocket", c.UnixSocket != ""}, {"ConnectTo", c.ConnectTo != ""},
 	} {
 		if set.is {
 			return fmt.Errorf("gmeter: %s describes an HTTP request, and a GRPC call sends none", set.name)
@@ -472,8 +473,8 @@ func (r *Result) WriteText(w io.Writer) error { return r.summary().WriteText(w) 
 // `gmeter diff` compares.
 func (r *Result) WriteJSON(w io.Writer) error { return r.summary().WriteJSON(w) }
 
-// WritePrometheus writes the run's metrics in the Prometheus/OpenMetrics text
-// exposition format.
+// WritePrometheus writes the run's metrics in the Prometheus text exposition
+// format (not OpenMetrics: there is no "# EOF" marker).
 func (r *Result) WritePrometheus(w io.Writer) error { return r.summary().WritePrometheus(w) }
 
 func (r *Result) summary() report.Summary { return report.Summarize(r.raw, r.targetRPS) }

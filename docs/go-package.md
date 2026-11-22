@@ -64,7 +64,8 @@ fmt.Println(res.Codes()) // map[NOT_FOUND:3 OK:29997]: the answers by status cod
 
 `GRPC` takes what the `grpc` command's flags take: `Protoset` (a descriptor set, or the server is asked by reflection),
 `Conns`, `Metadata`, `Plaintext`, and for a streaming method `SendMessages` and `RecvMessages` (the `-stream-send` and
-`-stream-recv` flags). `Method`, `Header`, `Body`, `Requests` and `HTTP2` are for HTTP and are refused alongside it. For a streaming method, one scheduled call is one whole stream: `SendMessages` is how many request
+`-stream-recv` flags). `Method`, `Header`, `Body`, `Requests`, `HTTP2`, `UnixSocket` and `ConnectTo` are for HTTP and are
+refused alongside it. For a streaming method, one scheduled call is one whole stream: `SendMessages` is how many request
 messages it sends (zero is one for client or bidirectional streaming), and `RecvMessages` is how many responses it
 reads (zero reads until the server closes). A `Sample` has the call's `Code` where an HTTP one has its `Status`. As in
 the command, `UNAVAILABLE` counts as a failure (`Errors()["unavailable"]`), since gRPC says it both for a broken

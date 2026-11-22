@@ -546,7 +546,8 @@ func FormatDuration(d time.Duration) string {
 	}
 }
 
-// WritePrometheus writes s in the Prometheus/OpenMetrics text exposition format.
+// WritePrometheus writes s in the Prometheus text exposition format (not
+// OpenMetrics: there is no "# EOF" marker).
 func (s Summary) WritePrometheus(w io.Writer) error {
 	write := func(format string, args ...any) error {
 		_, err := fmt.Fprintf(w, format, args...)

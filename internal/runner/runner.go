@@ -144,7 +144,7 @@ type Config struct {
 	// ConnectTo, if set, makes every request connect to this address (host:port)
 	// instead of the host in URL. The URL's host is still used for the request's
 	// Host header and for TLS server name verification. Empty uses the URL's
-	// host. It is ignored when UnixSocket is set.
+	// host. It cannot be combined with UnixSocket.
 	ConnectTo string
 
 	// WindowHistograms keeps each timeline window's latency distribution

@@ -32,7 +32,7 @@ type GRPCInput struct {
 	Plaintext bool                `json:"plaintext,omitempty" jsonschema:"speak gRPC without TLS, for a server that does not use it"`
 	Metadata  map[string][]string `json:"metadata,omitempty" jsonschema:"metadata sent with every call, gRPC's counterpart of headers"`
 	// SendMessages and RecvMessages describe a streaming method; both are
-	// ignored for a unary one, and refused if set.
+	// refused for a unary one.
 	SendMessages int `json:"send_messages,omitempty" jsonschema:"for a streaming method, how many request messages each stream sends; 0 is one for a client or bidirectional stream, and a server stream always sends one"`
 	RecvMessages int `json:"recv_messages,omitempty" jsonschema:"for a streaming method, how many responses each stream reads; 0 reads until the server closes"`
 }
@@ -113,8 +113,9 @@ The verdict is ok, errors, or generator_limited. generator_limited means the loa
 keep time (timer lag), so the numbers describe the generator and not the server: lower the rate or the workers
 and run again before concluding anything.
 
-Only loopback targets are allowed unless the operator started the server with -allow; rate, duration and
-workers have ceilings that a refusal names. Do not try to get around a refusal: tell the operator.`
+Only loopback targets are allowed unless the operator started the server with -allow; rate, duration,
+workers, timeout and stream messages have ceilings that a refusal names. Do not try to get around a
+refusal: tell the operator.`
 
 func (s *service) addTools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{
@@ -175,11 +176,19 @@ func (s *service) target(ctx context.Context, in TargetInput) (cfg gmeter.Config
 		if cfg.Timeout, err = time.ParseDuration(in.Timeout); err != nil {
 			return cfg, fmt.Errorf("timeout %q is not a duration such as 5s", in.Timeout)
 		}
+		if err := s.policy.CheckTimeout(cfg.Timeout); err != nil {
+			return cfg, err
+		}
 	}
 	if in.Insecure {
 		cfg.TLS = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // asked for, for a self-signed server
 	}
 	if g := in.GRPC; g != nil {
+		// One stream is one scheduled request, so its messages need their own
+		// ceiling: 10 messages/s at 100 messages per stream is 1000/s on the wire.
+		if err := s.policy.CheckStreamMessages(g.SendMessages, g.RecvMessages); err != nil {
+			return cfg, err
+		}
 		cfg.GRPC = &gmeter.GRPC{Method: g.Method, Plaintext: g.Plaintext, Metadata: g.Metadata, SendMessages: g.SendMessages, RecvMessages: g.RecvMessages}
 		if g.Data != "" {
 			cfg.GRPC.Data = []byte(g.Data)

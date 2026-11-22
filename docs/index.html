@@ -556,8 +556,8 @@ err = res.Meets(gmeter.SLO{Quantile: 0.99, Latency: 80 * time.Millisecond, MaxEr
             verdict, and says when Gmeter could not keep time itself, so the agent doesn't draw a conclusion from numbers
             that were the generator's.</p>
           <p>An agent that can send load is a risk, so by default it can target only your own machine, and its rate,
-            run time and connections are capped. Cloud metadata addresses are refused even when you allow everything
-            else.</p>
+            run time, connections, per-request timeout and messages per gRPC stream are capped. Cloud metadata
+            addresses are refused even when you allow everything else.</p>
 <pre class="term"><span class="p">$ claude mcp add gmeter -- gmeter mcp -allow staging.example.com -max-rate 500</span>
 
 check_slo   url=http://127.0.0.1:8080/  rate=100  duration=1s  slo=p99=200ms

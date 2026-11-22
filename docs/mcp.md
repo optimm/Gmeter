@@ -59,11 +59,16 @@ An agent that can send load is not the owner of what it sends it to, so the serv
   are refused whatever you allow.
 - **Load.** At most `-max-rate` requests per second (default 1000), `-max-duration` per run or per trial of a search
   (default 2m) and `-max-workers` in flight (default 200). A search never goes above `-max-rate`.
+- **One request.** `-max-timeout` (default 1m) bounds the `timeout` an agent may ask for. `-max-stream-messages`
+  (default 100) bounds `send_messages` and `recv_messages` **each**: a gRPC stream is one scheduled request but can
+  carry many messages, so the message cap is separate from the rate cap. A call with 100 messages at 10 streams/s
+  sends 1000 messages/s on the wire even though the rate cap says 10/s.
 - **Refusals say how to change them.** A refused call names the flag, and the server's instructions tell the agent to
   ask you instead of working around it.
 
 ```
-claude mcp add gmeter -- gmeter mcp -allow staging.example.com -max-rate 500
+claude mcp add gmeter -- gmeter mcp -allow staging.example.com -max-rate 500 \
+  -max-timeout 30s -max-stream-messages 20
 ```
 
 The policy in force is printed to stderr when the server starts. Stdout carries only the protocol.

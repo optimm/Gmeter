@@ -21,9 +21,11 @@ type Policy struct {
 	// whatever this says.
 	Allow []string
 
-	MaxRate     float64       // requests per second, at any moment
-	MaxDuration time.Duration // how long one run, or one trial of a search, lasts
-	MaxWorkers  int           // requests in flight, which is also connections
+	MaxRate           float64       // requests per second, at any moment
+	MaxDuration       time.Duration // how long one run, or one trial of a search, lasts
+	MaxWorkers        int           // requests in flight, which is also connections
+	MaxTimeout        time.Duration // how long one request, gRPC stream included, may take
+	MaxStreamMessages int           // messages one streaming call may send or read
 
 	// lookup resolves a host name; tests replace it.
 	lookup func(context.Context, string) ([]net.IP, error)
@@ -32,9 +34,11 @@ type Policy struct {
 // Defaults for the limits, chosen so that an agent that is not told anything
 // cannot hurt a small service: they are raised with the -max-* flags.
 const (
-	DefaultMaxRate     = 1000
-	DefaultMaxDuration = 2 * time.Minute
-	DefaultMaxWorkers  = 200
+	DefaultMaxRate           = 1000
+	DefaultMaxDuration       = 2 * time.Minute
+	DefaultMaxWorkers        = 200
+	DefaultMaxTimeout        = time.Minute
+	DefaultMaxStreamMessages = 100
 )
 
 func (p Policy) withDefaults() Policy {
@@ -46,6 +50,12 @@ func (p Policy) withDefaults() Policy {
 	}
 	if p.MaxWorkers <= 0 {
 		p.MaxWorkers = DefaultMaxWorkers
+	}
+	if p.MaxTimeout <= 0 {
+		p.MaxTimeout = DefaultMaxTimeout
+	}
+	if p.MaxStreamMessages <= 0 {
+		p.MaxStreamMessages = DefaultMaxStreamMessages
 	}
 	if p.lookup == nil {
 		p.lookup = func(ctx context.Context, host string) ([]net.IP, error) {
@@ -167,6 +177,35 @@ func (p Policy) CheckLoad(rate float64, duration time.Duration, workers int) err
 	return nil
 }
 
+// CheckTimeout says whether one request may take this long. Zero means the
+// default and is fine; a negative duration never is.
+func (p Policy) CheckTimeout(timeout time.Duration) error {
+	p = p.withDefaults()
+	switch {
+	case timeout < 0:
+		return fmt.Errorf("timeout %v is negative: give a positive duration such as 5s", timeout)
+	case timeout > p.MaxTimeout:
+		return fmt.Errorf("timeout %v is over this server's limit of %v: it can be raised with -max-timeout", timeout, p.MaxTimeout)
+	}
+	return nil
+}
+
+// CheckStreamMessages says whether one streaming call may send and read this
+// many messages. A streaming call is one scheduled request, so the message
+// counts are a separate ceiling from the request rate.
+func (p Policy) CheckStreamMessages(send, recv int) error {
+	p = p.withDefaults()
+	switch {
+	case send < 0 || recv < 0:
+		return fmt.Errorf("send_messages and recv_messages must not be negative, got %d and %d", send, recv)
+	case send > p.MaxStreamMessages:
+		return fmt.Errorf("send_messages %d is over this server's limit of %d: it can be raised with -max-stream-messages", send, p.MaxStreamMessages)
+	case recv > p.MaxStreamMessages:
+		return fmt.Errorf("recv_messages %d is over this server's limit of %d: it can be raised with -max-stream-messages", recv, p.MaxStreamMessages)
+	}
+	return nil
+}
+
 // Validate refuses a policy that could never work as written: an allow entry
 // that is a malformed range, or a negative limit. A zero limit is fine, it takes
 // the default.
@@ -189,6 +228,10 @@ func (p Policy) Validate() error {
 		return fmt.Errorf("the duration limit cannot be negative")
 	case p.MaxWorkers < 0:
 		return fmt.Errorf("the workers limit cannot be negative")
+	case p.MaxTimeout < 0:
+		return fmt.Errorf("the timeout limit cannot be negative")
+	case p.MaxStreamMessages < 0:
+		return fmt.Errorf("the stream messages limit cannot be negative")
 	}
 	return nil
 }
@@ -200,5 +243,5 @@ func (p Policy) Describe() string {
 	if len(p.Allow) > 0 {
 		hosts = "loopback and " + strings.Join(p.Allow, ", ")
 	}
-	return fmt.Sprintf("targets: %s; at most %.0f requests/s, %v per run, %d workers", hosts, p.MaxRate, p.MaxDuration, p.MaxWorkers)
+	return fmt.Sprintf("targets: %s; at most %.0f requests/s, %v per run, %d workers, %v per request, %d messages per stream", hosts, p.MaxRate, p.MaxDuration, p.MaxWorkers, p.MaxTimeout, p.MaxStreamMessages)
 }

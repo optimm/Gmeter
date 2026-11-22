@@ -538,85 +538,47 @@ func FormatDuration(d time.Duration) string {
 	}
 }
 
+
 // WritePrometheus writes s in the Prometheus/OpenMetrics text exposition format.
 func (s Summary) WritePrometheus(w io.Writer) error {
 	write := func(format string, args ...any) error {
 		_, err := fmt.Fprintf(w, format, args...)
 		return err
 	}
-	if err := write("# HELP gmeter_scheduled_total Requests scheduled by the load generator.\n"); err != nil {
+	// Counters and gauges without labels.
+	simple := []struct {
+		help, typ, name string
+		value           any
+	}{
+		{"Requests scheduled by the load generator.", "counter", "gmeter_scheduled_total", s.Scheduled},
+		{"Requests owed but never scheduled.", "counter", "gmeter_dropped_total", s.Dropped},
+		{"Responses received, any status.", "counter", "gmeter_responses_total", s.Responses},
+		{"Responses with status 200-399 (or gRPC OK).", "counter", "gmeter_ok_total", s.OK},
+		{"Responses with a bad status.", "counter", "gmeter_bad_status_total", s.BadStatus},
+		{"Requests that got no response.", "counter", "gmeter_failed_total", s.Failed},
+		{"Target requests per second.", "gauge", "gmeter_target_rps", s.TargetRPS},
+		{"Responses per second of wall time.", "gauge", "gmeter_achieved_rps", s.AchievedRPS},
+		{"Generator timer lag p99.", "gauge", "gmeter_generator_timer_lag_p99_seconds", s.Generator.TimerLagP99Ms / 1000.0},
+		{"Requests dispatched more than 1ms late.", "counter", "gmeter_generator_late_dispatches", s.Generator.Late},
+	}
+	for _, m := range simple {
+		if err := write("# HELP %s %s\n", m.name, m.help); err != nil {
+			return err
+		}
+		if err := write("# TYPE %s %s\n", m.name, m.typ); err != nil {
+			return err
+		}
+		if err := write("%s %v\n", m.name, m.value); err != nil {
+			return err
+		}
+	}
+	// Latency quantiles.
+	if err := write("# HELP gmeter_latency_seconds Request latency in seconds.\n"); err != nil {
 		return err
 	}
-	if err := write("# TYPE gmeter_scheduled_total counter\n"); err != nil {
+	if err := write("# TYPE gmeter_latency_seconds gauge\n"); err != nil {
 		return err
 	}
-	if err := write("gmeter_scheduled_total %d\n", s.Scheduled); err != nil {
-		return err
-	}
-	if err := write("# HELP gmeter_dropped_total Requests owed but never scheduled.\n"); err != nil {
-		return err
-	}
-	if err := write("# TYPE gmeter_dropped_total counter\n"); err != nil {
-		return err
-	}
-	if err := write("gmeter_dropped_total %d\n", s.Dropped); err != nil {
-		return err
-	}
-	if err := write("# HELP gmeter_responses_total Responses received, any status.\n"); err != nil {
-		return err
-	}
-	if err := write("# TYPE gmeter_responses_total counter\n"); err != nil {
-		return err
-	}
-	if err := write("gmeter_responses_total %d\n", s.Responses); err != nil {
-		return err
-	}
-	if err := write("# HELP gmeter_ok_total Responses with status 200-399 (or gRPC OK).\n"); err != nil {
-		return err
-	}
-	if err := write("# TYPE gmeter_ok_total counter\n"); err != nil {
-		return err
-	}
-	if err := write("gmeter_ok_total %d\n", s.OK); err != nil {
-		return err
-	}
-	if err := write("# HELP gmeter_bad_status_total Responses with a bad status.\n"); err != nil {
-		return err
-	}
-	if err := write("# TYPE gmeter_bad_status_total counter\n"); err != nil {
-		return err
-	}
-	if err := write("gmeter_bad_status_total %d\n", s.BadStatus); err != nil {
-		return err
-	}
-	if err := write("# HELP gmeter_failed_total Requests that got no response.\n"); err != nil {
-		return err
-	}
-	if err := write("# TYPE gmeter_failed_total counter\n"); err != nil {
-		return err
-	}
-	if err := write("gmeter_failed_total %d\n", s.Failed); err != nil {
-		return err
-	}
-	if err := write("# HELP gmeter_target_rps Target requests per second.\n"); err != nil {
-		return err
-	}
-	if err := write("# TYPE gmeter_target_rps gauge\n"); err != nil {
-		return err
-	}
-	if err := write("gmeter_target_rps %g\n", s.TargetRPS); err != nil {
-		return err
-	}
-	if err := write("# HELP gmeter_achieved_rps Responses per second of wall time.\n"); err != nil {
-		return err
-	}
-	if err := write("# TYPE gmeter_achieved_rps gauge\n"); err != nil {
-		return err
-	}
-	if err := write("gmeter_achieved_rps %g\n", s.AchievedRPS); err != nil {
-		return err
-	}
-	// Latency quantiles in seconds.
 	for _, pair := range []struct {
 		name string
 		l    Latency
@@ -636,58 +598,51 @@ func (s Summary) WritePrometheus(w io.Writer) error {
 			{"max", pair.l.MaxMs / 1000.0},
 			{"mean", pair.l.MeanMs / 1000.0},
 		} {
-			if err := write("# TYPE gmeter_latency_seconds gauge\n"); err != nil {
-				return err
-			}
 			if err := write("gmeter_latency_seconds{clock=%q,quantile=%q} %g\n", pair.name, q.label, q.val); err != nil {
 				return err
 			}
 		}
 	}
-	// Generator
-	if err := write("# HELP gmeter_generator_timer_lag_p99_seconds Generator timer lag p99.\n"); err != nil {
-		return err
-	}
-	if err := write("# TYPE gmeter_generator_timer_lag_p99_seconds gauge\n"); err != nil {
-		return err
-	}
-	if err := write("gmeter_generator_timer_lag_p99_seconds %g\n", s.Generator.TimerLagP99Ms/1000.0); err != nil {
-		return err
-	}
-	if err := write("# HELP gmeter_generator_late_dispatches Requests dispatched more than 1ms late.\n"); err != nil {
-		return err
-	}
-	if err := write("# TYPE gmeter_generator_late_dispatches counter\n"); err != nil {
-		return err
-	}
-	if err := write("gmeter_generator_late_dispatches %d\n", s.Generator.Late); err != nil {
-		return err
-	}
-	// Statuses
-	for status, count := range s.Statuses {
+	// Statuses.
+	if len(s.Statuses) > 0 {
+		if err := write("# HELP gmeter_status_responses_total Responses by HTTP status code.\n"); err != nil {
+			return err
+		}
 		if err := write("# TYPE gmeter_status_responses_total counter\n"); err != nil {
 			return err
 		}
-		if err := write("gmeter_status_responses_total{status=%q} %d\n", fmt.Sprintf("%d", status), count); err != nil {
-			return err
+		for status, count := range s.Statuses {
+			if err := write("gmeter_status_responses_total{status=%q} %d\n", fmt.Sprintf("%d", status), count); err != nil {
+				return err
+			}
 		}
 	}
-	// Errors
-	for kind, count := range s.Errors {
+	// Errors.
+	if len(s.Errors) > 0 {
+		if err := write("# HELP gmeter_errors_total Requests that got no response, by failure kind.\n"); err != nil {
+			return err
+		}
 		if err := write("# TYPE gmeter_errors_total counter\n"); err != nil {
 			return err
 		}
-		if err := write("gmeter_errors_total{kind=%q} %d\n", kind, count); err != nil {
-			return err
+		for kind, count := range s.Errors {
+			if err := write("gmeter_errors_total{kind=%q} %d\n", kind, count); err != nil {
+				return err
+			}
 		}
 	}
-	// Endpoints
-	for _, ep := range s.Endpoints {
+	// Endpoints.
+	if len(s.Endpoints) > 0 {
+		if err := write("# HELP gmeter_endpoint_corrected_p99_seconds Per-endpoint corrected p99 latency.\n"); err != nil {
+			return err
+		}
 		if err := write("# TYPE gmeter_endpoint_corrected_p99_seconds gauge\n"); err != nil {
 			return err
 		}
-		if err := write("gmeter_endpoint_corrected_p99_seconds{endpoint=%q} %g\n", ep.Endpoint, ep.Corrected.P99Ms/1000.0); err != nil {
-			return err
+		for _, ep := range s.Endpoints {
+			if err := write("gmeter_endpoint_corrected_p99_seconds{endpoint=%q} %g\n", ep.Endpoint, ep.Corrected.P99Ms/1000.0); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

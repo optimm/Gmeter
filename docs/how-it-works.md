@@ -55,7 +55,8 @@ Back to the [README](../README.md).
   JSON; `Split` cuts one into shares, and `Distribute` checks every agent, runs the shares at once and merges the
   results with `runner.Merge`, which adds histograms (every window keeps its own) and stage rates and never
   combines percentiles. The protocol is HTTP with a bearer password, versioned so that two different builds refuse
-  to work together instead of disagreeing about what a job means.
+  to work together instead of disagreeing about what a job means. The password is full control of the agent host;
+  jobs that ask it to dial a Unix socket are refused unless the agent was started with `-allow-unix-socket`.
 
 ### Choices worth knowing
 

@@ -66,8 +66,15 @@ What to know before relying on it:
   others are stopped and the first error is printed; Ctrl-C stops every agent. A part of a test is not the test.
 - **The generator line is the agents' together.** `late` adds them up, so a warning says some generator was
   short, not which. Run the one-agent test on that machine to find out.
-- **The password and the traffic are not encrypted.** Anyone who can reach an agent and knows the password can make
-  it send requests anywhere. Run agents on your own machines, on a network you trust; an agent listens only on
-  127.0.0.1 unless told otherwise, and says so when it is reachable from the network.
+- **The password is full control of the agent's host.** Anyone who can reach an agent and knows the password can make
+  it send requests anywhere, with any method, headers and body the caller chooses. Treat it like a shell on that
+  machine: keep it out of logs and repositories. The password and the traffic are not encrypted either, so run agents
+  on your own machines, on a network you trust; an agent listens only on 127.0.0.1 unless told otherwise, and says so
+  when it is reachable from the network.
+- **Unix sockets are opt-in on the agent.** A controller can set `-unix-socket` (or `-connect-to`) on all its own
+  shares, but an agent refuses a job that names a `unix_socket` path unless it was started with
+  `-allow-unix-socket`: the caller could otherwise dial `docker.sock` or any other local service with a
+  controller-chosen method and body. Only enable it when the controllers are as trusted as the host itself; when
+  enabled, the agent says so at startup.
 - **`gmeter find` runs on one machine.** Each of its trials is short, and a capacity search is usually limited by
   the server; `-agents` is for a run and a replay.

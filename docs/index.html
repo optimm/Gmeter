@@ -643,7 +643,8 @@ load_test   url=http://93.184.216.34/  rate=10  duration=1s
             v1.36.12, and the MCP server, which pins the official Go SDK v1.8.0.</dd></div>
         <div><dt>Safe by default</dt>
           <dd>Replays send only GET and HEAD unless you say otherwise. Agents listen on localhost unless told otherwise,
-            and read their password from an environment variable, never a flag. Passwords in URLs are redacted
+            and read their password from an environment variable, never a flag: that password is full control of the
+            agent's host, and Unix socket jobs are refused unless the agent opts in. Passwords in URLs are redacted
             everywhere they're printed or saved. The MCP server targets only loopback until you allow more, and caps
             the load an agent can ask for.</dd></div>
       </dl>

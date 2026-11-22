@@ -30,6 +30,11 @@ type Server struct {
 	busy  atomic.Bool
 	run   func(context.Context, runner.Config) (*runner.Result, error) // runner.Run; tests replace it
 	mux   *http.ServeMux
+
+	// AllowUnixSocket permits jobs that name a Unix socket. Off by default:
+	// the token gives full control of the agent's host, and a caller that can
+	// choose a socket could dial docker.sock or any other local service.
+	AllowUnixSocket bool
 }
 
 // NewServer returns an agent that takes jobs from callers that know token,
@@ -79,6 +84,11 @@ func (s *Server) runJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, "cannot read the job: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if job.UnixSocket != "" && !s.AllowUnixSocket {
+		s.logf("refused a job from %s with unix_socket %q: start the agent with -allow-unix-socket to permit it", r.RemoteAddr, job.UnixSocket)
+		http.Error(w, "unix_socket jobs are refused: start this agent with -allow-unix-socket to permit them", http.StatusForbidden)
 		return
 	}
 	cfg, err := job.Config()

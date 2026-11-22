@@ -88,6 +88,32 @@ func TestAnAgentRunsTheJobAndSendsBackAResultThatCanBeMerged(t *testing.T) {
 	}
 }
 
+func TestAnAgentRefusesUnixSocketJobsUnlessAllowed(t *testing.T) {
+	for _, allow := range []bool{false, true} {
+		s := newServer(t)
+		s.AllowUnixSocket = allow
+		var calls atomic.Int32
+		s.run = fakeRun(&calls)
+		c := start(t, s)
+		j := job(target(t).URL)
+		j.UnixSocket = "/var/run/docker.sock"
+		_, err := c.Run(context.Background(), j)
+		switch {
+		case !allow:
+			if err == nil || !strings.Contains(err.Error(), "-allow-unix-socket") {
+				t.Errorf("err = %v, want a refusal naming -allow-unix-socket", err)
+			}
+			if n := calls.Load(); n != 0 {
+				t.Errorf("%d jobs ran that should have been refused", n)
+			}
+		case err != nil:
+			t.Errorf("an agent that allows Unix sockets refused the job: %v", err)
+		case calls.Load() != 1:
+			t.Errorf("%d jobs ran, want 1", calls.Load())
+		}
+	}
+}
+
 func TestAnAgentWantsALongPassword(t *testing.T) {
 	for _, pw := range []string{"", "short", strings.Repeat("x", MinTokenLength-1)} {
 		if _, err := NewServer(pw, t.Logf); err == nil {

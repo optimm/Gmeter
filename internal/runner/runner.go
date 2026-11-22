@@ -572,6 +572,14 @@ func (c Config) normalize() (Config, error) {
 		return c, fmt.Errorf("runner: spin must not be negative, got %v", c.Spin)
 	}
 	switch {
+	case c.UnixSocket != "" && c.ConnectTo != "":
+		return c, fmt.Errorf("runner: -unix-socket and -connect-to cannot both be set")
+	case c.UnixSocket != "" && c.Call != nil:
+		return c, fmt.Errorf("runner: -unix-socket applies to HTTP requests, not a gRPC call")
+	case c.ConnectTo != "" && c.Call != nil:
+		return c, fmt.Errorf("runner: -connect-to applies to HTTP requests, not a gRPC call")
+	}
+	switch {
 	case len(c.Offsets) > 0:
 		if len(c.Stages) > 0 || c.Rate != 0 || c.Duration != 0 {
 			return c, fmt.Errorf("runner: Offsets already say when requests are due: do not also set Rate, Duration or Stages")

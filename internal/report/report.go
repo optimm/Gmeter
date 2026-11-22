@@ -626,7 +626,7 @@ func (s Summary) WritePrometheus(w io.Writer) error {
 			return err
 		}
 		for kind, count := range s.Errors {
-			if err := write("gmeter_errors_total{kind=%q} %d\n", kind, count); err != nil {
+			if err := write("gmeter_errors_total{kind=%q} %d\n", prometheusLabelValue(kind), count); err != nil {
 				return err
 			}
 		}
@@ -640,10 +640,18 @@ func (s Summary) WritePrometheus(w io.Writer) error {
 			return err
 		}
 		for _, ep := range s.Endpoints {
-			if err := write("gmeter_endpoint_corrected_p99_seconds{endpoint=%q} %g\n", ep.Endpoint, ep.Corrected.P99Ms/1000.0); err != nil {
+			if err := write("gmeter_endpoint_corrected_p99_seconds{endpoint=%q} %g\n", prometheusLabelValue(ep.Endpoint), ep.Corrected.P99Ms/1000.0); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// prometheusLabelValue escapes a string for use as a Prometheus label value.
+func prometheusLabelValue(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	return s
 }

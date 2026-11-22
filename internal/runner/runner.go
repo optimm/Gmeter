@@ -152,6 +152,12 @@ type Config struct {
 	// a few kilobytes a window.
 	WindowHistograms bool
 
+	// Journey, if set, says the run is a stateful journey instead of one
+	// request per job: each job is a session, and the worker runs the journey's
+	// steps one at a time, all of them due at their own times. It excludes
+	// Offsets, Requests and Call.
+	Journey *Journey
+
 	labels  []string // the distinct Request labels in order of first use, filled in by normalize
 	labelOf []uint8  // the index in labels of each request's label, filled in by normalize
 	base    string   // URL without a trailing slash, that a request's Target is appended to
@@ -299,8 +305,12 @@ type Result struct {
 
 	// Labels has one entry per distinct Request.Label, busiest first, or is empty
 	// when the requests carry none. Each total above is the sum of the same
-	// figure over the labels.
+	// figure over the labels. With a journey the rows are the journey's steps.
 	Labels []LabelResult
+
+	// Journey is what happened of the journey run: counters of sessions and
+	// the distribution of session durations. Nil unless Config.Journey was set.
+	Journey *JourneyResult
 
 	// Phases splits the corrected latency of the requests that got a response
 	// into the phases of PhaseNames, in that order; each phase's samples add up
@@ -445,12 +455,21 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if cfg.Phases {
 		phases = newPhaseTally()
 	}
+	var jstats *journeyStats
+	jt := map[string]*partTally(nil)
+	if cfg.Journey != nil {
+		jstats = newJourneyStats()
+		jt = make(map[string]*partTally, len(cfg.Journey.Steps))
+		for _, st := range cfg.Journey.Steps {
+			jt[st.Label] = &partTally{}
+		}
+	}
 	scheduledBy := make([]uint64, len(cfg.labels))                                                                                      // per label; only this goroutine writes it
 	scheduledIn, droppedIn, lateIn := make([]uint64, len(cfg.Stages)), make([]uint64, len(cfg.Stages)), make([]uint64, len(cfg.Stages)) // only this goroutine writes them
 	jobs := make(chan job, cfg.Workers)
 	var wg sync.WaitGroup
 	for i, t := range tallies {
-		w := &worker{start: start, client: clients[i%len(clients)], cfg: cfg, live: &live, t: t, stages: stages, labels: labels, phases: phases}
+		w := &worker{start: start, client: clients[i%len(clients)], cfg: cfg, live: &live, t: t, stages: stages, labels: labels, phases: phases, jstats: jstats, jt: jt}
 		wg.Go(func() { w.run(ctx, jobs) })
 	}
 
@@ -525,7 +544,12 @@ loop:
 		TimerLag:  timerLag,
 		Late:      live.late.Load(),
 		Timeline:  timeline,
-		Labels:    labelResults(cfg.labels, scheduledBy, labels, cfg.Phases),
+	}
+	if cfg.Journey != nil {
+		res.Labels = journeyLabels(cfg.Journey, jt, cfg.Phases)
+		res.Journey = jstats.result(cfg.Journey, res.Scheduled)
+	} else {
+		res.Labels = labelResults(cfg.labels, scheduledBy, labels, cfg.Phases)
 	}
 	if phases != nil {
 		res.Phases = phases.results()
@@ -625,7 +649,7 @@ func (c Config) normalize() (Config, error) {
 			is   bool
 		}{
 			{"Method", c.Method != ""}, {"Header", c.Header != nil}, {"Body", c.Body != nil}, {"Requests", c.Requests != nil},
-			{"TLS", c.TLS != nil}, {"HTTP2", c.HTTP2}, {"Phases", c.Phases},
+			{"TLS", c.TLS != nil}, {"HTTP2", c.HTTP2}, {"Phases", c.Phases}, {"Journey", c.Journey != nil},
 		} {
 			if set.is {
 				return c, fmt.Errorf("runner: %s describes an HTTP request, and a Call sends none", set.name)
@@ -663,6 +687,28 @@ func (c Config) normalize() (Config, error) {
 		}
 	}
 	switch {
+	case c.Journey != nil:
+		if c.Offsets != nil || c.Requests != nil {
+			return c, fmt.Errorf("runner: a journey schedules its own sessions: Offsets and Requests do not apply to it")
+		}
+		if len(c.Journey.Steps) == 0 {
+			return c, fmt.Errorf("runner: the journey has no steps")
+		}
+		seen := map[string]bool{}
+		for i, st := range c.Journey.Steps {
+			switch {
+			case st.Label == "":
+				return c, fmt.Errorf("runner: journey step %d has no Label: name every step", i+1)
+			case st.Render == nil:
+				return c, fmt.Errorf("runner: journey step %q: Render is required", st.Label)
+			case seen[st.Label]:
+				return c, fmt.Errorf("runner: journey step %q: two steps share a label; step labels must be unique", st.Label)
+			}
+			seen[st.Label] = true
+		}
+		if len(c.Stages) == 0 { // Rate and Duration say the session rate and length, like a plain run
+			c.Stages = pacer.ConstantRate(c.Rate, c.Duration)
+		}
 	case len(c.Offsets) > 0:
 		if len(c.Stages) > 0 || c.Rate != 0 || c.Duration != 0 {
 			return c, fmt.Errorf("runner: Offsets already say when requests are due: do not also set Rate, Duration or Stages")
@@ -940,7 +986,17 @@ type partTally struct {
 	phases             phaseSums       // only when phases are on
 	wait               *hist.Histogram // only a label's, and only when phases are on
 
+	// scheduled counts executed journey steps of the label (labels of journey
+	// steps only).
+	scheduled uint64
+
 	loggedCompared, loggedDiffer uint64 // only a label's
+}
+
+func (p *partTally) sched() {
+	p.mu.Lock()
+	p.scheduled++
+	p.mu.Unlock()
 }
 
 func (p *partTally) compareLogged(differs bool) {
@@ -1001,6 +1057,9 @@ type worker struct {
 	stages []partTally
 	labels []partTally // empty unless the requests carry labels
 	phases *phaseTally // nil unless phases were asked for
+
+	jstats *journeyStats        // the run's journey counters; nil unless a journey ran
+	jt     map[string]*partTally // the shared tallies of the journey's step labels; nil otherwise
 }
 
 func (w *worker) run(ctx context.Context, jobs <-chan job) {
@@ -1010,6 +1069,10 @@ func (w *worker) run(ctx context.Context, jobs <-chan job) {
 }
 
 func (w *worker) do(ctx context.Context, j job) {
+	if w.cfg.Journey != nil {
+		w.doJourney(ctx, j)
+		return
+	}
 	intended := j.at
 	reqCtx, cancel := context.WithTimeout(ctx, w.cfg.Timeout)
 	defer cancel()

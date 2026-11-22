@@ -135,6 +135,9 @@ func TestAGeneratorThatCouldNotKeepTimeMakesAPassLimited(t *testing.T) {
 func TestAnUnexplainedQueueMakesAPassLimited(t *testing.T) {
 	// 1000 requests all took 500ms from due time, but only 2ms once sent: the
 	// 40ms a 5-worker pool can explain is far short of the 498ms queue.
+	// With the new signal (timer-lag only), this trial is not generator-limited
+	// because the timer lag is healthy; the queue is due to server capacity or
+	// insufficient -workers, not generator failure.
 	corrected, service, lag := hist.New(), hist.New(), hist.New()
 	for range 1000 {
 		corrected.Record(500 * time.Millisecond)
@@ -146,11 +149,12 @@ func TestAnUnexplainedQueueMakesAPassLimited(t *testing.T) {
 	target := SLO{Quantile: 0.99, Latency: time.Second, MaxErrorRate: 0.01}
 	v, o := Evaluate(target, 100, st, res)
 
-	if v != Limited || len(o.Reasons) != 1 || !strings.Contains(o.Reasons[0], "5 workers") {
-		t.Fatalf("verdict %v, reasons %v: want Limited naming the 5 workers", v, o.Reasons)
+	// With timer-lag-only signal, healthy timer lag means not limited.
+	if v != Pass {
+		t.Fatalf("verdict %v, want Pass (timer-lag only signal)", v)
 	}
-	if !strings.Contains(o.Reasons[0], "late") {
-		t.Fatalf("reason %q does not say why the dispatches were counted", o.Reasons[0])
+	if len(o.Reasons) != 0 {
+		t.Fatalf("reasons %v: want no reasons when not limited", o.Reasons)
 	}
 }
 

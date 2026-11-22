@@ -256,9 +256,12 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 	if limited {
 		s.Warnings = append(s.Warnings, reason)
 	}
-	if frac := s.lateFraction(); frac > lateWarnFraction && !limited {
+	// Report queue observation as a plain warning that does not claim the
+	// generator is at fault: the queue may be due to server capacity or
+	// insufficient -workers, not generator failure.
+	if frac := s.lateFraction(); frac > runner.LateWarnFraction && !s.Generator.Limited {
 		s.Warnings = append(s.Warnings, fmt.Sprintf(
-			"%d of %d requests (%.0f%%) were dispatched more than 1ms after their due time: every worker was busy (raise -workers, or the server is slow); their latency still counts from the due time",
+			"%d of %d requests (%.0f%%) were dispatched over 1ms late: every worker was busy (raise -workers, or the server is slow) or the generator was starved of CPU",
 			s.Generator.Late, s.Scheduled, frac*100))
 	}
 	s.VsLog = vsLog(res.Logged)

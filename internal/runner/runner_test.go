@@ -36,6 +36,42 @@ func okServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
+func TestGeneratorHealthCaseNumbers(t *testing.T) {
+	// Case numbers from the review (C and D must not be Limited; A2 is).
+	cases := []struct {
+		name    string
+		h       GeneratorHealth
+		limited bool
+	}{
+		{"C -workers limited", GeneratorHealth{
+			Late: 48000, Scheduled: 50000, Workers: 20,
+			TimerLagP99: 1 * time.Millisecond,
+			ServiceMean: 12200 * time.Microsecond,
+			CorrectedMean: 6600 * time.Millisecond,
+		}, false},
+		{"D server limited", GeneratorHealth{
+			Late: 96000, Scheduled: 100000, Workers: 50,
+			TimerLagP99: 1 * time.Millisecond,
+			ServiceMean: 13300 * time.Microsecond,
+			CorrectedMean: 6400 * time.Millisecond,
+		}, false},
+		{"A2 true generator saturation", GeneratorHealth{
+			Late: 400000, Scheduled: 400000, Workers: 256,
+			TimerLagP99: 100 * time.Millisecond,
+			ServiceMean: 100 * time.Microsecond,
+			CorrectedMean: 7100 * time.Millisecond,
+		}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, _ := c.h.Limited()
+			if got != c.limited {
+				t.Fatalf("Limited() = %v, want %v", got, c.limited)
+			}
+		})
+	}
+}
+
 func TestSchedulesExactlyRateTimesDuration(t *testing.T) {
 	srv := okServer(t)
 

@@ -370,14 +370,14 @@ type GeneratorHealth struct {
 	Workers         int
 }
 
-// Limited says whether the generator could not keep time and why. Timer lag is
-// one signal, but it is only recorded for waits the scheduler actually slept
+// Limited says whether the generator could not keep time and why. Timer lag
+// is one signal, but it is only recorded for waits the scheduler actually slept
 // through: once it falls behind it stops sleeping and the figure reads near
-// zero. Late dispatches catch that case. They also happen when a slow server
-// ties up every worker, so a high late share alone is not enough: the mean
-// queue must also be much longer than a full worker pool's service time can
-// explain. An unknown worker count (zero) makes only the timer-lag test
-// available.
+// zero. A high late-dispatch share alone is not enough to claim the generator
+// is at fault: in an open-loop run the queue grows when the server or the
+// worker pool cannot keep up, which is a normal outcome of the load test, not
+// a generator failure. An unknown worker count (zero) makes only the timer-lag
+// test available.
 func (h GeneratorHealth) Limited() (bool, string) {
 	switch {
 	case h.TimerLagP99 > TimerLagWarn:
@@ -385,17 +385,16 @@ func (h GeneratorHealth) Limited() (bool, string) {
 	case h.Scheduled == 0:
 		return false, ""
 	}
+	// Queue-based finding: do not claim the generator is at fault when the
+	// queue is driven by server capacity or insufficient -workers. Instead,
+	// report it as a plain warning below; the MCP verdict is unchanged.
 	late := float64(h.Late) / float64(h.Scheduled)
 	if late <= LateWarnFraction || h.ServiceMean <= 0 || h.Workers <= 0 {
 		return false, ""
 	}
-	queue := max(0, h.CorrectedMean-h.ServiceMean)
-	byWorkers := time.Duration(QueueWorkersFactor*h.Workers) * h.ServiceMean
-	if queue <= byWorkers {
-		return false, "" // the server's own time fills the workers: it, or -workers, is the limit
-	}
-	return true, fmt.Sprintf("%d of %d requests (%.0f%%) were dispatched over 1ms late with a mean queue of %v; %d workers with a mean service time of %v can explain only about %v of queueing, so the generator itself fell behind: lower the rate or add generators",
-		h.Late, h.Scheduled, late*100, queue.Round(time.Microsecond), h.Workers, h.ServiceMean.Round(time.Microsecond), byWorkers.Round(time.Microsecond))
+	// Return false so the MCP verdict is not changed; the queue observation
+	// is reported as a plain warning in the summary instead.
+	return false, ""
 }
 
 // StageResult is what happened to the requests that were due during one stage

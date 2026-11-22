@@ -126,14 +126,13 @@ know:
   put requests a few microseconds apart: without it, a healthy generator reported 24% of Poisson requests as
   late at 20000 rps against an instant server.
 
-A run is **generator limited** when the numbers may describe the generator rather than the server. Either timers
-ran late (the first signal), or more than 5% of requests were late *and* the mean queue inside Gmeter is more
-than `4 × workers × mean service time`. The queue is `latency_corrected.mean_ms - latency_service.mean_ms`:
-with W workers, requests can queue behind about W requests that each took the mean service time, so much more
-than that is time the scheduler lost, not time the workers spent answering. This matters because once the
-scheduler falls behind it stops sleeping, so timer lag alone can read near zero exactly when the generator is
-the bottleneck. A slow server also fills every worker and makes requests late; its queue stays within that
-bound, so it is not marked limited.
+A run is **generator limited** when the numbers may describe the generator rather than the server. The only
+signal is timer lag: the scheduler's own wake-up p99 above 5ms. (Once the generator falls behind it stops
+sleeping, so timer lag alone can read near zero exactly when the generator is the bottleneck; a high
+late-dispatch share is therefore reported as a plain warning - "N% of requests were dispatched over 1ms late:
+every worker was busy (raise -workers, or the server is slow) or the generator was starved of CPU" - which does
+not change the MCP verdict.) A slow server also fills every worker and makes requests late; that is a normal
+overload result, not a generator failure.
 
 The text report prints one `warning` naming the signal and what to do. The JSON has `generator.limited` and,
 when it is true, `generator.reason`; `warnings` is always an array. When a result comes from a run whose worker

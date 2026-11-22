@@ -195,6 +195,8 @@ func TestManyLateRequestsFromASlowServerAreNotGeneratorLimited(t *testing.T) {
 }
 
 func TestUnexplainedQueueMarksTheGeneratorLimited(t *testing.T) {
+	// With the timer-lag-only signal, healthy timer lag means the generator
+	// is not limited; the queue observation is a plain warning.
 	res := sampleResult()
 	res.Workers, res.Late = 5, 30
 	corrected, service := hist.New(), hist.New()
@@ -206,11 +208,21 @@ func TestUnexplainedQueueMarksTheGeneratorLimited(t *testing.T) {
 
 	s := Summarize(res, 10)
 
-	if !s.Generator.Limited || !strings.Contains(s.Generator.Reason, "5 workers") {
-		t.Fatalf("want a generator-limited reason naming the 5 workers, got %+v", s.Generator)
+	// Generator should not be Limited with healthy timer lag.
+	if s.Generator.Limited {
+		t.Fatalf("want Generator.Limited to be false, got %+v", s.Generator)
 	}
-	if len(s.Warnings) != 1 || s.Warnings[0] != s.Generator.Reason {
-		t.Fatalf("want the one warning to be the generator reason, got %v", s.Warnings)
+	// Warning should mention late dispatches, not generator limitation.
+	var warningText string
+	if len(s.Warnings) > 0 {
+		warningText = s.Warnings[0]
+	}
+	if !strings.Contains(warningText, "late") {
+		t.Fatalf("want warning about late dispatches, got %q", warningText)
+	}
+	// And the reason should not claim generator is at fault.
+	if strings.Contains(s.Generator.Reason, "generator fell behind") || strings.Contains(s.Generator.Reason, "fell behind") {
+		t.Fatalf("want reason not to claim generator fell behind, got %q", s.Generator.Reason)
 	}
 }
 

@@ -179,6 +179,9 @@ func (w *worker) doJourney(ctx context.Context, j job) {
 			w.live.failed.Add(1)
 			w.stages[j.stage].fail()
 			w.journeyTally(st.Label).fail()
+			if kind == "render" {
+				w.jstats.fail("render")
+			}
 			w.jstats.abort()
 			return
 		}
@@ -236,8 +239,17 @@ func (w *worker) doJourneyStep(ctx context.Context, method, target string, heade
 	if len(body) > 0 {
 		payload = bytes.NewReader(body)
 	}
-	if w.cfg.base != "" && !strings.Contains(target, "://") {
-		target = w.cfg.base + target // the step's path is relative to the base URL
+	// The rendered path must be relative (start with "/") so it can be safely
+	// prefixed with the base URL. An absolute path (e.g. one that resolved to
+	// an arbitrary host) is a render failure; the session aborts with a
+	// "render" error.
+	if w.cfg.base != "" && !strings.HasPrefix(target, "/") {
+		return 0, "", nil, nil, time.Time{}, time.Time{}, phaseTimes{},
+			Failure{Kind: "render", Err: fmt.Errorf("rendered path %q does not start with '/', cannot be relative to base URL %q", target, w.cfg.base)}
+	}
+	// Always prefix the base URL if set; the path must be relative to it.
+	if w.cfg.base != "" {
+		target = w.cfg.base + target
 	}
 	req, err := http.NewRequestWithContext(reqCtx, method, target, payload)
 	if err != nil { // validated by the compiler; defensive only

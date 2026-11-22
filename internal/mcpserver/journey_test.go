@@ -2,10 +2,13 @@ package mcpserver
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,6 +39,48 @@ steps:
     check:
       status: 200
 `
+
+func TestLoadTestJourneyRenderedAbsoluteURLIsRenderFailure(t *testing.T) {
+	var secondHits atomic.Int64
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHits.Add(1)
+		w.WriteHeader(200)
+	}))
+	defer second.Close()
+
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, second.URL+"/x")
+	}))
+	defer first.Close()
+
+	scenario := `name: bypass
+steps:
+  - name: first
+    path: /first
+    extract:
+      next: {from: regex, path: '(.+)', group: 1}
+  - name: second
+    path: '{{.next}}'
+`
+	dir := writeScenario(t, scenario)
+	cs := connect(t, Options{ScenarioDir: dir})
+
+	var got LoadTestResult
+	e := call(t, cs, "load_test", map[string]any{
+		"url":     first.URL,
+		"journey": map[string]any{"file": "checkout.yaml", "rate": 5, "duration": "300ms"},
+	}, &got)
+	if e != "" {
+		t.Fatal(e)
+	}
+	if secondHits.Load() != 0 {
+		t.Fatalf("second server got %d requests, want 0", secondHits.Load())
+	}
+	if got.Journey == nil || got.Journey.Failures["render"] == 0 {
+		t.Fatalf("want render failure, got %+v", got.Journey)
+	}
+}
 
 func TestLoadTestRunsAJourney(t *testing.T) {
 	dir := writeScenario(t, simpleScenario)

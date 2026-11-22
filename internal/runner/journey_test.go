@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -13,6 +14,8 @@ import (
 )
 
 // newJourneyStep makes a journey step that sends one fixed request.
+// The target should be a relative path (starting with "/"); the base URL
+// will be prepended at runtime by doJourneyStep.
 func newJourneyStep(label, target string, check func(int, http.Header, []byte) error, extract func(map[string]any)) JourneyStep {
 	return JourneyStep{
 		Label: label,
@@ -54,8 +57,8 @@ func TestJourneyRecordsSteps(t *testing.T) {
 	defer srv.Close()
 
 	jn := &Journey{Name: "test-journey", Steps: []JourneyStep{
-		newJourneyStep("alpha", srv.URL+"/a", nil, nil),
-		newJourneyStep("beta", srv.URL+"/b", nil, nil),
+		newJourneyStep("alpha", "/a", nil, nil),
+		newJourneyStep("beta", "/b", nil, nil),
 	}}
 	res, err := Run(context.Background(), Config{
 		URL: srv.URL, Journey: jn, Rate: 10, Duration: 200 * time.Millisecond, Workers: 4,
@@ -100,13 +103,13 @@ func TestJourneyCheckFailureAborts(t *testing.T) {
 	defer srv.Close()
 
 	jn := &Journey{Name: "j", Steps: []JourneyStep{
-		newJourneyStep("one", srv.URL+"/one", func(status int, _ http.Header, _ []byte) error {
+		newJourneyStep("one", "/one", func(status int, _ http.Header, _ []byte) error {
 			if status != http.StatusOK {
 				return errors.New("not ok")
 			}
 			return nil
 		}, nil),
-		newJourneyStep("two", srv.URL+"/two", nil, nil),
+		newJourneyStep("two", "/two", nil, nil),
 	}}
 	res, err := Run(context.Background(), Config{URL: srv.URL, Journey: jn, Rate: 20, Duration: 200 * time.Millisecond, Workers: 2})
 	if err != nil {
@@ -133,9 +136,9 @@ func TestJourneyContinueOnCheckFailure(t *testing.T) {
 	var continued atomic.Int64
 	jn := &Journey{Name: "j", Steps: []JourneyStep{
 		{Label: "a", Think: time.Millisecond, ContinueOnCheckFailure: true,
-			Render: func(map[string]any) (string, string, http.Header, []byte, error) { return "GET", srv.URL + "/a", nil, nil, nil },
+			Render: func(map[string]any) (string, string, http.Header, []byte, error) { return "GET", "/a", nil, nil, nil },
 			Check:  func(map[string]any, int, http.Header, []byte) error { return errors.New("fails") }},
-		newJourneyStep("b", srv.URL+"/b", nil, func(vars map[string]any) {
+		newJourneyStep("b", "/b", nil, func(vars map[string]any) {
 			if _, ok := vars["ran_b"]; !ok {
 				vars["ran_b"] = true
 				continued.Add(1)
@@ -160,7 +163,7 @@ func TestJourneyExtractionFailureAborts(t *testing.T) {
 
 	jn := &Journey{Name: "j", Steps: []JourneyStep{
 		{Label: "a",
-			Render: func(map[string]any) (string, string, http.Header, []byte, error) { return "GET", srv.URL + "/a", nil, nil, nil },
+			Render: func(map[string]any) (string, string, http.Header, []byte, error) { return "GET", "/a", nil, nil, nil },
 			Extract: func(map[string]any, http.Header, []byte) error { return errors.New("no value") }},
 	}}
 	res, err := Run(context.Background(), Config{URL: srv.URL, Journey: jn, Rate: 5, Duration: 100 * time.Millisecond, Workers: 2})
@@ -197,9 +200,9 @@ func TestJourneyThinkMakesStepOnTime(t *testing.T) {
 	defer srv.Close()
 
 	jn := &Journey{Name: "j", Steps: []JourneyStep{
-		newJourneyStep("a", srv.URL+"/a", nil, nil),
+		newJourneyStep("a", "/a", nil, nil),
 		{Label: "b", Think: 60 * time.Millisecond,
-			Render: func(map[string]any) (string, string, http.Header, []byte, error) { return "GET", srv.URL + "/b", nil, nil, nil }},
+			Render: func(map[string]any) (string, string, http.Header, []byte, error) { return "GET", "/b", nil, nil, nil }},
 	}}
 	res, err := Run(context.Background(), Config{URL: srv.URL, Journey: jn, Rate: 2, Duration: 200 * time.Millisecond, Workers: 4, Phases: true})
 	if err != nil {
@@ -224,7 +227,7 @@ func TestJourneyLatencyCountsServerTime(t *testing.T) {
 	defer srv.Close()
 
 	jn := &Journey{Name: "j", Steps: []JourneyStep{
-		newJourneyStep("a", srv.URL+"/a", nil, nil),
+		newJourneyStep("a", "/a", nil, nil),
 	}}
 	res, err := Run(context.Background(), Config{URL: srv.URL, Journey: jn, Rate: 1, Duration: 100 * time.Millisecond, Workers: 1})
 	if err != nil {
@@ -239,11 +242,51 @@ func TestJourneyLatencyCountsServerTime(t *testing.T) {
 	}
 }
 
+func TestJourneyRenderedAbsoluteURLIsRenderFailure(t *testing.T) {
+	var srv2Hits atomic.Int64
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv2Hits.Add(1)
+		w.WriteHeader(200)
+	}))
+	defer srv2.Close()
+
+	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, srv2.URL+"/x")
+	}))
+	defer srv1.Close()
+
+	jn := &Journey{Name: "j", Steps: []JourneyStep{
+		{Label: "first",
+			Render: func(map[string]any) (string, string, http.Header, []byte, error) { return "GET", "/first", nil, nil, nil },
+			Extract: func(vars map[string]any, _ http.Header, body []byte) error {
+				vars["next"] = string(body)
+				return nil
+			}},
+		{Label: "second",
+			Render: func(vars map[string]any) (string, string, http.Header, []byte, error) {
+				return "GET", "{{.next}}", nil, nil, nil
+			}},
+	}}
+	// Need path relative? Rendered path will be absolute URL string; should fail.
+	// But compile-time? Path template "{{.next}}" has no :// literal, ok.
+	res, err := Run(context.Background(), Config{URL: srv1.URL, Journey: jn, Rate: 5, Duration: 100 * time.Millisecond, Workers: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if srv2Hits.Load() != 0 {
+		t.Fatalf("second server got %d requests, want 0", srv2Hits.Load())
+	}
+	if res.Journey == nil || res.Journey.Failures["render"] == 0 {
+		t.Fatalf("want render failure, got %+v", res.Journey)
+	}
+}
+
 func TestJourneyNormalizeRefusesBadJourney(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
 	defer srv.Close()
 
-	step := newJourneyStep("a", srv.URL+"/a", nil, nil)
+	step := newJourneyStep("a", "/a", nil, nil)
 	if _, err := Run(context.Background(), Config{URL: srv.URL, Journey: &Journey{Name: "j", Steps: nil}}); err == nil {
 		t.Error("a journey with no steps was accepted")
 	}

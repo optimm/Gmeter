@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -53,7 +54,11 @@ func (c *compiler) step(s *Step) (runner.JourneyStep, error) {
 	if _, err := http.NewRequest(method, "http://journey.invalid", nil); err != nil {
 		return runner.JourneyStep{}, fmt.Errorf("step %q: invalid method: %w", s.Name, err)
 	}
-	if strings.Contains(s.Path, "://") {
+	// Reject absolute URLs in paths at compile time, but allow "://" in query
+	// strings (e.g. "/search?url=http://example.com"). Parse the path: if it has
+	// a scheme such as "http" or "https", it is an absolute URL and is rejected.
+	u, err := url.Parse(s.Path)
+	if err != nil || u.Scheme != "" || u.Host != "" {
 		return runner.JourneyStep{}, fmt.Errorf("step %q: the path is always relative to the base URL: %q is not", s.Name, s.Path)
 	}
 	pathTmpl, err := newTemplate(s.Path)

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,7 +49,7 @@ type JourneyStep struct {
 
 	// Extract updates vars from the response. A non-nil error is an
 	// extraction failure and ends the session.
-	Extract func(vars map[string]any, status int, header http.Header, body []byte) error
+	Extract func(vars map[string]any, header http.Header, body []byte) error
 
 	// ContinueOnCheckFailure says the session carries on after a failed
 	// check instead of ending at that step.
@@ -180,10 +181,6 @@ func (w *worker) doJourney(ctx context.Context, j job) {
 			w.jstats.abort()
 			return
 		}
-		if ctx.Err() != nil {
-			w.jstats.abort()
-			return
-		}
 		corrected, service := finished.Sub(due), finished.Sub(sent)
 		w.t.corrected.Record(corrected)
 		w.t.service.Record(service)
@@ -201,8 +198,10 @@ func (w *worker) doJourney(ctx context.Context, j job) {
 			w.stages[j.stage].recordPhases(split)
 			w.journeyTally(st.Label).recordLabelPhases(split)
 		}
+		checkFailed := false
 		if st.Check != nil {
 			if err := st.Check(vars, status, respHeader, respBody); err != nil {
+				checkFailed = true
 				w.journeyTally(st.Label).fail()
 				w.stages[j.stage].fail()
 				w.jstats.fail("check")
@@ -212,8 +211,8 @@ func (w *worker) doJourney(ctx context.Context, j job) {
 				}
 			}
 		}
-		if st.Extract != nil {
-			if err := st.Extract(vars, status, respHeader, respBody); err != nil {
+		if st.Extract != nil && !checkFailed {
+			if err := st.Extract(vars, respHeader, respBody); err != nil {
 				w.journeyTally(st.Label).fail()
 				w.stages[j.stage].fail()
 				w.jstats.fail("extraction")
@@ -235,6 +234,9 @@ func (w *worker) doJourneyStep(ctx context.Context, method, target string, heade
 	var payload io.Reader
 	if len(body) > 0 {
 		payload = bytes.NewReader(body)
+	}
+	if w.cfg.base != "" && !strings.Contains(target, "://") {
+		target = w.cfg.base + target // the step's path is relative to the base URL
 	}
 	req, err := http.NewRequestWithContext(reqCtx, method, target, payload)
 	if err != nil { // validated by the compiler; defensive only

@@ -704,10 +704,13 @@ func (c Config) normalize() (Config, error) {
 			case seen[st.Label]:
 				return c, fmt.Errorf("runner: journey step %q: two steps share a label; step labels must be unique", st.Label)
 			}
-			seen[st.Label] = true
+				seen[st.Label] = true
 		}
 		if len(c.Stages) == 0 { // Rate and Duration say the session rate and length, like a plain run
 			c.Stages = pacer.ConstantRate(c.Rate, c.Duration)
+		}
+		if c.base == "" { // journey steps' paths are relative to the URL
+			c.base = strings.TrimSuffix(c.URL, "/")
 		}
 	case len(c.Offsets) > 0:
 		if len(c.Stages) > 0 || c.Rate != 0 || c.Duration != 0 {

@@ -25,7 +25,7 @@ func newJourneyStep(label, target string, check func(int, http.Header, []byte) e
 			}
 			return nil
 		},
-		Extract: func(vars map[string]any, _ int, _ http.Header, _ []byte) error {
+		Extract: func(vars map[string]any, _ http.Header, _ []byte) error {
 			if extract != nil {
 				extract(vars)
 			}
@@ -161,7 +161,7 @@ func TestJourneyExtractionFailureAborts(t *testing.T) {
 	jn := &Journey{Name: "j", Steps: []JourneyStep{
 		{Label: "a",
 			Render: func(map[string]any) (string, string, http.Header, []byte, error) { return "GET", srv.URL + "/a", nil, nil, nil },
-			Extract: func(map[string]any, int, http.Header, []byte) error { return errors.New("no value") }},
+			Extract: func(map[string]any, http.Header, []byte) error { return errors.New("no value") }},
 	}}
 	res, err := Run(context.Background(), Config{URL: srv.URL, Journey: jn, Rate: 5, Duration: 100 * time.Millisecond, Workers: 2})
 	if err != nil {

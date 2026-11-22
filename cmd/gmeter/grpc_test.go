@@ -43,15 +43,18 @@ func tlsEchoServer(t *testing.T) (addr, ca string) {
 
 type grpcRun struct {
 	Run struct {
-		URL      string  `json:"url"`
-		Method   string  `json:"method"`
-		Workers  int     `json:"workers"`
-		Profile  string  `json:"profile"`
-		Protocol string  `json:"protocol"`
-		Arrivals string  `json:"arrivals"`
-		Seed     uint64  `json:"seed"`
-		Timeout  float64 `json:"timeout_seconds"`
-		Spin     float64 `json:"spin_seconds"`
+		URL        string  `json:"url"`
+		Method     string  `json:"method"`
+		Workers    int     `json:"workers"`
+		Profile    string  `json:"profile"`
+		Protocol   string  `json:"protocol"`
+		Arrivals   string  `json:"arrivals"`
+		Seed       uint64  `json:"seed"`
+		Timeout    float64 `json:"timeout_seconds"`
+		Spin       float64 `json:"spin_seconds"`
+		Streaming  string  `json:"streaming,omitempty"`
+		StreamSend int     `json:"stream_send,omitempty"`
+		StreamRecv int     `json:"stream_recv,omitempty"`
 	} `json:"run"`
 	Scheduled uint64            `json:"scheduled"`
 	OK        uint64            `json:"ok"`
@@ -184,7 +187,8 @@ func TestGRPCRefusesWhatItCannotRun(t *testing.T) {
 		{"reserved metadata", append(call, "-H", "grpc-timeout: 1S", addr), "grpc-timeout"},
 		{"a field the request does not have", append(call, "-data", `{"nmae":"x"}`, addr), "nmae"},
 		{"a method the server does not have", []string{"-plaintext", "-call", "gmeter.demo.Echo/Shout", addr}, "Shout"},
-		{"a streaming method", []string{"-plaintext", "-call", "gmeter.demo.Echo/Chat", addr}, "stream"},
+		{"stream messages on a unary method", []string{"-plaintext", "-call", grpcdemo.Say, "-stream-send", "2", addr}, "unary"},
+		{"too many requests on a server stream", []string{"-plaintext", "-call", grpcdemo.Feed, "-stream-send", "2", addr}, "one request"},
 		{"stages and a rate", append(call, "-stages", "1s@10", "-rate", "5", addr), "-stages"},
 		{"a missing protoset", append(call, "-protoset", "/no/such/file", addr), "-protoset"},
 		{"nothing listening", []string{"-plaintext", "-call", grpcdemo.Say, closed}, "refused"},
@@ -246,5 +250,63 @@ func TestGRPCGivesUpOnAServerThatNeverAnswers(t *testing.T) {
 	code, _, stderr := exec(t, "grpc", "-plaintext", "-call", grpcdemo.Say, "-timeout", "300ms", ln.Addr().String())
 	if code != 2 || !strings.Contains(stderr, ln.Addr().String()) || time.Since(start) > 3*time.Second {
 		t.Errorf("exit %d after %v, stderr:\n%s\nwant 2 within about -timeout, naming the server", code, time.Since(start), stderr)
+	}
+}
+
+func TestGRPCStreams(t *testing.T) {
+	addr, echo := echoServer(t, grpcdemo.ReflectionBoth)
+	run, _, stderr := grpcSaved(t, "-plaintext", "-call", grpcdemo.Feed, "-data", `{"count":3}`, "-rate", "50", "-duration", "200ms", addr)
+	if run.OK != 10 {
+		t.Errorf("server stream: %d ok, want 10", run.OK)
+	}
+	if run.Run.Streaming != "server" {
+		t.Errorf("server stream: streaming %q, want server", run.Run.Streaming)
+	}
+	if echo.Calls.Load() != 10 {
+		t.Errorf("server stream: server calls %d, want one per stream (10)", echo.Calls.Load())
+	}
+	if !strings.Contains(stderr, "server stream") {
+		t.Errorf("banner missing 'server stream':\n%s", stderr)
+	}
+
+	addr2, echo2 := echoServer(t, grpcdemo.ReflectionBoth)
+	run2, _, _ := grpcSaved(t, "-plaintext", "-call", grpcdemo.Collect, "-stream-send", "3", "-rate", "50", "-duration", "200ms", addr2)
+	if run2.OK != 10 {
+		t.Errorf("client stream: %d ok, want 10", run2.OK)
+	}
+	if run2.Run.Streaming != "client" {
+		t.Errorf("client stream: streaming %q, want client", run2.Run.Streaming)
+	}
+	if echo2.Calls.Load() != 30 {
+		t.Errorf("client stream: server calls %d, want 30", echo2.Calls.Load())
+	}
+
+	addr3, echo3 := echoServer(t, grpcdemo.ReflectionBoth)
+	run3, _, _ := grpcSaved(t, "-plaintext", "-call", grpcdemo.Chat, "-stream-send", "2", "-rate", "50", "-duration", "200ms", addr3)
+	if run3.OK != 10 {
+		t.Errorf("bidi stream: %d ok, want 10", run3.OK)
+	}
+	if run3.Run.Streaming != "bidi" {
+		t.Errorf("bidi stream: streaming %q, want bidi", run3.Run.Streaming)
+	}
+	if echo3.Calls.Load() != 20 {
+		t.Errorf("bidi stream: server calls %d, want 20", echo3.Calls.Load())
+	}
+
+	addr4, _ := echoServer(t, grpcdemo.ReflectionBoth)
+	run4, _, _ := grpcSaved(t, "-plaintext", "-call", grpcdemo.Feed, "-data", `{"count":3}`, "-stream-recv", "1", "-rate", "20", "-duration", "200ms", addr4)
+	if run4.OK != 4 {
+		t.Errorf("stream-recv 1: %d ok, want 4", run4.OK)
+	}
+}
+
+func TestGRPCStreamStatus(t *testing.T) {
+	addr, _ := echoServer(t, grpcdemo.ReflectionBoth)
+	run, _, _ := grpcSaved(t, "-quiet", "-plaintext", "-call", grpcdemo.Chat, "-data", `{"code":"NOT_FOUND"}`, "-stream-send", "1", "-rate", "50", "-duration", "200ms", addr)
+	if run.Codes["NOT_FOUND"] != run.Scheduled {
+		t.Errorf("codes %v, scheduled %d; want all streams NOT_FOUND", run.Codes, run.Scheduled)
+	}
+	if run.BadStatus != run.Codes["NOT_FOUND"] {
+		t.Errorf("bad status %d, want %d", run.BadStatus, run.Codes["NOT_FOUND"])
 	}
 }

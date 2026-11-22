@@ -107,7 +107,7 @@ and whether the generator itself kept up. [Reading the report](docs/reading-the-
 | [Reading the report](docs/reading-the-report.md) | the live line and the final report, the per-window timeline, phases (where the time goes), the generator line |
 | [Finding the highest rate](docs/find.md) | `gmeter find`: the most a service can take while meeting a target such as `p99=50ms` |
 | [Replaying real traffic](docs/replay.md) | `gmeter replay`: send a traffic log at the pace it was recorded, with a report per endpoint |
-| [gRPC](docs/grpc.md) | `gmeter grpc`: unary calls found by server reflection or from a schema |
+| [gRPC](docs/grpc.md) | `gmeter grpc`: unary and streaming calls found by server reflection or from a schema |
 | [Several generators](docs/several-generators.md) | `-agents`: spread one test over several machines |
 | [Comparing runs](docs/comparing-runs.md) | `gmeter diff`: what changed between two runs, per endpoint and per phase |
 | [Using it from Go](docs/go-package.md) | the `gmeter` package, for a load test inside `go test` |
@@ -121,12 +121,6 @@ go test -race ./...
 ```
 
 [How it works](docs/how-it-works.md#development) says what the tests prove.
-
-## Coming soon
-
-The next set of features:
-
-- **gRPC streaming**: server-streaming, client-streaming and bidirectional methods, beyond unary
 
 ## License
 

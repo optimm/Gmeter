@@ -49,7 +49,7 @@ got, err := gmeter.FindCapacity(ctx, gmeter.Config{URL: srv.URL}, gmeter.SLO{Qua
 fmt.Printf("holds %.0f requests per second (at least: %v)\n", got.MaxRPS, got.LowerBound)
 ```
 
-To load-test a unary gRPC method, set `GRPC` and give the server's `host:port` as the `URL`. Everything else works the same:
+To load-test a gRPC method, unary or streaming, set `GRPC` and give the server's `host:port` as the `URL`. Everything else works the same:
 the stages, `Poisson`, `Workers`, `TLS` (for a server that wants a client certificate too), `OnRequest`, `Meets` and
 `FindCapacity`.
 
@@ -63,8 +63,11 @@ fmt.Println(res.Codes()) // map[NOT_FOUND:3 OK:29997]: the answers by status cod
 ```
 
 `GRPC` takes what the `grpc` command's flags take: `Protoset` (a descriptor set, or the server is asked by reflection),
-`Conns`, `Metadata`, and `Plaintext`. `Method`, `Header`, `Body`, `Requests` and `HTTP2` are for HTTP and are refused
-alongside it. A `Sample` has the call's `Code` where an HTTP one has its `Status`. As in the command, `UNAVAILABLE` counts
-as a failure (`Errors()["unavailable"]`), since gRPC says it both for a broken connection and for a server that is down.
+`Conns`, `Metadata`, `Plaintext`, and for a streaming method `SendMessages` and `RecvMessages` (the `-stream-send` and
+`-stream-recv` flags). `Method`, `Header`, `Body`, `Requests` and `HTTP2` are for HTTP and are refused alongside it. For a streaming method, one scheduled call is one whole stream: `SendMessages` is how many request
+messages it sends (zero is one for client or bidirectional streaming), and `RecvMessages` is how many responses it
+reads (zero reads until the server closes). A `Sample` has the call's `Code` where an HTTP one has its `Status`. As in
+the command, `UNAVAILABLE` counts as a failure (`Errors()["unavailable"]`), since gRPC says it both for a broken
+connection and for a server that is down.
 
 The saved-results file, `plot`, agents and `replay` of a trace file stay in the command.

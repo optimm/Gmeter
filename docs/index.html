@@ -398,7 +398,7 @@ footer { padding: 72px 0 40px; font-size: 14px; color: var(--ink-2); display: fl
           <button class="tab" role="tab" id="t-find" aria-controls="p-find" aria-selected="false" tabindex="-1"><code>gmeter find</code><small>Find the rate that meets an SLO</small></button>
           <button class="tab" role="tab" id="t-replay" aria-controls="p-replay" aria-selected="false" tabindex="-1"><code>gmeter replay</code><small>Send real traffic at its real pace</small></button>
           <button class="tab" role="tab" id="t-diff" aria-controls="p-diff" aria-selected="false" tabindex="-1"><code>gmeter diff</code><small>Compare two runs, gate a build</small></button>
-          <button class="tab" role="tab" id="t-grpc" aria-controls="p-grpc" aria-selected="false" tabindex="-1"><code>gmeter grpc</code><small>Load-test a unary gRPC method</small></button>
+          <button class="tab" role="tab" id="t-grpc" aria-controls="p-grpc" aria-selected="false" tabindex="-1"><code>gmeter grpc</code><small>Load-test a gRPC method</small></button>
           <button class="tab" role="tab" id="t-agents" aria-controls="p-agents" aria-selected="false" tabindex="-1"><code>-agents</code><small>Spread one test over machines</small></button>
           <button class="tab" role="tab" id="t-plot" aria-controls="p-plot" aria-selected="false" tabindex="-1"><code>gmeter plot</code><small>Chart every request of a run</small></button>
           <button class="tab" role="tab" id="t-go" aria-controls="p-go" aria-selected="false" tabindex="-1"><code>import "…/Gmeter"</code><small>Gate a Go test on latency</small></button>
@@ -488,9 +488,9 @@ share of B's requests that are slower than A's percentiles
 
         <div class="panel" role="tabpanel" id="p-grpc" aria-labelledby="t-grpc" tabindex="0" hidden>
           <h3>gRPC on the same clock</h3>
-          <p>Call any unary method by name. The schema comes from server reflection or a descriptor set, so there's no
-            code to generate. The request is checked against the method's input type before anything is sent, and the
-            results are counted by status code.</p>
+          <p>Call any unary or streaming method by name. The schema comes from server reflection or a descriptor set, so
+            there's no code to generate. The request is checked against the method's input type before anything is
+            sent, and the results are counted by status code. For a stream, one scheduled call is one whole stream.</p>
 <pre class="term"><span class="p">$ gmeter grpc -plaintext -call gmeter.demo.Echo/Say \
     -data '{"name":"ann","delay_ms":5}' -rate 1000 -duration 10s 127.0.0.1:18097</span>
 requests   10000 scheduled   10000 ok   0 bad status   0 failed   0 dropped
@@ -536,7 +536,7 @@ gmeter plot: wrote run.html</pre>
 
         <div class="panel" role="tabpanel" id="p-go" aria-labelledby="t-go" tabindex="0" hidden>
           <h3>Run a load from a Go test, and fail it on the numbers</h3>
-          <p>The engine is a Go package, for HTTP and unary gRPC: no process to start and no output to parse. <code>Meets</code> uses the same
+          <p>The engine is a Go package, for HTTP and gRPC: no process to start and no output to parse. <code>Meets</code> uses the same
             rules as <code>gmeter find</code>, so it also fails when Gmeter couldn't keep time itself. <code>FindCapacity</code>
             is the rate search as a function.</p>
 <pre class="term"><span class="p">$ go get github.com/optimm/Gmeter</span>
@@ -596,7 +596,7 @@ load_test   url=http://93.184.216.34/  rate=10  duration=1s
             <tr><th scope="row">HTTP/2</th>
               <td class="us">Yes, TLS and h2c</td><td class="no">No</td><td class="no">No</td><td><span class="y">Yes</span></td><td><span class="y">Yes</span></td><td class="no">Not built in</td></tr>
             <tr><th scope="row">gRPC</th>
-              <td class="us">Unary</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td><span class="y">Yes</span>, streaming too</td><td>With a custom client</td></tr>
+              <td class="us">Unary and streaming</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td><span class="y">Yes</span>, streaming too</td><td>With a custom client</td></tr>
             <tr><th scope="row">Several machines, one merged result</th>
               <td class="us">Yes, histograms added</td><td class="no">No</td><td class="no">No</td><td>Merge the result files yourself</td><td>k6 Operator or Grafana Cloud</td><td><span class="y">Yes</span>, built in</td></tr>
             <tr><th scope="row">Importable as a Go library</th>

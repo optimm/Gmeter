@@ -33,7 +33,7 @@ container "loopback" is the container, not your machine, so to reach a service o
 
 | Tool | What it does |
 |---|---|
-| `load_test` | Sends a constant or shaped load (`rate` and `duration`, or `stages`) at an HTTP URL or a unary gRPC method, and reports the result. |
+| `load_test` | Sends a constant or shaped load (`rate` and `duration`, or `stages`) at an HTTP URL or a gRPC method (unary or streaming), and reports the result. |
 | `find_capacity` | Finds the highest rate that meets a target such as `p99=50ms`, like `gmeter find`. |
 | `check_slo` | Runs a load and answers yes or no against a target, with the reasons it was missed. |
 | `compare_runs` | Compares two runs made in the session, by `run_id`, and flags a p99 regression. |

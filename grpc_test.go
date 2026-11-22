@@ -67,6 +67,28 @@ func TestRunCallsAGRPCMethodAtTheRate(t *testing.T) {
 	}
 }
 
+func TestRunCallsAStreamingGRPCMethod(t *testing.T) {
+	addr, e := echo(t, grpcdemo.ReflectionBoth)
+
+	res, err := gmeter.Run(context.Background(), gmeter.Config{
+		URL: addr, Rate: 100, Duration: 300 * time.Millisecond,
+		GRPC: &gmeter.GRPC{Method: grpcdemo.Chat, Plaintext: true, SendMessages: 2, RecvMessages: 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// One scheduled call is one whole stream: 100/s for 300ms is 30 streams,
+	// each sending two messages and reading two back.
+	if res.Scheduled() != 30 || res.OK() != 30 || res.Codes()["OK"] != 30 || res.BadStatus() != 0 || res.Failed() != 0 {
+		t.Errorf("scheduled %d, ok %d, codes %v, bad %d, failed %d; want 30 OK streams",
+			res.Scheduled(), res.OK(), res.Codes(), res.BadStatus(), res.Failed())
+	}
+	if got := e.Calls.Load(); got != 60 {
+		t.Errorf("the server saw %d messages, want 60 (two per stream)", got)
+	}
+}
+
 func TestAGRPCStatusThatIsNotOKIsABadStatus(t *testing.T) {
 	addr, _ := echo(t, grpcdemo.ReflectionBoth)
 	cfg := sayConfig(addr)
@@ -140,7 +162,6 @@ func TestAGRPCConfigThatCannotRunIsRefused(t *testing.T) {
 	}{
 		"no method":               {with(func(c *gmeter.Config) { c.GRPC.Method = "" }), "Method"},
 		"unknown method":          {with(func(c *gmeter.Config) { c.GRPC.Method = "gmeter.demo.Echo/Shout" }), "has no method Shout"},
-		"a stream":                {with(func(c *gmeter.Config) { c.GRPC.Method = "gmeter.demo.Echo/Chat" }), "streaming"},
 		"a misspelt field":        {with(func(c *gmeter.Config) { c.GRPC.Data = []byte(`{"nme":"x"}`) }), "unknown field"},
 		"HTTP method":             {with(func(c *gmeter.Config) { c.Method = "POST" }), "HTTP"},
 		"HTTP header":             {with(func(c *gmeter.Config) { c.Header = http.Header{"A": {"b"}} }), "HTTP"},

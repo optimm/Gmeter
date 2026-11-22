@@ -1,7 +1,8 @@
-// Package grpcload makes the calls of a gRPC load test: one unary method,
-// found by server reflection or in a descriptor set, called again and again
-// with one request built from JSON. A Caller's Call is what runner.Config.Call
-// runs for every request of the schedule.
+// Package grpcload makes the calls of a gRPC load test: one unary or streaming
+// method, found by server reflection or in a descriptor set, called again and
+// again with one request built from JSON. A Caller's Call is what
+// runner.Config.Call runs for every request of the schedule: one scheduled
+// call is one whole stream for a streaming method.
 package grpcload
 
 import (
@@ -9,6 +10,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"slices"
 	"strings"
@@ -53,6 +55,14 @@ type Options struct {
 
 	Conns    int         // connections to spread the calls over; 0 is 1
 	Metadata metadata.MD // sent with every call
+
+	// SendMessages is how many request messages each stream sends. Zero is one
+	// for a client or bidirectional stream. A server-streaming method always
+	// sends one, and a unary method none.
+	SendMessages int
+	// RecvMessages is how many response messages each stream reads before it is
+	// ended. Zero reads until the server ends the stream.
+	RecvMessages int
 }
 
 // Caller calls one method over a few open connections.
@@ -62,6 +72,11 @@ type Caller struct {
 	path    string // "/package.Service/Method"
 	payload []byte // the request, encoded once
 	md      metadata.MD
+
+	clientStreams bool
+	serverStreams bool
+	stream        *grpc.StreamDesc // nil for a unary method
+	send, recv    int
 }
 
 // Dial opens the connections, waits until every one is ready (so connecting is
@@ -71,6 +86,12 @@ func Dial(ctx context.Context, o Options) (*Caller, error) {
 	service, method, err := splitMethod(o.Method)
 	if err != nil {
 		return nil, err
+	}
+	switch {
+	case o.SendMessages < 0:
+		return nil, fmt.Errorf("grpc: -stream-send must be at least 0, got %d", o.SendMessages)
+	case o.RecvMessages < 0:
+		return nil, fmt.Errorf("grpc: -stream-recv must be at least 0, got %d", o.RecvMessages)
 	}
 	switch {
 	case o.Conns < 0:
@@ -117,6 +138,18 @@ func Dial(ctx context.Context, o Options) (*Caller, error) {
 		return nil, err
 	}
 	c.path = "/" + string(md.Parent().FullName()) + "/" + string(md.Name())
+
+	c.clientStreams = md.IsStreamingClient()
+	c.serverStreams = md.IsStreamingServer()
+	if c.clientStreams || c.serverStreams {
+		c.stream = &grpc.StreamDesc{StreamName: string(md.Name()), ClientStreams: c.clientStreams, ServerStreams: c.serverStreams}
+	}
+	send, recv, err := normalizeCounts(c.path, c.clientStreams, c.serverStreams, o.SendMessages, o.RecvMessages)
+	if err != nil {
+		c.Close()
+		return nil, err
+	}
+	c.send, c.recv = send, recv
 	return c, nil
 }
 
@@ -245,10 +278,41 @@ func findMethod(files *protoregistry.Files, service, method string) (protoreflec
 		}
 		return nil, fmt.Errorf("grpc: %s has no method %s; it has: %s", service, method, strings.Join(names, ", "))
 	}
-	if md.IsStreamingClient() || md.IsStreamingServer() {
-		return nil, fmt.Errorf("grpc: %s/%s is a streaming method, and only unary methods can be load-tested", service, method)
-	}
 	return md, nil
+}
+
+// normalizeCounts validates and normalizes the send/recv counts for a method of
+// the given streaming mode. It returns the counts to use.
+func normalizeCounts(path string, clientStreams, serverStreams bool, send, recv int) (int, int, error) {
+	unary := !clientStreams && !serverStreams
+	serverStreaming := !clientStreams && serverStreams
+	switch {
+	case unary:
+		if send != 0 || recv != 0 {
+			return 0, 0, fmt.Errorf("grpc: %s is a unary method, so -stream-send and -stream-recv have nothing to do", path)
+		}
+	case serverStreaming:
+		if send < 0 {
+			return 0, 0, fmt.Errorf("grpc: -stream-send must be at least 0, got %d", send)
+		}
+		if send > 1 {
+			return 0, 0, fmt.Errorf("grpc: %s is a server-streaming method, which sends one request per stream; -stream-send %d is too many", path, send)
+		}
+		if send == 0 {
+			send = 1
+		}
+	default: // client or bidi
+		if send < 0 {
+			return 0, 0, fmt.Errorf("grpc: -stream-send must be at least 0, got %d", send)
+		}
+		if send == 0 {
+			send = 1
+		}
+	}
+	if recv < 0 {
+		return 0, 0, fmt.Errorf("grpc: -stream-recv must be at least 0, got %d", recv)
+	}
+	return send, recv, nil
 }
 
 func services(files *protoregistry.Files) []string {
@@ -281,12 +345,44 @@ func request(in protoreflect.MessageDescriptor, data []byte) ([]byte, error) {
 // Method is the method called, as gRPC names it: "/package.Service/Method".
 func (c *Caller) Method() string { return c.path }
 
-// Call makes one call. It returns the name of the status code the server
-// answered with ("OK", "NOT_FOUND", ...), or an error when there was no answer:
-// ctx's own error when ctx ended first, and a runner.Failure of kind
-// "unavailable" for UNAVAILABLE, which is also what gRPC says when a
-// connection failed, so it cannot be told apart from a server's answer.
+// Streaming is "", "server", "client" or "bidi".
+func (c *Caller) Streaming() string {
+	switch {
+	case c.clientStreams && c.serverStreams:
+		return "bidi"
+	case c.clientStreams:
+		return "client"
+	case c.serverStreams:
+		return "server"
+	default:
+		return ""
+	}
+}
+
+// StreamMessages is how many request messages each stream sends and how many
+// responses it reads before ending (0: until the server closes). Both are 0
+// for a unary method.
+func (c *Caller) StreamMessages() (send, recv int) {
+	if c.stream == nil {
+		return 0, 0
+	}
+	return c.send, c.recv
+}
+
+// Call makes one call (or one whole stream, for a streaming method). It returns
+// the name of the status code the server answered with ("OK", "NOT_FOUND", ...),
+// or an error when there was no answer: ctx's own error when ctx ended first,
+// and a runner.Failure of kind "unavailable" for UNAVAILABLE, which is also
+// what gRPC says when a connection failed, so it cannot be told apart from a
+// server's answer.
 func (c *Caller) Call(ctx context.Context) (string, error) {
+	if c.stream != nil {
+		return c.callStream(ctx)
+	}
+	return c.callUnary(ctx)
+}
+
+func (c *Caller) callUnary(ctx context.Context) (string, error) {
 	if len(c.md) > 0 {
 		ctx = metadata.NewOutgoingContext(ctx, c.md)
 	}
@@ -295,6 +391,12 @@ func (c *Caller) Call(ctx context.Context) (string, error) {
 	if err == nil {
 		return "OK", nil
 	}
+	return c.outcome(ctx, err)
+}
+
+// outcome turns the result of a call or stream into the status name, or an
+// error when there was no answer. io.EOF is handled by the streaming caller.
+func (c *Caller) outcome(ctx context.Context, err error) (string, error) {
 	st, ok := status.FromError(err)
 	if !ok {
 		return "", err
@@ -313,6 +415,50 @@ func (c *Caller) Call(ctx context.Context) (string, error) {
 		return "", runner.Failure{Kind: "unavailable", Err: err}
 	}
 	return CodeName(st.Code()), nil
+}
+
+func (c *Caller) callStream(ctx context.Context) (string, error) {
+	if len(c.md) > 0 {
+		ctx = metadata.NewOutgoingContext(ctx, c.md)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	conn := c.conns[(c.next.Add(1)-1)%uint64(len(c.conns))]
+	st, err := conn.NewStream(ctx, c.stream, c.path, grpc.ForceCodecV2(rawCodec{}))
+	if err != nil {
+		return c.outcome(ctx, err)
+	}
+
+	var sendErr error
+	for range c.send {
+		if err := st.SendMsg(c.payload); err != nil {
+			sendErr = err
+			break
+		}
+	}
+	if sendErr == nil {
+		if err := st.CloseSend(); err != nil {
+			sendErr = err
+		}
+	}
+	// A non-EOF send/close error is final. io.EOF means the server ended the
+	// stream; RecvMsg below returns the status that says why.
+	if sendErr != nil && !errors.Is(sendErr, io.EOF) {
+		return c.outcome(ctx, sendErr)
+	}
+
+	got := 0
+	for c.recv == 0 || got < c.recv {
+		err := st.RecvMsg(discard{})
+		if errors.Is(err, io.EOF) {
+			return "OK", nil
+		}
+		if err != nil {
+			return c.outcome(ctx, err)
+		}
+		got++
+	}
+	return "OK", nil
 }
 
 // Close closes the connections.

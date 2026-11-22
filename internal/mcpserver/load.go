@@ -25,12 +25,16 @@ type StageInput struct {
 	To       float64 `json:"to" jsonschema:"requests per second at the end: the same as from holds the rate, higher ramps up, 0 for both pauses"`
 }
 
-// GRPCInput says which unary gRPC method to call.
+// GRPCInput says which gRPC method to call, unary or streaming.
 type GRPCInput struct {
 	Method    string              `json:"method" jsonschema:"the method to call, as package.Service/Method; its schema is read from the server by reflection"`
 	Data      string              `json:"data,omitempty" jsonschema:"the request message as JSON in the protobuf mapping; empty sends the empty message"`
 	Plaintext bool                `json:"plaintext,omitempty" jsonschema:"speak gRPC without TLS, for a server that does not use it"`
 	Metadata  map[string][]string `json:"metadata,omitempty" jsonschema:"metadata sent with every call, gRPC's counterpart of headers"`
+	// SendMessages and RecvMessages describe a streaming method; both are
+	// ignored for a unary one, and refused if set.
+	SendMessages int `json:"send_messages,omitempty" jsonschema:"for a streaming method, how many request messages each stream sends; 0 is one for a client or bidirectional stream, and a server stream always sends one"`
+	RecvMessages int `json:"recv_messages,omitempty" jsonschema:"for a streaming method, how many responses each stream reads; 0 reads until the server closes"`
 }
 
 // TargetInput says what to send load to: the part of a request every tool shares.
@@ -39,7 +43,7 @@ type TargetInput struct {
 	Method   string            `json:"method,omitempty" jsonschema:"HTTP method, default GET; not for gRPC"`
 	Headers  map[string]string `json:"headers,omitempty" jsonschema:"HTTP headers sent with every request; not for gRPC"`
 	Body     string            `json:"body,omitempty" jsonschema:"HTTP request body sent with every request; not for gRPC"`
-	GRPC     *GRPCInput        `json:"grpc,omitempty" jsonschema:"call a unary gRPC method instead of sending HTTP requests"`
+	GRPC     *GRPCInput        `json:"grpc,omitempty" jsonschema:"call a gRPC method (unary or streaming) instead of sending HTTP requests"`
 	Workers  int               `json:"workers,omitempty" jsonschema:"most requests in flight, which is also the most connections; default 50"`
 	Timeout  string            `json:"timeout,omitempty" jsonschema:"per request, such as 5s; default 10s"`
 	HTTP2    bool              `json:"http2,omitempty" jsonschema:"send over HTTP/2 only"`
@@ -99,7 +103,7 @@ type LoadTestResult struct {
 	Stages           []StageOutput     `json:"stages,omitempty" jsonschema:"one entry per stage, when there was more than one"`
 }
 
-const loadTestDescription = `Send a steady or shaped load at an HTTP or unary gRPC service and report its latency.
+const loadTestDescription = `Send a steady or shaped load at an HTTP or gRPC service and report its latency.
 
 Requests are sent on a clock, at the rate asked for, whatever the server does; latency is measured from the
 intended send time ("corrected"), so queueing behind a slow server counts. Give either rate and duration,
@@ -176,7 +180,7 @@ func (s *service) target(ctx context.Context, in TargetInput) (cfg gmeter.Config
 		cfg.TLS = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // asked for, for a self-signed server
 	}
 	if g := in.GRPC; g != nil {
-		cfg.GRPC = &gmeter.GRPC{Method: g.Method, Plaintext: g.Plaintext, Metadata: g.Metadata}
+		cfg.GRPC = &gmeter.GRPC{Method: g.Method, Plaintext: g.Plaintext, Metadata: g.Metadata, SendMessages: g.SendMessages, RecvMessages: g.RecvMessages}
 		if g.Data != "" {
 			cfg.GRPC.Data = []byte(g.Data)
 		}

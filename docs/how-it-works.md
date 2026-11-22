@@ -46,7 +46,8 @@ Back to the [README](../README.md).
   comparison (`diff`), including per endpoint and per phase.
 - **`internal/grpcload`**: `gmeter grpc`'s calls. It reads the schema (server reflection, either version, following
   the imports file by file, or a descriptor set), builds the request with `dynamicpb` once, and sends those bytes
-  through a codec that neither encodes nor decodes; the runner calls it through `Config.Call`, which replaces the
+  through a codec that neither encodes nor decodes, using unary `Invoke` or streaming `NewStream`/`SendMsg`/`RecvMsg`.
+  One scheduled call is one whole stream. The runner calls it through `Config.Call`, which replaces the
   HTTP request with any call that returns a status code name. `internal/grpcdemo` is an Echo service built from a
   hand-written descriptor, so the tests need neither `protoc` nor generated code. gRPC support is the only part
   with dependencies: `google.golang.org/grpc` v1.85.0 and `google.golang.org/protobuf` v1.36.12, pinned.

@@ -18,22 +18,24 @@ import (
 	"github.com/optimm/Gmeter/internal/runner"
 )
 
-// runGRPC implements `gmeter grpc`: call one unary gRPC method at a rate or a
-// profile. Exit code: 0 ran (also when interrupted, with a partial report), 1
-// failed while writing the report, 2 bad usage, or a method that cannot be
-// called (unreachable, unknown, streaming, or a request that does not fit it).
+// runGRPC implements `gmeter grpc`: call one gRPC method, unary or streaming, at
+// a rate or a profile. Exit code: 0 ran (also when interrupted, with a partial
+// report), 1 failed while writing the report, 2 bad usage, or a method that
+// cannot be called (unreachable, unknown, or a request that does not fit it).
 func runGRPC(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("gmeter grpc", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var (
-		method    = fs.String("call", "", "the method to call, as package.Service/Method (required); it must be unary")
-		data      = fs.String("data", "", "the request, as JSON in the protobuf mapping (default the empty message); prefix with @ to read it from a file")
-		protoset  = fs.String("protoset", "", "a FileDescriptorSet with the method's schema (protoc --descriptor_set_out=FILE --include_imports); without it the server is asked, by server reflection")
-		plaintext = fs.Bool("plaintext", false, "connect without TLS (HTTP/2 over cleartext), for a server that does not use TLS")
-		conns     = fs.Int("conns", 1, "connections to spread the calls over; gRPC sends every call of a connection over it at once, so one connection can be a bottleneck of its own")
-		rate      = fs.Float64("rate", 100, "target calls per second (open loop)")
-		duration  = fs.Duration("duration", 10*time.Second, "how long to keep scheduling calls")
-		stagesIn  = fs.String("stages", "", `load profile instead of -rate and -duration: comma-separated DURATION@RATE (constant) or DURATION@FROM->TO (ramp)`)
+		method     = fs.String("call", "", "the method to call, as package.Service/Method (required); unary or streaming")
+		streamSend = fs.Int("stream-send", 0, "request messages each stream sends (0 is one for a client or bidirectional stream; a server-streaming method always sends one)")
+		streamRecv = fs.Int("stream-recv", 0, "response messages each stream reads before it ends; 0 reads until the server closes")
+		data       = fs.String("data", "", "the request, as JSON in the protobuf mapping (default the empty message); prefix with @ to read it from a file")
+		protoset   = fs.String("protoset", "", "a FileDescriptorSet with the method's schema (protoc --descriptor_set_out=FILE --include_imports); without it the server is asked, by server reflection")
+		plaintext  = fs.Bool("plaintext", false, "connect without TLS (HTTP/2 over cleartext), for a server that does not use TLS")
+		conns      = fs.Int("conns", 1, "connections to spread the calls over; gRPC sends every call of a connection over it at once, so one connection can be a bottleneck of its own")
+		rate       = fs.Float64("rate", 100, "target calls (or streams) per second (open loop)")
+		duration   = fs.Duration("duration", 10*time.Second, "how long to keep scheduling calls")
+		stagesIn   = fs.String("stages", "", `load profile instead of -rate and -duration: comma-separated DURATION@RATE (constant) or DURATION@FROM->TO (ramp)`)
 	)
 	rf := addCommonFlags(fs, "even", 50)
 	addPrometheusFlag(fs, rf)
@@ -42,10 +44,10 @@ func runGRPC(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs.Lookup("insecure").Usage = "do not verify the server's TLS certificate; the run then measures a server it has not checked"
 	fs.Lookup("cacert").Usage = "PEM file with the certificate authorities to trust, instead of the system's"
 	fs.Lookup("workers").Usage = "max calls in flight"
-	fs.Lookup("timeout").Usage = "per-call timeout; also how long connecting and reading the schema may take"
+	fs.Lookup("timeout").Usage = "per-call (per stream) timeout; also how long connecting and reading the schema may take"
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: gmeter grpc -call package.Service/Method [flags] HOST:PORT\n\n"+
-			"Calls one unary gRPC method at a rate (or a profile) with one request, and reports the\n"+
+			"Calls one gRPC method, unary or streaming, at a rate (or a profile), and reports the\n"+
 			"latency from each call's intended start, by status code. Flags must come before the address.\n\n")
 		fs.PrintDefaults()
 	}
@@ -103,7 +105,7 @@ func runGRPC(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return usage("%v", err)
 	}
-	opts := grpcload.Options{Addr: addr, Method: *method, Plaintext: *plaintext, TLS: tlsConfig, Conns: *conns, Metadata: md}
+	opts := grpcload.Options{Addr: addr, Method: *method, Plaintext: *plaintext, TLS: tlsConfig, Conns: *conns, Metadata: md, SendMessages: *streamSend, RecvMessages: *streamRecv}
 	if *data != "" {
 		if opts.Data, err = readBody(*data); err != nil {
 			return usage("cannot read -data: %v", err)
@@ -142,8 +144,8 @@ func runGRPC(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Call:        caller.Call,
 	}
 	if !*rf.quiet {
-		fmt.Fprintf(stderr, "gmeter: gRPC %s on %s%s%s, over %s, up to %d in flight\n",
-			caller.Method(), addr, profileText(stages), arrivalsText(arrival, seed), count(*conns, "connection"), cfg.Workers)
+		fmt.Fprintf(stderr, "gmeter: gRPC %s%s on %s%s%s, over %s, up to %d in flight\n",
+			caller.Method(), streamText(caller), addr, profileText(stages), arrivalsText(arrival, seed), count(*conns, "connection"), cfg.Workers)
 		cfg.Progress = progressTo(stderr)
 	}
 	rf.noteTLS(stderr)
@@ -155,9 +157,13 @@ func runGRPC(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	totalDuration, expected := pacer.Totals(stages)
 	summary := report.Summarize(res, targetRate(expected, totalDuration))
+	send, recv := caller.StreamMessages()
 	summary.Run = report.RunInfo{
 		URL:             addr,
 		Method:          caller.Method(),
+		Streaming:       caller.Streaming(),
+		StreamSend:      send,
+		StreamRecv:      recv,
 		Workers:         cfg.Workers,
 		DurationSeconds: totalDuration.Seconds(),
 		Profile:         profileSpec(stages),
@@ -169,4 +175,28 @@ func runGRPC(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Protocol:        "gRPC",
 	}
 	return emit(summary, *rf.jsonOut, *rf.prometheus, stdout, stderr)
+}
+
+func streamText(c *grpcload.Caller) string {
+	var name string
+	switch c.Streaming() {
+	case "server":
+		name = "server stream"
+	case "client":
+		name = "client stream"
+	case "bidi":
+		name = "bidirectional stream"
+	default:
+		return ""
+	}
+	send, _ := c.StreamMessages()
+	return fmt.Sprintf(" (%s, %s, %s)", name, count(send, "request"), recvText(c))
+}
+
+func recvText(c *grpcload.Caller) string {
+	_, recv := c.StreamMessages()
+	if recv == 0 {
+		return "reads until the server closes"
+	}
+	return fmt.Sprintf("reads %s", count(recv, "response"))
 }

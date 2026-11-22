@@ -22,7 +22,7 @@
 //
 // Or ask how much the server can take: [FindCapacity].
 //
-// To load-test a unary gRPC method instead, set [Config.GRPC] and give the
+// To load-test a gRPC method instead, set [Config.GRPC] and give the
 // server's host:port as the URL; the rest works the same, and [Result.Codes]
 // counts the answers by status code.
 package gmeter
@@ -89,9 +89,9 @@ type Config struct {
 	Header http.Header // sent with every request; not for gRPC, which has GRPC.Metadata
 	Body   []byte      // sent with every request; not for gRPC, which has GRPC.Data
 
-	// GRPC, if set, makes every request a call of one unary gRPC method instead
-	// of an HTTP request. Method, Header, Body, Requests and HTTP2 are then
-	// refused, since a call would ignore them.
+	// GRPC, if set, makes every request a call of one gRPC method instead of an
+	// HTTP request. Method, Header, Body, Requests and HTTP2 are then refused,
+	// since a call would ignore them.
 	GRPC *GRPC
 
 	// The load is either Rate for Duration, or Stages, not both.
@@ -143,8 +143,8 @@ type Config struct {
 	OnRequest func(Sample)
 }
 
-// GRPC says which unary gRPC method to call, for a [Config] that load-tests gRPC.
-// Streaming methods cannot be load-tested.
+// GRPC says which gRPC method to call, unary or streaming, for a [Config] that
+// load-tests gRPC.
 type GRPC struct {
 	// Method is what to call, as "package.Service/Method". Required.
 	Method string
@@ -171,6 +171,15 @@ type GRPC struct {
 	// Metadata is sent with every call: the gRPC counterpart of headers. Names
 	// starting with "grpc-" are reserved for gRPC itself.
 	Metadata map[string][]string
+
+	// SendMessages is how many request messages each stream sends. Zero is one
+	// for a client or bidirectional stream. A server-streaming method always
+	// sends one, and a unary method none.
+	SendMessages int
+
+	// RecvMessages is how many response messages each stream reads before it is
+	// ended. Zero reads until the server ends the stream.
+	RecvMessages int
 }
 
 const (
@@ -212,7 +221,7 @@ func (g *GRPC) options(addr string, cfg *tls.Config) grpcload.Options {
 	for name, values := range g.Metadata {
 		md.Append(strings.ToLower(name), values...)
 	}
-	return grpcload.Options{Addr: addr, Method: g.Method, Data: g.Data, Protoset: g.Protoset, Plaintext: g.Plaintext, TLS: cfg, Conns: g.Conns, Metadata: md}
+	return grpcload.Options{Addr: addr, Method: g.Method, Data: g.Data, Protoset: g.Protoset, Plaintext: g.Plaintext, TLS: cfg, Conns: g.Conns, Metadata: md, SendMessages: g.SendMessages, RecvMessages: g.RecvMessages}
 }
 
 // baseConfig validates c and converts it, without connecting.

@@ -281,3 +281,34 @@ func TestLoadTestCallsAUnaryGRPCMethod(t *testing.T) {
 		t.Errorf("got verdict %q codes %v summary %q, want errors that name NOT_FOUND", got.Verdict, got.Codes, got.Summary)
 	}
 }
+
+func TestLoadTestCallsAStreamingGRPCMethod(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := grpc.NewServer()
+	e := grpcdemo.Register(s, grpcdemo.ReflectionBoth)
+	go s.Serve(ln)
+	t.Cleanup(s.Stop)
+	cs := connect(t, Options{})
+
+	var got LoadTestResult
+	args := map[string]any{
+		"url": ln.Addr().String(), "rate": 50, "duration": "1s",
+		"grpc": map[string]any{
+			"method": grpcdemo.Chat, "plaintext": true,
+			"send_messages": 2, "recv_messages": 2,
+		},
+	}
+	if e := call(t, cs, "load_test", args, &got); e != "" {
+		t.Fatal(e)
+	}
+	skipIfLimited(t, got)
+	if got.Verdict != "ok" || got.Codes["OK"] < 40 || got.OK != got.Responses {
+		t.Errorf("got verdict %q codes %v, want ok with the gRPC OK count", got.Verdict, got.Codes)
+	}
+	if n := e.Calls.Load(); n < 80 {
+		t.Errorf("the server saw %d messages, want about 100 (two per stream)", n)
+	}
+}

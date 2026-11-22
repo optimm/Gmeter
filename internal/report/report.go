@@ -113,6 +113,14 @@ type RunInfo struct {
 	Protocol        string  `json:"protocol,omitempty"` // "HTTP/2" when asked for with -http2; empty is HTTP/1.1
 	Agents          int     `json:"agents,omitempty"`   // how many gmeter agents shared the load; 0 is this machine alone
 
+	// Streaming is "server", "client" or "bidi" for a gRPC streaming run;
+	// empty for a unary call or an HTTP run.
+	Streaming string `json:"streaming,omitempty"`
+	// StreamSend and StreamRecv are how many messages each stream sends and
+	// reads (0 reads until the server closes); 0 for a unary call.
+	StreamSend int `json:"stream_send,omitempty"`
+	StreamRecv int `json:"stream_recv,omitempty"`
+
 	// Replay is set when the run replayed a traffic log instead of sending one
 	// request over and over. In that case Method lists the methods in the trace.
 	Replay *ReplayInfo `json:"replay,omitempty"`

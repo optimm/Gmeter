@@ -10,10 +10,12 @@
 //	// gmeter/demo/echo.proto
 //	package gmeter.demo;
 //	import "gmeter/demo/reply.proto";
-//	message SayRequest { string name = 1; int32 delay_ms = 2; string code = 3; }
+//	message SayRequest { string name = 1; int32 delay_ms = 2; string code = 3; int32 count = 4; }
 //	service Echo {
 //	  rpc Say(SayRequest) returns (SayReply);                    // waits delay_ms, then answers "hello <name>", or fails with code
-//	  rpc Chat(stream SayRequest) returns (stream SayReply);     // streaming, which gmeter does not load-test
+//	  rpc Feed(SayRequest) returns (stream SayReply);            // server streaming: count replies (default 1)
+//	  rpc Collect(stream SayRequest) returns (SayReply);         // client streaming: one reply after the client closes
+//	  rpc Chat(stream SayRequest) returns (stream SayReply);     // bidi: one reply per request
 //	}
 package grpcdemo
 
@@ -41,10 +43,13 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
-// Service is the full name of the Echo service, and Say its unary method.
+// Service is the full name of the Echo service.
 const (
 	Service = "gmeter.demo.Echo"
 	Say     = Service + "/Say"
+	Feed    = Service + "/Feed"
+	Collect = Service + "/Collect"
+	Chat    = Service + "/Chat"
 )
 
 // schema is the descriptors of the schema above: echo.proto imports
@@ -69,12 +74,16 @@ func schema() []*descriptorpb.FileDescriptorProto {
 		Syntax:     proto.String("proto3"),
 		Dependency: []string{"gmeter/demo/reply.proto"},
 		MessageType: []*descriptorpb.DescriptorProto{
-			{Name: proto.String("SayRequest"), Field: []*descriptorpb.FieldDescriptorProto{field("name", 1, str), field("delay_ms", 2, i32), field("code", 3, str)}},
+			{Name: proto.String("SayRequest"), Field: []*descriptorpb.FieldDescriptorProto{field("name", 1, str), field("delay_ms", 2, i32), field("code", 3, str), field("count", 4, i32)}},
 		},
 		Service: []*descriptorpb.ServiceDescriptorProto{{
 			Name: proto.String("Echo"),
 			Method: []*descriptorpb.MethodDescriptorProto{
 				{Name: proto.String("Say"), InputType: proto.String(".gmeter.demo.SayRequest"), OutputType: proto.String(".gmeter.demo.SayReply")},
+				{Name: proto.String("Feed"), InputType: proto.String(".gmeter.demo.SayRequest"), OutputType: proto.String(".gmeter.demo.SayReply"),
+					ServerStreaming: proto.Bool(true)},
+				{Name: proto.String("Collect"), InputType: proto.String(".gmeter.demo.SayRequest"), OutputType: proto.String(".gmeter.demo.SayReply"),
+					ClientStreaming: proto.Bool(true)},
 				{Name: proto.String("Chat"), InputType: proto.String(".gmeter.demo.SayRequest"), OutputType: proto.String(".gmeter.demo.SayReply"),
 					ClientStreaming: proto.Bool(true), ServerStreaming: proto.Bool(true)},
 			},
@@ -142,7 +151,10 @@ func Register(s *grpc.Server, r Reflection) *Echo {
 		panic(err)
 	}
 	methods := d.(protoreflect.ServiceDescriptor).Methods()
-	say, chat := methods.ByName("Say"), methods.ByName("Chat")
+	say := methods.ByName("Say")
+	feed := methods.ByName("Feed")
+	collect := methods.ByName("Collect")
+	chat := methods.ByName("Chat")
 	s.RegisterService(&grpc.ServiceDesc{
 		ServiceName: Service,
 		HandlerType: (*any)(nil),
@@ -153,23 +165,68 @@ func Register(s *grpc.Server, r Reflection) *Echo {
 			}
 			return e.say(ctx, in, say.Output())
 		}}},
-		Streams: []grpc.StreamDesc{{StreamName: "Chat", ClientStreams: true, ServerStreams: true, Handler: func(_ any, st grpc.ServerStream) error {
-			for {
-				in := dynamicpb.NewMessage(chat.Input())
-				if err := st.RecvMsg(in); err == io.EOF {
-					return nil
-				} else if err != nil {
+		Streams: []grpc.StreamDesc{
+			{StreamName: "Feed", ServerStreams: true, Handler: func(_ any, st grpc.ServerStream) error {
+				in := dynamicpb.NewMessage(feed.Input())
+				if err := st.RecvMsg(in); err != nil {
+					if err == io.EOF {
+						return nil
+					}
 					return err
 				}
-				out, err := e.say(st.Context(), in, chat.Output())
+				out, err := e.say(st.Context(), in, feed.Output())
 				if err != nil {
 					return err
 				}
-				if err := st.SendMsg(out); err != nil {
-					return err
+				count := int(in.Get(feed.Input().Fields().ByName("count")).Int())
+				if count < 1 {
+					count = 1
 				}
-			}
-		}}},
+				for range count {
+					if err := st.SendMsg(out); err != nil {
+						return err
+					}
+				}
+				return nil
+			}},
+			{StreamName: "Collect", ClientStreams: true, Handler: func(_ any, st grpc.ServerStream) error {
+				count := 0
+				for {
+					in := dynamicpb.NewMessage(collect.Input())
+					if err := st.RecvMsg(in); err == io.EOF {
+						break
+					} else if err != nil {
+						return err
+					}
+					e.record(st.Context(), in)
+					fields := collect.Input().Fields()
+					if c := in.Get(fields.ByName("code")).String(); c != "" {
+						return status.Error(codeNamed(c), "asked for "+c)
+					}
+					count++
+				}
+				reply := dynamicpb.NewMessage(collect.Output())
+				reply.Set(collect.Output().Fields().ByName("message"), protoreflect.ValueOfString(fmt.Sprintf("hello %d", count)))
+				return st.SendMsg(reply)
+			}},
+			{StreamName: "Chat", ClientStreams: true, ServerStreams: true, Handler: func(_ any, st grpc.ServerStream) error {
+				for {
+					in := dynamicpb.NewMessage(chat.Input())
+					if err := st.RecvMsg(in); err == io.EOF {
+						return nil
+					} else if err != nil {
+						return err
+					}
+					out, err := e.say(st.Context(), in, chat.Output())
+					if err != nil {
+						return err
+					}
+					if err := st.SendMsg(out); err != nil {
+						return err
+					}
+				}
+			}},
+		},
 		Metadata: "gmeter/demo/echo.proto",
 	}, e)
 	opts := reflection.ServerOptions{Services: s, DescriptorResolver: files, ExtensionResolver: protoregistry.GlobalTypes}
@@ -183,7 +240,7 @@ func Register(s *grpc.Server, r Reflection) *Echo {
 	return e
 }
 
-func (e *Echo) say(ctx context.Context, in *dynamicpb.Message, out protoreflect.MessageDescriptor) (proto.Message, error) {
+func (e *Echo) record(ctx context.Context, in *dynamicpb.Message) {
 	e.Calls.Add(1)
 	fields := in.Descriptor().Fields()
 	name := in.Get(fields.ByName("name")).String()
@@ -194,6 +251,11 @@ func (e *Echo) say(ctx context.Context, in *dynamicpb.Message, out protoreflect.
 	}
 	e.md, _ = metadata.FromIncomingContext(ctx)
 	e.mu.Unlock()
+}
+
+func (e *Echo) say(ctx context.Context, in *dynamicpb.Message, out protoreflect.MessageDescriptor) (proto.Message, error) {
+	e.record(ctx, in)
+	fields := in.Descriptor().Fields()
 
 	if d := in.Get(fields.ByName("delay_ms")).Int(); d > 0 {
 		select {
@@ -206,6 +268,7 @@ func (e *Echo) say(ctx context.Context, in *dynamicpb.Message, out protoreflect.
 		return nil, status.Error(codeNamed(c), "asked for "+c)
 	}
 	reply := dynamicpb.NewMessage(out)
+	name := in.Get(fields.ByName("name")).String()
 	reply.Set(out.Fields().ByName("message"), protoreflect.ValueOfString("hello "+name))
 	return reply, nil
 }

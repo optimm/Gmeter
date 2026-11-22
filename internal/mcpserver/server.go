@@ -33,7 +33,7 @@ func New(opts Options) *mcp.Server {
 }
 
 // instructions is what the client shows the model about the server as a whole.
-const instructions = `Gmeter load-tests HTTP and unary gRPC services and reports honest latency.
+const instructions = `Gmeter load-tests HTTP and gRPC services (unary or streaming) and reports honest latency.
 
 Latency is measured from when each request was due, not when it was sent, so a server that stalls cannot hide
 the requests that queued behind the stall (coordinated omission). Read "corrected" latency as what users saw

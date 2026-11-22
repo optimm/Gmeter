@@ -153,7 +153,6 @@ func TestWhatCannotBeCalledIsRefusedBeforeTheTest(t *testing.T) {
 		{"no such service", Options{Method: "gmeter.demo.Nope/Say"}, []string{"gmeter.demo.Nope", "gmeter.demo.Echo"}},
 		{"no such service in the protoset", Options{Method: "gmeter.demo.Nope/Say", Protoset: set}, []string{"gmeter.demo.Nope", "gmeter.demo.Echo"}},
 		{"no such method", Options{Method: "gmeter.demo.Echo/Shout"}, []string{"Shout", "Say"}},
-		{"a streaming method", Options{Method: "gmeter.demo.Echo/Chat"}, []string{"stream"}},
 		{"not a method name", Options{Method: "Say"}, []string{"Service/Method"}},
 		{"no method", Options{Method: "gmeter.demo.Echo/"}, []string{"Service/Method"}},
 		{"no service", Options{Method: ".Say"}, []string{"Service/Method"}},
@@ -162,6 +161,11 @@ func TestWhatCannotBeCalledIsRefusedBeforeTheTest(t *testing.T) {
 		{"not JSON", Options{Method: grpcdemo.Say, Data: []byte(`{name:`)}, []string{"SayRequest"}},
 		{"a broken protoset", Options{Method: grpcdemo.Say, Protoset: []byte("not a descriptor set")}, []string{"protoset"}},
 		{"no connections", Options{Method: grpcdemo.Say, Conns: -1}, []string{"connections"}},
+		{"unary with stream-send", Options{Method: grpcdemo.Say, SendMessages: 1}, []string{"unary"}},
+		{"unary with stream-recv", Options{Method: grpcdemo.Say, RecvMessages: 1}, []string{"unary"}},
+		{"too many requests on a server stream", Options{Method: grpcdemo.Feed, SendMessages: 2}, []string{"one request"}},
+		{"negative stream-send", Options{Method: grpcdemo.Say, SendMessages: -1}, []string{"-stream-send"}},
+		{"negative stream-recv", Options{Method: grpcdemo.Say, RecvMessages: -1}, []string{"-stream-recv"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.o.Addr, tc.o.Plaintext = addr, true
@@ -298,4 +302,119 @@ func TestACallPastItsDeadlineIsATimeoutEvenBeforeTheContextSaysSo(t *testing.T) 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("call = %q, %v; want the call's own deadline, not an answer from the server", code, err)
 	}
+}
+
+func TestStreamingMethodsSendAndReceive(t *testing.T) {
+	t.Run("Feed reads all", func(t *testing.T) {
+		addr, echo, _ := serve(t, grpcdemo.ReflectionBoth)
+		c := mustDial(t, Options{Addr: addr, Plaintext: true, Method: grpcdemo.Feed, Data: []byte(`{"name":"ann","count":3}`)})
+		if c.Streaming() != "server" {
+			t.Fatalf("streaming = %q, want server", c.Streaming())
+		}
+		if s, r := c.StreamMessages(); s != 1 || r != 0 {
+			t.Fatalf("stream messages = %d,%d, want 1,0", s, r)
+		}
+		if code, err := call(t, c); code != "OK" || err != nil {
+			t.Fatalf("call = %q, %v", code, err)
+		}
+		if echo.Names()["ann"] != 1 {
+			t.Errorf("server got %v, want 1", echo.Names())
+		}
+	})
+
+	t.Run("Feed reads one", func(t *testing.T) {
+		addr, _, _ := serve(t, grpcdemo.ReflectionBoth)
+		c := mustDial(t, Options{Addr: addr, Plaintext: true, Method: grpcdemo.Feed, Data: []byte(`{"name":"ann","count":3}`), RecvMessages: 1})
+		if c.Streaming() != "server" {
+			t.Fatalf("streaming = %q, want server", c.Streaming())
+		}
+		if s, r := c.StreamMessages(); s != 1 || r != 1 {
+			t.Fatalf("stream messages = %d,%d, want 1,1", s, r)
+		}
+		if code, err := call(t, c); code != "OK" || err != nil {
+			t.Fatalf("call = %q, %v", code, err)
+		}
+	})
+
+	t.Run("Collect", func(t *testing.T) {
+		addr, echo, _ := serve(t, grpcdemo.ReflectionBoth)
+		c := mustDial(t, Options{Addr: addr, Plaintext: true, Method: grpcdemo.Collect, SendMessages: 3, Data: []byte(`{"name":"ann"}`)})
+		if c.Streaming() != "client" {
+			t.Fatalf("streaming = %q, want client", c.Streaming())
+		}
+		if s, r := c.StreamMessages(); s != 3 || r != 0 {
+			t.Fatalf("stream messages = %d,%d, want 3,0", s, r)
+		}
+		if code, err := call(t, c); code != "OK" || err != nil {
+			t.Fatalf("call = %q, %v", code, err)
+		}
+		if echo.Names()["ann"] != 3 {
+			t.Errorf("server got %v, want 3", echo.Names())
+		}
+	})
+
+	t.Run("Chat all", func(t *testing.T) {
+		addr, echo, _ := serve(t, grpcdemo.ReflectionBoth)
+		c := mustDial(t, Options{Addr: addr, Plaintext: true, Method: grpcdemo.Chat, SendMessages: 3})
+		if c.Streaming() != "bidi" {
+			t.Fatalf("streaming = %q, want bidi", c.Streaming())
+		}
+		if s, r := c.StreamMessages(); s != 3 || r != 0 {
+			t.Fatalf("stream messages = %d,%d, want 3,0", s, r)
+		}
+		if code, err := call(t, c); code != "OK" || err != nil {
+			t.Fatalf("call = %q, %v", code, err)
+		}
+		if n := echo.Calls.Load(); n != 3 {
+			t.Errorf("server calls = %d, want 3", n)
+		}
+	})
+
+	t.Run("Chat limited", func(t *testing.T) {
+		addr, _, _ := serve(t, grpcdemo.ReflectionBoth)
+		c := mustDial(t, Options{Addr: addr, Plaintext: true, Method: grpcdemo.Chat, SendMessages: 2, RecvMessages: 2})
+		if s, r := c.StreamMessages(); s != 2 || r != 2 {
+			t.Fatalf("stream messages = %d,%d, want 2,2", s, r)
+		}
+		if code, err := call(t, c); code != "OK" || err != nil {
+			t.Fatalf("call = %q, %v", code, err)
+		}
+	})
+}
+
+func TestAStreamSaysHowItEnded(t *testing.T) {
+	t.Run("NOT_FOUND", func(t *testing.T) {
+		addr, _, _ := serve(t, grpcdemo.ReflectionBoth)
+		c := mustDial(t, Options{Addr: addr, Plaintext: true, Method: grpcdemo.Chat, Data: []byte(`{"code":"NOT_FOUND"}`)})
+		if code, err := call(t, c); code != "NOT_FOUND" || err != nil {
+			t.Errorf("call = %q, %v; want NOT_FOUND", code, err)
+		}
+	})
+	t.Run("UNAVAILABLE", func(t *testing.T) {
+		addr, _, _ := serve(t, grpcdemo.ReflectionBoth)
+		c := mustDial(t, Options{Addr: addr, Plaintext: true, Method: grpcdemo.Chat, Data: []byte(`{"code":"UNAVAILABLE"}`)})
+		_, err := call(t, c)
+		var f runner.Failure
+		if !errors.As(err, &f) || f.Kind != "unavailable" {
+			t.Errorf("err = %v, want unavailable failure", err)
+		}
+	})
+	t.Run("deadline", func(t *testing.T) {
+		addr, _, _ := serve(t, grpcdemo.ReflectionBoth)
+		c := mustDial(t, Options{Addr: addr, Plaintext: true, Method: grpcdemo.Feed, Data: []byte(`{"delay_ms":2000}`)})
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+		defer cancel()
+		if _, err := c.Call(ctx); !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("err = %v, want DeadlineExceeded", err)
+		}
+	})
+	t.Run("canceled", func(t *testing.T) {
+		addr, _, _ := serve(t, grpcdemo.ReflectionBoth)
+		c := mustDial(t, Options{Addr: addr, Plaintext: true, Method: grpcdemo.Feed, Data: []byte(`{"delay_ms":2000}`)})
+		ctx, stop := context.WithCancel(context.Background())
+		time.AfterFunc(30*time.Millisecond, stop)
+		if _, err := c.Call(ctx); !errors.Is(err, context.Canceled) {
+			t.Errorf("err = %v, want Canceled", err)
+		}
+	})
 }

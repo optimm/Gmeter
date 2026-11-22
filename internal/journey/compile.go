@@ -166,6 +166,7 @@ func (c *compiler) step(s *Step) (runner.JourneyStep, error) {
 	}
 	return runner.JourneyStep{
 		Label:                  s.Name,
+		Method:                 method,
 		Think:                  think,
 		ContinueOnCheckFailure: continueOnFailure,
 		Render:                 render,

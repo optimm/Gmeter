@@ -66,8 +66,9 @@ func endpointSummaries(labels []runner.LabelResult) []EndpointSummary {
 const endpointWidth = 36
 
 // writeEndpoints prints one row per endpoint. A single endpoint would only
-// repeat the run's own numbers, so then it prints nothing.
-func writeEndpoints(b *strings.Builder, endpoints []EndpointSummary) {
+// repeat the run's own numbers, so then it prints nothing. A journey run's
+// rows are the journey's steps, so it says "steps" then.
+func writeEndpoints(b *strings.Builder, endpoints []EndpointSummary, journey bool) {
 	if len(endpoints) < 2 {
 		return
 	}
@@ -77,8 +78,14 @@ func writeEndpoints(b *strings.Builder, endpoints []EndpointSummary) {
 	}
 	d := func(m float64) string { return FormatDuration(time.Duration(m * float64(time.Millisecond))) }
 
-	b.WriteString("\nendpoints, busiest first (corrected latency; svc p99 is service latency, from when each request was actually sent)\n")
-	fmt.Fprintf(b, "  %-*s  %9s  %6s  %6s  %8s  %8s  %8s  %8s\n", width, "endpoint", "scheduled", "bad", "failed", "p50", "p99", "max", "svc p99")
+	noun := "endpoints"
+	col := "endpoint"
+	if journey {
+		noun = "steps"
+		col = "step"
+	}
+	b.WriteString("\n" + noun + ", busiest first (corrected latency; svc p99 is service latency, from when each request was actually sent)\n")
+	fmt.Fprintf(b, "  %-*s  %9s  %6s  %6s  %8s  %8s  %8s  %8s\n", width, col, "scheduled", "bad", "failed", "p50", "p99", "max", "svc p99")
 	for _, e := range endpoints {
 		p50, p99, worst, svc := "-", "-", "-", "-"
 		if e.Corrected.Count > 0 {

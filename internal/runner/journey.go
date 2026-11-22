@@ -34,7 +34,8 @@ type Journey struct {
 // JourneyStep is one step of a journey session.
 type JourneyStep struct {
 	Label string // the step's name; its tally is Result.Labels by this name
-	Think time.Duration
+	Method string // the step's HTTP method, as the runner sends it
+	Think  time.Duration
 
 	// Render builds the request for one session before anything is sent: the
 	// method, the target (a path, so it never reaches into another host), the

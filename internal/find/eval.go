@@ -57,6 +57,9 @@ type Observation struct {
 	// Phases is where the measured stage's time went, or nil if phases were not
 	// recorded or no request was answered.
 	Phases *TrialPhases
+
+	// Journey is the journey run's result, when the trial ran one.
+	Journey *runner.JourneyResult
 }
 
 // TrialPhases is the mean time an answered request of a trial spent in each

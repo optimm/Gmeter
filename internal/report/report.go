@@ -55,6 +55,10 @@ type Summary struct {
 	Generator Generator `json:"generator"`
 	Warnings  []string  `json:"warnings"`
 
+	// Journey is the journey-specific part of the run: the scenario's
+	// counters. The key is left out of runs that are not journeys.
+	Journey *JourneyInfo `json:"journey,omitempty"`
+
 	// Stages has one entry per stage of the load profile (a single one for a
 	// constant rate), always a list. Latencies are attributed by when each
 	// request was due, so a step test shows which step a server stopped
@@ -124,6 +128,10 @@ type RunInfo struct {
 	// Replay is set when the run replayed a traffic log instead of sending one
 	// request over and over. In that case Method lists the methods in the trace.
 	Replay *ReplayInfo `json:"replay,omitempty"`
+
+	// Journey is set when the run was a journey: the scenario's name and
+	// counters. The key is left out of runs that are not journeys.
+	Journey *JourneyInfo `json:"journey,omitempty"`
 }
 
 // ReplayInfo says what was replayed. Request bodies and headers from the trace
@@ -223,6 +231,7 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 			Corrected: res.Corrected.Dump(),
 			Service:   res.Service.Dump(),
 		},
+		Journey: journeyOf(res.Journey),
 	}
 	for code, n := range res.Statuses {
 		s.Responses += n
@@ -319,8 +328,21 @@ func (s Summary) WriteJSON(w io.Writer) error {
 func (s Summary) WriteText(w io.Writer) error {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "requests   %d scheduled   %d ok   %d bad status   %d failed   %d dropped\n",
-		s.Scheduled, s.OK, s.BadStatus, s.Failed, s.Dropped)
+	// A journey run's unit is the session, so say sessions, not requests.
+	word := "requests"
+	if s.Journey != nil {
+		word = "sessions"
+	}
+	fmt.Fprintf(&b, "%s   %d scheduled   %d ok   %d bad status   %d failed   %d dropped\n",
+		word, s.Scheduled, s.OK, s.BadStatus, s.Failed, s.Dropped)
+	if j := s.Journey; j != nil {
+		mean := "-"
+		if j.JourneyLatency != nil {
+			mean = FormatDuration(time.Duration(j.JourneyLatency.MeanMs * float64(time.Millisecond)))
+		}
+		fmt.Fprintf(&b, "journey   %d started, %d completed, %d aborted, mean session duration %s\n",
+			j.SessionsStarted, j.SessionsCompleted, j.SessionsAborted, mean)
+	}
 	average := ""
 	if len(s.Stages) > 1 {
 		average = " on average" // the rate changes during the run
@@ -374,7 +396,7 @@ func (s Summary) WriteText(w io.Writer) error {
 	writeLatency(&b, s.Service)
 	writePhases(&b, s.Phases)
 	writeStages(&b, s.Stages)
-	writeEndpoints(&b, s.Endpoints)
+	writeEndpoints(&b, s.Endpoints, s.Journey != nil)
 	writeEndpointPhases(&b, s.Endpoints)
 	writeEndpointVsLog(&b, s.Endpoints)
 	writeTimeline(&b, s.Timeline)

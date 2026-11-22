@@ -53,6 +53,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "find" {
 		return runFind(ctx, args[1:], stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "journey" {
+		return runJourney(ctx, args[1:], stdout, stderr)
+	}
 	if len(args) > 0 && args[0] == "replay" {
 		return runReplay(ctx, args[1:], stdout, stderr)
 	}

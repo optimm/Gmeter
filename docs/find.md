@@ -89,7 +89,7 @@ The report says plainly when the answer needs a caveat, and these are the ones t
   it counts as a failure and the report says the server may sustain more. That means timer lag p99 over 5ms. A
   saturated generator that has stopped sleeping is not detected by this signal and only gets the late-dispatch
   warning; see
-  [Reading the generator line](reading-the-report.md#reading-the-generator-line)). Run Gmeter somewhere quieter,
+  [Reading the generator line](reading-the-report.md#reading-the-generator-line). Run Gmeter somewhere quieter,
   or on a bigger machine.
 - **no rate down to 1 rps met the target**: exit code 1.
 - **interrupted** (Ctrl-C): the best rate found so far, and exit code 1.

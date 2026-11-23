@@ -84,10 +84,10 @@ Back to the [README](../README.md).
 
 ### What we tried for detecting a saturated generator
 
-The figures below come from an independent reviewer's harness on this Mac: 5 cases x 3 runs, 5s each, the test
-server in a separate process, gmeter run in-process through the library, `runtime/metrics`
-`/sched/latencies:seconds` snapshotted at start and end and subtracted, and CPU from `getrusage`. "Highest bucket"
-is the lower bound of the top non-empty histogram bucket; the buckets are coarse.
+The figures below come from an independent reviewer's harness on an Apple-silicon Mac (darwin/arm64): 5 cases x
+3 runs, 5s each, the test server in a separate process, gmeter run in-process through the library,
+`runtime/metrics` `/sched/latencies:seconds` snapshotted at start and end and subtracted, and CPU from `getrusage`.
+"Highest bucket" is the lower bound of the top non-empty histogram bucket; the buckets are coarse.
 
 | case | run | achieved/target | sched p99 | highest bucket | gmeter CPU |
 |---|---|---|---|---|---|
@@ -109,6 +109,8 @@ Neither signal meets the adoption bar. A2's scheduler p99 of 1.31ms lies inside 
 (1.05-1.84ms); its highest bucket (21-50ms) overlaps A's (17-21ms) and C's (13-17ms); and gmeter's own CPU for
 A2 (3.5-3.7 cores) is no higher than A's (3.7-3.8). So no signal was adopted: generator_limited stays timer-lag
 only and a saturated generator only gets the late-dispatch warning. A negative result is an acceptable outcome.
+The experiment was not repeated on Linux or Windows, and overhead at 80k rps was not measured, so cross-platform
+availability and the overhead adoption criterion remain unverified.
 
 ## Development
 

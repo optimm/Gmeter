@@ -57,6 +57,9 @@ type Observation struct {
 	// Phases is where the measured stage's time went, or nil if phases were not
 	// recorded or no request was answered.
 	Phases *TrialPhases
+
+	// Journey is the journey run's result, when the trial ran one.
+	Journey *runner.JourneyResult
 }
 
 // TrialPhases is the mean time an answered request of a trial spent in each
@@ -76,10 +79,11 @@ type TrialPhases struct {
 //
 // A trial fails if the latency target is missed, the error budget is blown, or
 // requests were left unsent. It passes only if the generator also kept time: a
-// trial that looks fine while the generator's timers ran late is Limited,
-// because the generator, not the server, may have set the numbers. A missed
-// target stays a failure whatever the generator did, since corrected latency
-// is honest either way.
+// trial that looks fine while the generator's timers ran late (p99 over 5ms)
+// is Limited. A saturated generator that has stopped sleeping is not detected
+// by this signal and only gets the late-dispatch warning. A
+// missed target stays a failure whatever the generator did, since corrected
+// latency is honest either way.
 func Evaluate(slo SLO, rate float64, st runner.StageResult, res *runner.Result) (Verdict, Observation) {
 	o := Observation{Rate: rate, Scheduled: st.Scheduled, Phases: trialPhases(st.Phases)}
 	if st.Scheduled == 0 {
@@ -104,8 +108,8 @@ func Evaluate(slo SLO, rate float64, st runner.StageResult, res *runner.Result) 
 		return Fail, o
 	}
 
-	if lag := res.TimerLag.Quantile(0.99); lag > report.TimerLagWarn {
-		o.Reasons = []string{fmt.Sprintf("generator timer lag p99 is %s, so this result may be the generator's and not the server's", report.FormatDuration(lag))}
+	if limited, reason := res.GeneratorHealth().Limited(); limited {
+		o.Reasons = []string{reason}
 		return Limited, o
 	}
 	return Pass, o

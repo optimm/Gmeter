@@ -132,6 +132,49 @@ func TestAGeneratorThatCouldNotKeepTimeMakesAPassLimited(t *testing.T) {
 	}
 }
 
+func TestAnUnexplainedQueueWithHealthyTimerLagStaysAPass(t *testing.T) {
+	// 1000 requests all took 500ms from due time, but only 2ms once sent: the
+	// 40ms of service across a 5-worker pool is far short of the 498ms queue.
+	// With the timer-lag-only signal, this trial is not generator-limited
+	// because the timer lag is healthy; the queue is due to server capacity or
+	// insufficient -workers, not generator failure.
+	corrected, service, lag := hist.New(), hist.New(), hist.New()
+	for range 1000 {
+		corrected.Record(500 * time.Millisecond)
+		service.Record(2 * time.Millisecond)
+	}
+	st := runner.StageResult{Scheduled: 1000, Late: 1000, Corrected: corrected, Service: service}
+	res := &runner.Result{Workers: 5, TimerLag: lag, Stages: []runner.StageResult{st}}
+
+	target := SLO{Quantile: 0.99, Latency: time.Second, MaxErrorRate: 0.01}
+	v, o := Evaluate(target, 100, st, res)
+
+	// With timer-lag-only signal, healthy timer lag means not limited.
+	if v != Pass {
+		t.Fatalf("verdict %v, want Pass (timer-lag only signal)", v)
+	}
+	if len(o.Reasons) != 0 {
+		t.Fatalf("reasons %v: want no reasons when not limited", o.Reasons)
+	}
+}
+
+func TestASlowServersQueueDoesNotLimitTheTrial(t *testing.T) {
+	corrected, service, lag := hist.New(), hist.New(), hist.New()
+	for range 1000 {
+		corrected.Record(205 * time.Millisecond)
+		service.Record(203 * time.Millisecond)
+	}
+	st := runner.StageResult{Scheduled: 1000, Late: 1000, Corrected: corrected, Service: service}
+	res := &runner.Result{Workers: 50, TimerLag: lag, Stages: []runner.StageResult{st}}
+
+	target := SLO{Quantile: 0.99, Latency: time.Second, MaxErrorRate: 0.01}
+	v, o := Evaluate(target, 100, st, res)
+
+	if v != Pass || len(o.Reasons) != 0 {
+		t.Fatalf("verdict %v, reasons %v: a 2ms queue with 50 workers is the server's, not the generator's", v, o.Reasons)
+	}
+}
+
 func TestTheQuantileComesFromTheTarget(t *testing.T) {
 	c := hist.New()
 	for range 900 {

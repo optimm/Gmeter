@@ -174,6 +174,82 @@ func TestWarnsWhenManyRequestsWereLate(t *testing.T) {
 	}
 }
 
+func TestManyLateRequestsFromASlowServerAreNotGeneratorLimited(t *testing.T) {
+	res := sampleResult()
+	res.Workers, res.Late = 50, 30
+	corrected, service := hist.New(), hist.New()
+	for range 100 {
+		corrected.Record(205 * time.Millisecond)
+		service.Record(203 * time.Millisecond) // 2ms of queue: 50 workers explain it
+	}
+	res.Corrected, res.Service = corrected, service
+
+	s := Summarize(res, 10)
+
+	if s.Generator.Limited || s.Generator.Reason != "" {
+		t.Fatalf("a slow server filled the workers, but the generator was marked limited: %+v", s.Generator)
+	}
+	if len(s.Warnings) != 1 || !strings.Contains(s.Warnings[0], "-workers") {
+		t.Fatalf("want exactly one saturation warning mentioning -workers, got %v", s.Warnings)
+	}
+}
+
+func TestUnexplainedQueueMarksTheGeneratorLimited(t *testing.T) {
+	// With the timer-lag-only signal, healthy timer lag means the generator
+	// is not limited; the queue observation is a plain warning.
+	res := sampleResult()
+	res.Workers, res.Late = 5, 30
+	corrected, service := hist.New(), hist.New()
+	for range 100 {
+		corrected.Record(500 * time.Millisecond)
+		service.Record(2 * time.Millisecond) // 498ms of queue: 5 workers explain only 40ms
+	}
+	res.Corrected, res.Service = corrected, service
+
+	s := Summarize(res, 10)
+
+	// Generator should not be Limited with healthy timer lag.
+	if s.Generator.Limited {
+		t.Fatalf("want Generator.Limited to be false, got %+v", s.Generator)
+	}
+	// Warning should mention late dispatches, not generator limitation.
+	var warningText string
+	if len(s.Warnings) > 0 {
+		warningText = s.Warnings[0]
+	}
+	if !strings.Contains(warningText, "late") {
+		t.Fatalf("want warning about late dispatches, got %q", warningText)
+	}
+	// And the reason should not claim generator is at fault.
+	if strings.Contains(s.Generator.Reason, "generator fell behind") || strings.Contains(s.Generator.Reason, "fell behind") {
+		t.Fatalf("want reason not to claim generator fell behind, got %q", s.Generator.Reason)
+	}
+}
+
+func TestJSONRecordsGeneratorLimitation(t *testing.T) {
+	res := sampleResult()
+	res.TimerLag = hist.New()
+	for range 100 {
+		res.TimerLag.Record(20 * time.Millisecond)
+	}
+
+	var buf bytes.Buffer
+	if err := Summarize(res, 10).WriteJSON(&buf); err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	gen, ok := raw["generator"].(map[string]any)
+	if !ok || gen["limited"] != true {
+		t.Fatalf("generator section does not say it was limited: %v", raw["generator"])
+	}
+	if reason, ok := gen["reason"].(string); !ok || !strings.Contains(reason, "timer lag") {
+		t.Fatalf("generator reason missing or wrong: %v", gen["reason"])
+	}
+}
+
 func TestTextReportShowsGeneratorLineAndWarnings(t *testing.T) {
 	var healthy bytes.Buffer
 	Summarize(sampleResult(), 10).WriteText(&healthy)

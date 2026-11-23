@@ -39,9 +39,12 @@ func runMCP(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	fs.SetOutput(stderr)
 	var allow listFlag
 	fs.Var(&allow, "allow", "a host the agent may load besides loopback: a name, *.example.com, an IP, a CIDR range such as 10.0.0.0/8, or * for any host; repeat it or separate with commas")
+	scenarioDir := fs.String("scenario-dir", "", "a directory of named journey scenarios (see docs/journeys.md); the agent picks one by name in load_test's journey.file")
 	maxRate := fs.Float64("max-rate", mcpserver.DefaultMaxRate, "the most requests per second the agent may ask for")
 	maxDuration := fs.Duration("max-duration", mcpserver.DefaultMaxDuration, "the longest a run, or one trial of a search, may last")
 	maxWorkers := fs.Int("max-workers", mcpserver.DefaultMaxWorkers, "the most requests in flight, which is also connections, the agent may ask for")
+	maxTimeout := fs.Duration("max-timeout", mcpserver.DefaultMaxTimeout, "the longest per-request timeout the agent may ask for")
+	maxStreamMessages := fs.Int("max-stream-messages", mcpserver.DefaultMaxStreamMessages, "the most messages one gRPC streaming call may send or read; a streaming call is one scheduled request")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: gmeter mcp [flags]\n\n"+
 			"Serves Gmeter to an AI agent over the Model Context Protocol, on stdin and stdout:\n"+
@@ -60,14 +63,14 @@ func runMCP(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		fmt.Fprintf(stderr, "gmeter mcp: unexpected argument %q: it takes only flags\n", fs.Arg(0))
 		return 2
 	}
-	policy := mcpserver.Policy{Allow: allow, MaxRate: *maxRate, MaxDuration: *maxDuration, MaxWorkers: *maxWorkers}
+	policy := mcpserver.Policy{Allow: allow, MaxRate: *maxRate, MaxDuration: *maxDuration, MaxWorkers: *maxWorkers, MaxTimeout: *maxTimeout, MaxStreamMessages: *maxStreamMessages}
 	if err := policy.Validate(); err != nil {
 		fmt.Fprintf(stderr, "gmeter mcp: %v\n", err)
 		return 2
 	}
 
 	fmt.Fprintf(stderr, "gmeter mcp %s: serving on stdin and stdout; %s\n", versionString(), policy.Describe())
-	srv := mcpserver.New(mcpserver.Options{Version: versionString(), Policy: policy})
+	srv := mcpserver.New(mcpserver.Options{Version: versionString(), Policy: policy, ScenarioDir: *scenarioDir})
 	err := srv.Run(ctx, &mcp.IOTransport{Reader: io.NopCloser(stdin), Writer: nopWriteCloser{stdout}})
 	// The client going away, or being told to stop, is how this normally ends.
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) && !strings.Contains(err.Error(), "closed") {

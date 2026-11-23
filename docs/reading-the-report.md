@@ -23,7 +23,7 @@ requests   1000 scheduled   1000 ok   0 bad status   0 failed   0 dropped
 achieved   200.1 rps (target 200) over 5.00s
 status     200: 1000
 generator  timer lag p99 1.1ms, max 14.3ms   late 163 (16.3%)
-warning    163 of 1000 requests (16%) were dispatched more than 1ms after their due time: every worker was busy (raise -workers, or the […]
+warning    163 of 1000 requests (16%) were dispatched more than 1ms after their due time: every worker was busy (raise -workers, or the server is slow); their latency still counts from the due time
 
 latency, corrected (from each request's intended send time)
   p50 572µs   p90 505.2ms   p99 951.6ms   p99.9 996.7ms   max 1.00s
@@ -121,9 +121,19 @@ know:
 - **timer lag** is how far past its due time the scheduler woke up, for requests it had to sleep for. It
   isolates timer and OS scheduling overshoot, plus GC pauses in Gmeter itself. A warning fires above 5ms p99.
 - **late** counts requests the scheduler reached more than 1ms after their due time. Either every worker was
-  busy (raise `-workers`, or the server is slow) or the generator was starved of CPU. A warning fires above 5%.
-  Late requests are still measured from their due time, so the latency stays honest. The 1ms tolerance exists
-  because random arrivals put requests a few microseconds apart: without it, a healthy generator reported 24%
-  of Poisson requests as late at 20000 rps against an instant server.
+  busy (raise `-workers`, or the server is slow) or the generator was starved of CPU. Late requests are still
+  measured from their due time, so the latency stays honest. The 1ms tolerance exists because random arrivals
+  put requests a few microseconds apart: without it, a healthy generator reported 24% of Poisson requests as
+  late at 20000 rps against an instant server.
 
-Both are in the JSON under `generator`, and `warnings` is always an array.
+A run is **generator limited** when the numbers may describe the generator rather than the server. The only
+signal is timer lag: the scheduler's own wake-up p99 above 5ms. (Once the generator falls behind it stops
+sleeping, so timer lag alone can read near zero exactly when the generator is the bottleneck; a high
+late-dispatch share is therefore reported as a plain warning - "N% of requests were dispatched over 1ms late:
+every worker was busy (raise -workers, or the server is slow) or the generator was starved of CPU" - which does
+not change the MCP verdict.) A slow server also fills every worker and makes requests late; that is a normal
+overload result, not a generator failure.
+
+The text report prints one `warning` naming the signal and what to do. The JSON has `generator.limited` and,
+when it is true, `generator.reason`; `warnings` is always an array. A high late share still gets the warning to
+raise `-workers` or check the server.

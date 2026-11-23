@@ -144,13 +144,19 @@ type Config struct {
 	// ConnectTo, if set, makes every request connect to this address (host:port)
 	// instead of the host in URL. The URL's host is still used for the request's
 	// Host header and for TLS server name verification. Empty uses the URL's
-	// host. It is ignored when UnixSocket is set.
+	// host. It cannot be combined with UnixSocket.
 	ConnectTo string
 
 	// WindowHistograms keeps each timeline window's latency distribution
 	// (Window.Latency), which a result needs to be merged with others. It costs
 	// a few kilobytes a window.
 	WindowHistograms bool
+
+	// Journey, if set, says the run is a stateful journey instead of one
+	// request per job: each job is a session, and the worker runs the journey's
+	// steps one at a time, all of them due at their own times. It excludes
+	// Offsets, Requests and Call.
+	Journey *Journey
 
 	labels  []string // the distinct Request labels in order of first use, filled in by normalize
 	labelOf []uint8  // the index in labels of each request's label, filled in by normalize
@@ -249,6 +255,7 @@ type Window struct {
 // Result is the outcome of a run.
 type Result struct {
 	Elapsed   time.Duration  // wall time until the last request finished
+	Workers   int            // workers that ran the load (the sum on a merge)
 	Scheduled uint64         // requests dispatched to workers
 	Dropped   uint64         // owed by the schedule but never dispatched (cancel / hung server)
 	Statuses  map[int]uint64 // HTTP status code -> count
@@ -298,8 +305,12 @@ type Result struct {
 
 	// Labels has one entry per distinct Request.Label, busiest first, or is empty
 	// when the requests carry none. Each total above is the sum of the same
-	// figure over the labels.
+	// figure over the labels. With a journey the rows are the journey's steps.
 	Labels []LabelResult
+
+	// Journey is what happened of the journey run: counters of sessions and
+	// the distribution of session durations. Nil unless Config.Journey was set.
+	Journey *JourneyResult
 
 	// Phases splits the corrected latency of the requests that got a response
 	// into the phases of PhaseNames, in that order; each phase's samples add up
@@ -326,10 +337,35 @@ func (f Failure) Unwrap() error { return f.Err }
 // scheduler blocked, and the requests behind it milliseconds or more late.
 const lateTolerance = time.Millisecond
 
+const (
+	// TimerLagWarn is the timer-lag p99 above which the generator is being
+	// starved: an idle machine's timers wake within microseconds.
+	TimerLagWarn = 5 * time.Millisecond
+	// LateWarnFraction is the share of requests dispatched over a millisecond
+	// late at which their effect on latency is worth a warning.
+	LateWarnFraction = 0.05
+)
+
 // reachedLate reports whether the scheduler, finding a request at now that was
 // due at due, was behind schedule by enough to count it as late.
 func reachedLate(now, due time.Time) bool {
 	return now.Sub(due) > lateTolerance
+}
+
+// GeneratorHealth contains the measured signal used to decide whether the
+// generator kept time.
+type GeneratorHealth struct {
+	TimerLagP99 time.Duration
+}
+
+// Limited reports whether the p99 timer lag is over the warning threshold.
+// This cannot detect a saturated generator that has stopped sleeping; late
+// dispatches alone are ambiguous because a slow server can also fill workers.
+func (h GeneratorHealth) Limited() (bool, string) {
+	if h.TimerLagP99 > TimerLagWarn {
+		return true, fmt.Sprintf("generator timer lag p99 is %v, so its timers were starved or slept too long: lower the rate or run Gmeter on a quieter machine", h.TimerLagP99.Round(time.Microsecond))
+	}
+	return false, ""
 }
 
 // StageResult is what happened to the requests that were due during one stage
@@ -339,6 +375,7 @@ func reachedLate(now, due time.Time) bool {
 type StageResult struct {
 	Stage     pacer.Stage
 	Scheduled uint64 // requests dispatched to workers
+	Late      uint64 // dispatched more than 1ms after their due time, in this stage
 	Dropped   uint64 // owed by the stage but never dispatched
 	Failed    uint64 // transport failures
 	BadStatus uint64 // responses outside 200-399
@@ -358,8 +395,10 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, err
 	}
 
-	client := newClient(cfg.Workers, cfg.TLS, cfg.HTTP2, cfg.UnixSocket, cfg.ConnectTo)
-	defer client.CloseIdleConnections()
+	clients := newClients(cfg.Workers, cfg.TLS, cfg.HTTP2, cfg.UnixSocket, cfg.ConnectTo)
+	for _, c := range clients {
+		defer c.CloseIdleConnections()
+	}
 
 	start := time.Now()
 	sched, err := newSource(start, cfg)
@@ -386,12 +425,21 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if cfg.Phases {
 		phases = newPhaseTally()
 	}
-	scheduledBy := make([]uint64, len(cfg.labels))                                             // per label; only this goroutine writes it
-	scheduledIn, droppedIn := make([]uint64, len(cfg.Stages)), make([]uint64, len(cfg.Stages)) // only this goroutine writes them
+	var jstats *journeyStats
+	jt := map[string]*partTally(nil)
+	if cfg.Journey != nil {
+		jstats = newJourneyStats()
+		jt = make(map[string]*partTally, len(cfg.Journey.Steps))
+		for _, st := range cfg.Journey.Steps {
+			jt[st.Label] = &partTally{}
+		}
+	}
+	scheduledBy := make([]uint64, len(cfg.labels))                                                                                      // per label; only this goroutine writes it
+	scheduledIn, droppedIn, lateIn := make([]uint64, len(cfg.Stages)), make([]uint64, len(cfg.Stages)), make([]uint64, len(cfg.Stages)) // only this goroutine writes them
 	jobs := make(chan job, cfg.Workers)
 	var wg sync.WaitGroup
-	for _, t := range tallies {
-		w := &worker{start: start, client: client, cfg: cfg, live: &live, t: t, stages: stages, labels: labels, phases: phases}
+	for i, t := range tallies {
+		w := &worker{start: start, client: clients[i%len(clients)], cfg: cfg, live: &live, t: t, stages: stages, labels: labels, phases: phases, jstats: jstats, jt: jt}
 		wg.Go(func() { w.run(ctx, jobs) })
 	}
 
@@ -421,6 +469,7 @@ loop:
 			timerLag.Record(time.Since(at))
 		} else if reachedLate(now, at) {
 			live.late.Add(1) // behind schedule when we got here
+			lateIn[stage]++
 		}
 		prev = at
 		select {
@@ -453,6 +502,7 @@ loop:
 
 	res := &Result{
 		Elapsed:   time.Since(start),
+		Workers:   cfg.Workers,
 		Scheduled: live.scheduled.Load(),
 		Dropped:   dropped,
 		Statuses:  map[int]uint64{},
@@ -464,7 +514,12 @@ loop:
 		TimerLag:  timerLag,
 		Late:      live.late.Load(),
 		Timeline:  timeline,
-		Labels:    labelResults(cfg.labels, scheduledBy, labels, cfg.Phases),
+	}
+	if cfg.Journey != nil {
+		res.Labels = journeyLabels(cfg.Journey, jt, cfg.Phases)
+		res.Journey = jstats.result(cfg.Journey, res.Scheduled)
+	} else {
+		res.Labels = labelResults(cfg.labels, scheduledBy, labels, cfg.Phases)
 	}
 	if phases != nil {
 		res.Phases = phases.results()
@@ -474,6 +529,7 @@ loop:
 		r := StageResult{
 			Stage:     cfg.Stages[i],
 			Scheduled: scheduledIn[i],
+			Late:      lateIn[i],
 			Dropped:   droppedIn[i],
 			Failed:    st.failed,
 			BadStatus: st.badStatus,
@@ -518,6 +574,15 @@ loop:
 	return res, nil
 }
 
+// GeneratorHealth returns what is needed to judge whether this run's numbers
+// describe the generator or the server.
+func (r *Result) GeneratorHealth() GeneratorHealth {
+	if r.TimerLag == nil {
+		return GeneratorHealth{}
+	}
+	return GeneratorHealth{TimerLagP99: r.TimerLag.Quantile(0.99)}
+}
+
 // source is where due times come from: a computed Schedule or a recorded Replay.
 type source interface {
 	Next() (at time.Time, stage int, ok bool)
@@ -547,7 +612,7 @@ func (c Config) normalize() (Config, error) {
 			is   bool
 		}{
 			{"Method", c.Method != ""}, {"Header", c.Header != nil}, {"Body", c.Body != nil}, {"Requests", c.Requests != nil},
-			{"TLS", c.TLS != nil}, {"HTTP2", c.HTTP2}, {"Phases", c.Phases},
+			{"TLS", c.TLS != nil}, {"HTTP2", c.HTTP2}, {"Phases", c.Phases}, {"Journey", c.Journey != nil},
 		} {
 			if set.is {
 				return c, fmt.Errorf("runner: %s describes an HTTP request, and a Call sends none", set.name)
@@ -585,6 +650,31 @@ func (c Config) normalize() (Config, error) {
 		}
 	}
 	switch {
+	case c.Journey != nil:
+		if c.Offsets != nil || c.Requests != nil {
+			return c, fmt.Errorf("runner: a journey schedules its own sessions: Offsets and Requests do not apply to it")
+		}
+		if len(c.Journey.Steps) == 0 {
+			return c, fmt.Errorf("runner: the journey has no steps")
+		}
+		seen := map[string]bool{}
+		for i, st := range c.Journey.Steps {
+			switch {
+			case st.Label == "":
+				return c, fmt.Errorf("runner: journey step %d has no Label: name every step", i+1)
+			case st.Render == nil:
+				return c, fmt.Errorf("runner: journey step %q: Render is required", st.Label)
+			case seen[st.Label]:
+				return c, fmt.Errorf("runner: journey step %q: two steps share a label; step labels must be unique", st.Label)
+			}
+				seen[st.Label] = true
+		}
+		if len(c.Stages) == 0 { // Rate and Duration say the session rate and length, like a plain run
+			c.Stages = pacer.ConstantRate(c.Rate, c.Duration)
+		}
+		if c.base == "" { // journey steps' paths are relative to the URL
+			c.base = strings.TrimSuffix(c.URL, "/")
+		}
 	case len(c.Offsets) > 0:
 		if len(c.Stages) > 0 || c.Rate != 0 || c.Duration != 0 {
 			return c, fmt.Errorf("runner: Offsets already say when requests are due: do not also set Rate, Duration or Stages")
@@ -664,6 +754,23 @@ func (c Config) normalize() (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// newClients spreads conns over several transports, so their idle-pool locks
+// are not shared by every worker.
+func newClients(conns int, tlsConfig *tls.Config, http2 bool, unixSocket, connectTo string) []*http.Client {
+	// HTTP/2 multiplexes over few connections; separate pools would open one
+	// per shard and undo that. Only HTTP/1.1 contends on the idle-pool lock.
+	if http2 {
+		return []*http.Client{newClient(conns, tlsConfig, http2, unixSocket, connectTo)}
+	}
+	n := min(conns, 8)
+	per := (conns + n - 1) / n
+	out := make([]*http.Client, n)
+	for i := range out {
+		out[i] = newClient(per, tlsConfig, http2, unixSocket, connectTo)
+	}
+	return out
 }
 
 // newClient returns a client capped at conns connections that neither follows
@@ -845,7 +952,17 @@ type partTally struct {
 	phases             phaseSums       // only when phases are on
 	wait               *hist.Histogram // only a label's, and only when phases are on
 
+	// scheduled counts executed journey steps of the label (labels of journey
+	// steps only).
+	scheduled uint64
+
 	loggedCompared, loggedDiffer uint64 // only a label's
+}
+
+func (p *partTally) sched() {
+	p.mu.Lock()
+	p.scheduled++
+	p.mu.Unlock()
 }
 
 func (p *partTally) compareLogged(differs bool) {
@@ -906,6 +1023,9 @@ type worker struct {
 	stages []partTally
 	labels []partTally // empty unless the requests carry labels
 	phases *phaseTally // nil unless phases were asked for
+
+	jstats *journeyStats        // the run's journey counters; nil unless a journey ran
+	jt     map[string]*partTally // the shared tallies of the journey's step labels; nil otherwise
 }
 
 func (w *worker) run(ctx context.Context, jobs <-chan job) {
@@ -915,6 +1035,10 @@ func (w *worker) run(ctx context.Context, jobs <-chan job) {
 }
 
 func (w *worker) do(ctx context.Context, j job) {
+	if w.cfg.Journey != nil {
+		w.doJourney(ctx, j)
+		return
+	}
 	intended := j.at
 	reqCtx, cancel := context.WithTimeout(ctx, w.cfg.Timeout)
 	defer cancel()

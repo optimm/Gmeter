@@ -1,0 +1,286 @@
+name: Gmeter load test
+description: Run an open-loop Gmeter load test in CI, gate on an SLO or a p99 regression, and publish the report.
+
+branding:
+  icon: activity
+  color: red
+
+inputs:
+  url:
+    description: Target URL, exactly as it would follow the flags of `gmeter` or `gmeter find`.
+    required: true
+  args:
+    description: >-
+      Extra flags for a plain run, written as they would appear before the URL, e.g.
+      `-rate 200 -duration 30s -workers 50 -H 'X-Env: staging'`. The action adds `-json`
+      itself. Values are evaluated by bash, so quote them as you would in a shell.
+    required: false
+    default: ""
+  slo:
+    description: >-
+      Latency target such as `p99=50ms`. When set, the action runs `gmeter find` and the
+      step fails if no rate meets the target or the generator could not keep time.
+      Mutually exclusive with `baseline`.
+    required: false
+    default: ""
+  find-args:
+    description: >-
+      Extra flags for `gmeter find`, e.g. `-start 100 -max 2000 -trial 5s -confirm 1`.
+      Only used when `slo` is set. The action adds `-slo` and `-json` itself.
+    required: false
+    default: ""
+  baseline:
+    description: >-
+      Path to a previous JSON summary. When set, the action runs `gmeter diff` after a
+      plain run and the step fails if p99 regressed beyond the threshold. Mutually
+      exclusive with `slo`.
+    required: false
+    default: ""
+  threshold:
+    description: Percent by which corrected p99 may rise before `gmeter diff` fails.
+    required: false
+    default: ""
+  error-threshold:
+    description: Percentage points by which the error rate may rise before `gmeter diff` fails.
+    required: false
+    default: ""
+  endpoint-threshold:
+    description: Percent by which a replay endpoint's corrected p99 may rise before `gmeter diff` fails.
+    required: false
+    default: ""
+  output:
+    description: Path of the JSON summary to write and upload.
+    required: false
+    default: gmeter-report.json
+  artifact-name:
+    description: Name of the uploaded JSON artifact. Give each call in a job a different name.
+    required: false
+    default: gmeter-report
+
+outputs:
+  json-path:
+    description: Absolute path of the JSON summary written by this step.
+
+runs:
+  using: composite
+  steps:
+    - name: Install the released Gmeter binary
+      id: install
+      shell: bash
+      env:
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_REPOSITORY: ${{ github.action_repository }}
+      run: |
+        set -euo pipefail
+
+        native_bin="$RUNNER_TEMP/gmeter-action-bin"
+        case "$RUNNER_OS" in
+          Windows) bin_dir="$(cygpath -u "$native_bin")" ;;
+          *)       bin_dir="$native_bin" ;;
+        esac
+        mkdir -p "$bin_dir"
+        echo "$native_bin" >> "$GITHUB_PATH"
+
+        fallback() {
+          echo "fallback=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        }
+
+        case "$RUNNER_OS" in
+          Linux)  os=linux ;;
+          macOS)  os=darwin ;;
+          Windows) os=windows ;;
+          *) fallback ;;
+        esac
+        case "$RUNNER_ARCH" in
+          X64)   arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) fallback ;;
+        esac
+
+        ref="$ACTION_REF"
+        case "$ref" in
+          refs/tags/*) ref="${ref#refs/tags/}" ;;
+        esac
+        case "$ref" in
+          v[0-9]*) tag="$ref"; version="${ref#v}" ;;
+          [0-9]*)  tag="v$ref"; version="$ref" ;;
+          *) fallback ;; # a local ./ action, a branch or a SHA: build from source
+        esac
+
+        repo="${ACTION_REPOSITORY:-optimm/Gmeter}"
+        if [ "$os" = windows ]; then ext=zip; else ext=tar.gz; fi
+        installed=false
+        # GoReleaser names assets without the leading v, but older tags may not.
+        for candidate in "$version" "$ref"; do
+          [ -n "$candidate" ] || continue
+          asset="gmeter_${candidate}_${os}_${arch}.${ext}"
+          url="https://github.com/${repo}/releases/download/${tag}/${asset}"
+          echo "Trying $url"
+          if curl -fsSL --retry 3 "$url" -o "$bin_dir/$asset"; then
+            if [ "$ext" = zip ]; then
+              if command -v unzip >/dev/null 2>&1; then
+                unzip -oq "$bin_dir/$asset" -d "$bin_dir"
+              else
+                powershell -NoProfile -Command "Expand-Archive -Force -Path '$native_bin/$asset' -DestinationPath '$native_bin'"
+              fi
+            else
+              tar -xzf "$bin_dir/$asset" -C "$bin_dir" gmeter
+              chmod +x "$bin_dir/gmeter"
+            fi
+            rm -f "$bin_dir/$asset"
+            installed=true
+            break
+          fi
+        done
+
+        if [ "$installed" = true ]; then
+          echo "fallback=false" >> "$GITHUB_OUTPUT"
+        else
+          fallback
+        fi
+
+    - name: Set up Go for the source fallback
+      if: ${{ steps.install.outputs.fallback == 'true' }}
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: ${{ github.action_path }}/go.mod
+
+    - name: Build Gmeter from source
+      if: ${{ steps.install.outputs.fallback == 'true' }}
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        native_bin="$RUNNER_TEMP/gmeter-action-bin"
+        case "$RUNNER_OS" in
+          Windows) bin_dir="$(cygpath -u "$native_bin")"; exe=.exe ;;
+          *)       bin_dir="$native_bin"; exe= ;;
+        esac
+        mkdir -p "$bin_dir"
+        (cd "$ACTION_PATH" && go build -o "$bin_dir/gmeter$exe" ./cmd/gmeter)
+
+    - name: Prepare the report files
+      id: prepare
+      shell: bash
+      env:
+        OUTPUT: ${{ inputs.output }}
+        SLO: ${{ inputs.slo }}
+        BASELINE: ${{ inputs.baseline }}
+      run: |
+        set -euo pipefail
+        if [ -n "$SLO" ] && [ -n "$BASELINE" ]; then
+          echo "gmeter action: use either slo or baseline, not both" >&2
+          exit 2
+        fi
+        if [ "$OUTPUT" = "-" ]; then
+          echo "gmeter action: output must be a file path, not -" >&2
+          exit 2
+        fi
+        mkdir -p "$(dirname "$OUTPUT")"
+        abs_dir="$(cd "$(dirname "$OUTPUT")" && pwd)"
+        echo "json-path=$abs_dir/$(basename "$OUTPUT")" >> "$GITHUB_OUTPUT"
+        : > "$RUNNER_TEMP/gmeter-run.log"
+        : > "$RUNNER_TEMP/gmeter-diff.log"
+
+    - name: Run the load test
+      shell: bash
+      env:
+        URL: ${{ inputs.url }}
+        ARGS: ${{ inputs.args }}
+        SLO: ${{ inputs.slo }}
+        FIND_ARGS: ${{ inputs.find-args }}
+        OUTPUT: ${{ inputs.output }}
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/gmeter-run.log"
+        q() { printf '%q' "$1"; }
+
+        if [ -n "$SLO" ]; then
+          cmd="gmeter find $(q -slo) $(q "$SLO")"
+          [ -z "$FIND_ARGS" ] || cmd="$cmd $FIND_ARGS"
+        else
+          cmd="gmeter"
+          [ -z "$ARGS" ] || cmd="$cmd $ARGS"
+        fi
+        cmd="$cmd $(q -json) $(q "$OUTPUT") $(q "$URL")"
+
+        eval "$cmd" 2>&1 | tee -a "$log"
+
+    - name: Check for a regression
+      if: ${{ inputs.baseline != '' }}
+      shell: bash
+      env:
+        BASELINE: ${{ inputs.baseline }}
+        THRESHOLD: ${{ inputs.threshold }}
+        ERROR_THRESHOLD: ${{ inputs.error-threshold }}
+        ENDPOINT_THRESHOLD: ${{ inputs.endpoint-threshold }}
+        OUTPUT: ${{ inputs.output }}
+      run: |
+        set -euo pipefail
+        log="$RUNNER_TEMP/gmeter-diff.log"
+        q() { printf '%q' "$1"; }
+
+        if [ ! -f "$BASELINE" ]; then
+          echo "gmeter action: baseline file not found: $BASELINE" >&2
+          exit 2
+        fi
+
+        cmd="gmeter diff"
+        [ -z "$THRESHOLD" ] || cmd="$cmd $(q -threshold) $(q "$THRESHOLD")"
+        [ -z "$ERROR_THRESHOLD" ] || cmd="$cmd $(q -error-threshold) $(q "$ERROR_THRESHOLD")"
+        [ -z "$ENDPOINT_THRESHOLD" ] || cmd="$cmd $(q -endpoint-threshold) $(q "$ENDPOINT_THRESHOLD")"
+        cmd="$cmd $(q "$BASELINE") $(q "$OUTPUT")"
+
+        eval "$cmd" 2>&1 | tee -a "$log"
+
+    - name: Write the reports to the job summary
+      if: ${{ always() }}
+      shell: bash
+      env:
+        OUTPUT: ${{ inputs.output }}
+        ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        SLO: ${{ inputs.slo }}
+        BASELINE: ${{ inputs.baseline }}
+      run: |
+        set -euo pipefail
+        [ -n "${GITHUB_STEP_SUMMARY:-}" ] || exit 0
+
+        if [ -n "$SLO" ]; then mode="SLO gate"
+        elif [ -n "$BASELINE" ]; then mode="diff gate"
+        else mode="report"; fi
+
+        {
+          echo "## Gmeter"
+          echo
+          echo "- Mode: $mode"
+          echo "- JSON report: $OUTPUT"
+          echo "- Artifact: $ARTIFACT_NAME"
+          echo
+          echo "<details><summary>Run report</summary>"
+          echo
+          echo "````text"
+          cat "$RUNNER_TEMP/gmeter-run.log" 2>/dev/null || true
+          echo "````"
+          echo
+          echo "</details>"
+          if [ -s "$RUNNER_TEMP/gmeter-diff.log" ]; then
+            echo
+            echo "<details><summary>Comparison with baseline</summary>"
+            echo
+            echo "````text"
+            cat "$RUNNER_TEMP/gmeter-diff.log"
+            echo "````"
+            echo
+            echo "</details>"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload the JSON report
+      if: ${{ always() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.output }}
+        if-no-files-found: warn

@@ -19,6 +19,18 @@ import (
 	"github.com/optimm/Gmeter"
 )
 
+func TestGRPCRefusesDialOverridesBeforeTryingToConnect(t *testing.T) {
+	for name, cfg := range map[string]gmeter.Config{
+		"UnixSocket": {URL: "127.0.0.1:9090", Rate: 1, Duration: time.Second, UnixSocket: "/tmp/gmeter.sock", GRPC: &gmeter.GRPC{Method: "x.Y/Z"}},
+		"ConnectTo":  {URL: "127.0.0.1:9090", Rate: 1, Duration: time.Second, ConnectTo: "127.0.0.1:80", GRPC: &gmeter.GRPC{Method: "x.Y/Z"}},
+	} {
+		_, err := gmeter.Run(context.Background(), cfg)
+		if err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("%s: err = %v, want a refusal that names it", name, err)
+		}
+	}
+}
+
 func server(t *testing.T, h http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(h)

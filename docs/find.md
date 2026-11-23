@@ -85,9 +85,12 @@ The report says plainly when the answer needs a caveat, and these are the ones t
   31.3ms and 53.1ms. It reported 775 rps with "held in only 1 of 2 re-runs, so treat it as an upper estimate"
   rather than presenting a cliff edge as a measurement. Poisson arrivals gave a steadier 725 rps.
 - **at least N rps**: the search stopped at `-max`, not because the server gave out. Raise `-max`.
-- **generator limited**: a trial whose latency looked fine, but where Gmeter's own timers ran late (timer-lag p99
-  over 5ms), is not trusted: it counts as a failure and the report says the server may sustain more. Run Gmeter
-  somewhere quieter, or on a bigger machine.
+- **generator limited**: a trial whose latency looked fine, but where Gmeter could not keep time, is not trusted:
+  it counts as a failure and the report says the server may sustain more. That means timer lag p99 over 5ms. A
+  saturated generator that has stopped sleeping is not detected by this signal and only gets the late-dispatch
+  warning; see
+  [Reading the generator line](reading-the-report.md#reading-the-generator-line). Run Gmeter somewhere quieter,
+  or on a bigger machine.
 - **no rate down to 1 rps met the target**: exit code 1.
 - **interrupted** (Ctrl-C): the best rate found so far, and exit code 1.
 
@@ -110,3 +113,10 @@ interrupted), `2` bad usage.
 
 `-workers`, `-timeout`, `-method`, `-H`, `-body`, `-spin`, `-arrivals` (default `poisson` here), `-seed`, `-json`,
 `-quiet`, `-phases`, `-insecure`, `-cacert`, `-cert` and `-key` work as for a plain run. Each trial uses the seed plus its number, so a printed seed reproduces the search.
+
+### Journeys
+
+With `-scenario FILE`, the search runs a [journey](journeys.md) instead: `-slo` then searches over **session
+rate** — the trials and the report all say `sessions/s`. Each trial runs warm-up and measured session-rate
+stages with `-trial`/`-warmup` as usual. The error rate includes check, extraction and incomplete-journey
+failures; a trial with too few completed sessions to judge is a failure, not a pass.

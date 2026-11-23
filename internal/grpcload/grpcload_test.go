@@ -164,8 +164,8 @@ func TestWhatCannotBeCalledIsRefusedBeforeTheTest(t *testing.T) {
 		{"unary with stream-send", Options{Method: grpcdemo.Say, SendMessages: 1}, []string{"unary"}},
 		{"unary with stream-recv", Options{Method: grpcdemo.Say, RecvMessages: 1}, []string{"unary"}},
 		{"too many requests on a server stream", Options{Method: grpcdemo.Feed, SendMessages: 2}, []string{"one request"}},
-		{"negative stream-send", Options{Method: grpcdemo.Say, SendMessages: -1}, []string{"-stream-send"}},
-		{"negative stream-recv", Options{Method: grpcdemo.Say, RecvMessages: -1}, []string{"-stream-recv"}},
+		{"negative stream-send", Options{Method: grpcdemo.Say, SendMessages: -1}, []string{"send_messages"}},
+		{"negative stream-recv", Options{Method: grpcdemo.Say, RecvMessages: -1}, []string{"recv_messages"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.o.Addr, tc.o.Plaintext = addr, true

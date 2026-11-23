@@ -32,11 +32,13 @@ func runAgent(ctx context.Context, args []string, _, stderr io.Writer) int {
 	fs := flag.NewFlagSet("gmeter agent", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	listen := fs.String("listen", defaultAgentListen, "address to take jobs on; the default is reachable only from this machine, use e.g. 0.0.0.0:7070 for other machines")
+	allowUnixSocket := fs.Bool("allow-unix-socket", false, "accept jobs that name a Unix socket; anyone with the password could then dial any socket on this host, such as docker.sock")
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: %s=PASSWORD gmeter agent [-listen ADDR]\n\n"+
+		fmt.Fprintf(stderr, "Usage: %s=PASSWORD gmeter agent [-listen ADDR] [-allow-unix-socket]\n\n"+
 			"Runs the jobs a controller (gmeter -agents, gmeter replay -agents) sends, one at a time,\n"+
-			"for callers that know PASSWORD. The password and the traffic are not encrypted:\n"+
-			"run agents on your own machines, on a network you trust.\n\n", tokenEnv)
+			"for callers that know PASSWORD. The password gives full control of this host, and it\n"+
+			"and the traffic are not encrypted: run agents on your own machines, on a network you\n"+
+			"trust. Jobs that name a Unix socket are refused unless -allow-unix-socket is set.\n\n", tokenEnv)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -61,6 +63,7 @@ func runAgent(ctx context.Context, args []string, _, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "gmeter agent: set %s: %v\n", tokenEnv, err)
 		return 2
 	}
+	srv.AllowUnixSocket = *allowUnixSocket
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
 		fmt.Fprintf(stderr, "gmeter agent: cannot listen on %s: %v\n", *listen, err)
@@ -70,6 +73,9 @@ func runAgent(ctx context.Context, args []string, _, stderr io.Writer) int {
 	logf("listening on %s (protocol version %d)", addr, agent.Version)
 	if !addr.IP.IsLoopback() {
 		logf("reachable from the network: the password and the traffic are not encrypted, so only do this on a network you trust")
+	}
+	if *allowUnixSocket {
+		logf("-allow-unix-socket: jobs may dial any Unix socket on this host, including docker.sock")
 	}
 
 	hs := &http.Server{

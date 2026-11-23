@@ -16,6 +16,9 @@ type Options struct {
 	Version string
 	// Policy says what an agent may target and how much load it may ask for.
 	Policy Policy
+	// ScenarioDir is a directory of named journey scenarios; agents refer to
+	// them by name in load_test's journey.file. Empty disables journeys.
+	ScenarioDir string
 }
 
 // New returns an MCP server with Gmeter's tools. Serve it with Run on a
@@ -24,7 +27,7 @@ func New(opts Options) *mcp.Server {
 	if opts.Version == "" {
 		opts.Version = "dev"
 	}
-	s := &service{policy: opts.Policy.withDefaults(), runs: newRunStore()}
+	s := &service{policy: opts.Policy.withDefaults(), runs: newRunStore(), scenarioDir: opts.ScenarioDir}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "gmeter", Title: "Gmeter load tester", Version: opts.Version}, &mcp.ServerOptions{
 		Instructions: instructions,
 	})
@@ -47,8 +50,9 @@ which flag the operator can use to change it. Ask the operator, never work aroun
 
 // service holds what the tools share.
 type service struct {
-	policy Policy
-	runs   *runStore
+	policy      Policy
+	runs        *runStore
+	scenarioDir string // journeys are read from here, if set
 }
 
 // runStore keeps the summaries of the runs this server did, so that a later call

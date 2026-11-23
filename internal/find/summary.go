@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/optimm/Gmeter/internal/hist"
 	"github.com/optimm/Gmeter/internal/report"
+	"github.com/optimm/Gmeter/internal/runner"
 )
 
 // SchemaVersion is the version of the JSON layout.
@@ -35,6 +37,10 @@ type Summary struct {
 	Target  TargetInfo  `json:"target"`
 	Result  ResultInfo  `json:"result"`
 	Trials  []TrialInfo `json:"trials"` // always a list, never null
+
+	// Journey is the journey run's stats, accumulated over the trials, when
+	// the search ran a journey. The key is left out otherwise.
+	Journey *runner.JourneyResult `json:"journey,omitempty"`
 
 	slo SLO
 }
@@ -117,6 +123,23 @@ func NewSummary(o Outcome, info RunInfo, slo SLO, interrupted bool) Summary {
 			ObservedMs: float64(ob.Observed) / float64(time.Millisecond), ErrorRate: ob.ErrorRate,
 			Scheduled: ob.Scheduled, Reasons: reasons, Phases: ob.Phases,
 		}
+		if ob.Journey != nil {
+			if s.Journey == nil {
+				s.Journey = &runner.JourneyResult{Name: ob.Journey.Name, Steps: ob.Journey.Steps, JourneyLatencies: hist.New()}
+			}
+			s.Journey.SessionsStarted += ob.Journey.SessionsStarted
+			s.Journey.SessionsCompleted += ob.Journey.SessionsCompleted
+			s.Journey.SessionsAborted += ob.Journey.SessionsAborted
+			for k, n := range ob.Journey.Failures {
+				if s.Journey.Failures == nil {
+					s.Journey.Failures = map[string]uint64{}
+				}
+				s.Journey.Failures[k] += n
+			}
+			if ob.Journey.JourneyLatencies != nil {
+				s.Journey.JourneyLatencies.Merge(ob.Journey.JourneyLatencies)
+			}
+		}
 	}
 	return s
 }
@@ -145,8 +168,14 @@ func (s Summary) WriteText(w io.Writer) error {
 	fmt.Fprintf(&b, "find  %s %s   target %s, errors ≤ %g%%   %s   %gs trials%s\n\n",
 		s.Run.Method, s.Run.URL, s.Target.Text, s.Target.MaxErrorRate*100, arrivals, s.Run.TrialSeconds, warm)
 
+	unit := "rps"
+	noun := "rate"
+	if s.Journey != nil {
+		unit = "sessions/s"
+		noun = "session rate"
+	}
 	label := s.slo.Label()
-	fmt.Fprintf(&b, "  %2s  %-8s  %8s  %9s  %6s  %s\n", "#", "phase", "rate", label, "errors", "result")
+	fmt.Fprintf(&b, "  %2s  %-8s  %8s  %9s  %6s  %s\n", "#", "phase", noun, label, "errors", "result")
 	for _, tr := range s.Trials {
 		verdict := tr.Verdict
 		switch tr.Verdict {
@@ -166,25 +195,25 @@ func (s Summary) WriteText(w io.Writer) error {
 
 	switch {
 	case r.Interrupted && r.Found:
-		fmt.Fprintf(&b, "result  interrupted: the search did not finish; the best rate found so far is %g rps\n", r.MaxRPS)
+		fmt.Fprintf(&b, "result  interrupted: the search did not finish; the best rate found so far is %g %s\n", r.MaxRPS, unit)
 	case r.Interrupted:
 		b.WriteString("result  interrupted: the search did not finish and no rate had met the target yet\n")
 	case !r.Found:
-		fmt.Fprintf(&b, "result  no rate down to %g rps met %s\n", r.NextFailRPS, s.Target.Text)
+		fmt.Fprintf(&b, "result  no rate down to %g %s met %s\n", r.NextFailRPS, unit, s.Target.Text)
 	case r.LowerBound:
-		fmt.Fprintf(&b, "result  at least %g rps: the search stopped at its maximum, not because the server gave out (raise -max)\n", r.MaxRPS)
+		fmt.Fprintf(&b, "result  at least %g %s: the search stopped at its maximum, not because the server gave out (raise -max)\n", r.MaxRPS, unit)
 	default:
-		fmt.Fprintf(&b, "result  the highest rate meeting %s is about %g rps\n", s.Target.Text, r.MaxRPS)
+		fmt.Fprintf(&b, "result  the highest %s meeting %s is about %g %s\n", noun, s.Target.Text, r.MaxRPS, unit)
 		if r.NextFailRPS > 0 {
-			fmt.Fprintf(&b, "        the next rate up that was tried, %g rps, failed\n", r.NextFailRPS)
+			fmt.Fprintf(&b, "        the next rate up that was tried, %g %s, failed\n", r.NextFailRPS, unit)
 		}
 	}
 	if r.Found && !r.Interrupted && r.ConfirmRuns > 0 {
 		if r.Confirmed == r.ConfirmRuns {
-			fmt.Fprintf(&b, "        held in %d of %d re-runs at %g rps\n", r.Confirmed, r.ConfirmRuns, r.MaxRPS)
+			fmt.Fprintf(&b, "        held in %d of %d re-runs at %g %s\n", r.Confirmed, r.ConfirmRuns, r.MaxRPS, unit)
 		} else {
-			fmt.Fprintf(&b, "        unstable: it held in only %d of %d re-runs at %g rps, so treat it as an upper estimate (a longer -trial gives a steadier answer)\n",
-				r.Confirmed, r.ConfirmRuns, r.MaxRPS)
+			fmt.Fprintf(&b, "        unstable: it held in only %d of %d re-runs at %g %s, so treat it as an upper estimate (a longer -trial gives a steadier answer)\n",
+				r.Confirmed, r.ConfirmRuns, r.MaxRPS, unit)
 		}
 	}
 	s.writeGrowth(&b)

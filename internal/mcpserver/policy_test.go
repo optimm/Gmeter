@@ -123,20 +123,63 @@ func TestLimitsCapTheLoadAnAgentMayAsk(t *testing.T) {
 	}
 }
 
+func TestTheTimeoutAnAgentAsksForIsBounded(t *testing.T) {
+	p := Policy{MaxTimeout: 30 * time.Second}
+	for name, tc := range map[string]struct {
+		timeout time.Duration
+		want    string
+	}{
+		"over":     {time.Minute, "-max-timeout"},
+		"negative": {-time.Second, "negative"},
+	} {
+		if err := p.CheckTimeout(tc.timeout); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want a refusal naming %q", name, err, tc.want)
+		}
+	}
+	if err := p.CheckTimeout(0); err != nil {
+		t.Errorf("zero means the default: %v", err)
+	}
+	if err := p.CheckTimeout(30 * time.Second); err != nil {
+		t.Errorf("at the limit: %v", err)
+	}
+}
+
+func TestOneStreamCannotCarryMoreMessagesThanTheCap(t *testing.T) {
+	p := Policy{MaxStreamMessages: 20}
+	for name, tc := range map[string]struct {
+		send, recv int
+		want       string
+	}{
+		"send":     {21, 0, "-max-stream-messages"},
+		"recv":     {0, 21, "-max-stream-messages"},
+		"negative": {-1, 0, "negative"},
+	} {
+		err := p.CheckStreamMessages(tc.send, tc.recv)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want a refusal naming %q", name, err, tc.want)
+		}
+	}
+	if err := p.CheckStreamMessages(20, 20); err != nil {
+		t.Errorf("at the limit: %v", err)
+	}
+}
+
 func TestDefaultsAreSetWhereTheCallerLeftThemZero(t *testing.T) {
 	p := Policy{}.withDefaults()
-	if p.MaxRate <= 0 || p.MaxDuration <= 0 || p.MaxWorkers <= 0 || p.lookup == nil {
+	if p.MaxRate <= 0 || p.MaxDuration <= 0 || p.MaxWorkers <= 0 || p.MaxTimeout <= 0 || p.MaxStreamMessages <= 0 || p.lookup == nil {
 		t.Errorf("withDefaults() = %+v, want every limit set", p)
 	}
 }
 
 func TestValidateRefusesWhatCouldNeverWork(t *testing.T) {
 	for name, p := range map[string]Policy{
-		"bad cidr":       {Allow: []string{"10.0.0.0/99"}},
-		"empty entry":    {Allow: []string{" "}},
-		"negative rate":  {MaxRate: -1},
-		"negative time":  {MaxDuration: -time.Second},
-		"negative count": {MaxWorkers: -3},
+		"bad cidr":          {Allow: []string{"10.0.0.0/99"}},
+		"empty entry":       {Allow: []string{" "}},
+		"negative rate":     {MaxRate: -1},
+		"negative time":     {MaxDuration: -time.Second},
+		"negative count":    {MaxWorkers: -3},
+		"negative timeout":  {MaxTimeout: -time.Second},
+		"negative messages": {MaxStreamMessages: -1},
 	} {
 		if err := p.Validate(); err == nil {
 			t.Errorf("%s: want an error", name)
@@ -149,7 +192,7 @@ func TestValidateRefusesWhatCouldNeverWork(t *testing.T) {
 
 func TestDescribeSaysWhatThePolicyAllows(t *testing.T) {
 	got := Policy{Allow: []string{"api.test"}, MaxRate: 250}.Describe()
-	for _, want := range []string{"loopback", "api.test", "250", "2m0s", "200"} {
+	for _, want := range []string{"loopback", "api.test", "250", "2m0s", "200", "1m0s", "100 messages per stream"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Describe() = %q, want it to mention %q", got, want)
 		}

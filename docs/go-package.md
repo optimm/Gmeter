@@ -30,10 +30,11 @@ if err := res.Meets(gmeter.SLO{Quantile: 0.99, Latency: 80 * time.Millisecond, M
 a client certificate or skip verification); `HTTP2`; `UnixSocket` to connect to a Unix domain socket instead of the
 host in `URL`; `ConnectTo` to dial another `host:port` while keeping the URL's host for the `Host` header and TLS;
 and `OnRequest`, called with every request as it ends. The
-`Result` has the counts (`Scheduled`, `OK`, `BadStatus`, `Failed`, `ErrorRate`, `Statuses`, `Errors`), the latency at any
+`Result` has the counts (`Scheduled`, `Late`, `OK`, `BadStatus`, `Failed`, `ErrorRate`, `Statuses`, `Errors`), the latency at any
 quantile by both clocks (`Corrected(0.99)` from when a request was due, `Service(0.99)` from when it was sent), and
 `WriteText`, `WriteJSON` and `WritePrometheus` for the report the command prints, the file `gmeter diff` compares,
-and the metrics a Prometheus scrape can read.
+and the metrics a Prometheus scrape can read. `WriteJSON` also records whether the generator, rather than the
+server, set the numbers under `generator.limited`, with `generator.reason`.
 
 `Meets` is the check. It fails when the latency at the target's quantile is over the limit, when more requests failed
 than the error budget allows, when requests were left unsent, and when Gmeter could not keep time itself, because then
@@ -64,7 +65,8 @@ fmt.Println(res.Codes()) // map[NOT_FOUND:3 OK:29997]: the answers by status cod
 
 `GRPC` takes what the `grpc` command's flags take: `Protoset` (a descriptor set, or the server is asked by reflection),
 `Conns`, `Metadata`, `Plaintext`, and for a streaming method `SendMessages` and `RecvMessages` (the `-stream-send` and
-`-stream-recv` flags). `Method`, `Header`, `Body`, `Requests` and `HTTP2` are for HTTP and are refused alongside it. For a streaming method, one scheduled call is one whole stream: `SendMessages` is how many request
+`-stream-recv` flags). `Method`, `Header`, `Body`, `Requests`, `HTTP2`, `UnixSocket` and `ConnectTo` are for HTTP and are
+refused alongside it. For a streaming method, one scheduled call is one whole stream: `SendMessages` is how many request
 messages it sends (zero is one for client or bidirectional streaming), and `RecvMessages` is how many responses it
 reads (zero reads until the server closes). A `Sample` has the call's `Code` where an HTTP one has its `Status`. As in
 the command, `UNAVAILABLE` counts as a failure (`Errors()["unavailable"]`), since gRPC says it both for a broken

@@ -55,6 +55,10 @@ type Summary struct {
 	Generator Generator `json:"generator"`
 	Warnings  []string  `json:"warnings"`
 
+	// Journey is the journey-specific part of the run: the scenario's
+	// counters. The key is left out of runs that are not journeys.
+	Journey *JourneyInfo `json:"journey,omitempty"`
+
 	// Stages has one entry per stage of the load profile (a single one for a
 	// constant rate), always a list. Latencies are attributed by when each
 	// request was due, so a step test shows which step a server stopped
@@ -124,6 +128,10 @@ type RunInfo struct {
 	// Replay is set when the run replayed a traffic log instead of sending one
 	// request over and over. In that case Method lists the methods in the trace.
 	Replay *ReplayInfo `json:"replay,omitempty"`
+
+	// Journey is set when the run was a journey: the scenario's name and
+	// counters. The key is left out of runs that are not journeys.
+	Journey *JourneyInfo `json:"journey,omitempty"`
 }
 
 // ReplayInfo says what was replayed. Request bodies and headers from the trace
@@ -163,14 +171,20 @@ type Generator struct {
 	TimerLagP99Ms float64 `json:"timer_lag_p99_ms"`
 	TimerLagMaxMs float64 `json:"timer_lag_max_ms"`
 	Late          uint64  `json:"late_dispatches"` // reached more than 1ms after their due time
+
+	// Limited says Gmeter, not the server, may have set the latencies. Reason
+	// explains the signal that triggered it, and is empty when Limited is false.
+	Limited bool   `json:"limited"`
+	Reason  string `json:"reason,omitempty"`
 }
 
-// Thresholds beyond which a run gets a warning. Timers on an idle machine wake
-// within microseconds, so a p99 over 5ms means the generator is being starved.
+// Thresholds beyond which a run gets a warning, shared with the decision that
+// marks a result generator-limited. Timers on an idle machine wake within
+// microseconds, so a p99 over 5ms means the generator is being starved.
 const (
 	// TimerLagWarn is the timer-lag p99 above which a run gets a warning.
-	TimerLagWarn     = 5 * time.Millisecond
-	lateWarnFraction = 0.05
+	TimerLagWarn     = runner.TimerLagWarn
+	lateWarnFraction = runner.LateWarnFraction
 )
 
 // Latency is a histogram digest in milliseconds.
@@ -187,6 +201,8 @@ type Latency struct {
 
 // Summarize digests a run. targetRPS is the rate the run was asked to hold.
 func Summarize(res *runner.Result, targetRPS float64) Summary {
+	health := res.GeneratorHealth()
+	limited, reason := health.Limited()
 	s := Summary{
 		ElapsedSeconds: res.Elapsed.Seconds(),
 		TargetRPS:      targetRPS,
@@ -202,6 +218,8 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 			TimerLagP99Ms: ms(res.TimerLag.Quantile(0.99)),
 			TimerLagMaxMs: ms(res.TimerLag.Max()),
 			Late:          res.Late,
+			Limited:       limited,
+			Reason:        reason,
 		},
 		Warnings:  []string{},
 		Version:   SchemaVersion,
@@ -213,6 +231,7 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 			Corrected: res.Corrected.Dump(),
 			Service:   res.Service.Dump(),
 		},
+		Journey: journeyOf(res.Journey),
 	}
 	for code, n := range res.Statuses {
 		s.Responses += n
@@ -234,14 +253,15 @@ func Summarize(res *runner.Result, targetRPS float64) Summary {
 		s.AchievedRPS = float64(s.Responses) / s.ElapsedSeconds
 	}
 
-	if lag := res.TimerLag.Quantile(0.99); lag > TimerLagWarn {
-		s.Warnings = append(s.Warnings, fmt.Sprintf(
-			"generator timer lag p99 is %s: Gmeter is struggling to keep time on this machine, so results at this rate may be distorted; lower the rate, free up CPU, or run it somewhere quieter",
-			FormatDuration(lag)))
+	if limited {
+		s.Warnings = append(s.Warnings, reason)
 	}
-	if frac := s.lateFraction(); frac > lateWarnFraction {
+	// Report queue observation as a plain warning that does not claim the
+	// generator is at fault: the queue may be due to server capacity or
+	// insufficient -workers, not generator failure.
+	if frac := s.lateFraction(); frac > runner.LateWarnFraction && !s.Generator.Limited {
 		s.Warnings = append(s.Warnings, fmt.Sprintf(
-			"%d of %d requests (%.0f%%) were dispatched more than 1ms after their due time: every worker was busy (raise -workers, or the server is slow) or the generator was starved of CPU; their latency still counts from the due time",
+			"%d of %d requests (%.0f%%) were dispatched over 1ms late: every worker was busy (raise -workers, or the server is slow) or the generator was starved of CPU",
 			s.Generator.Late, s.Scheduled, frac*100))
 	}
 	s.VsLog = vsLog(res.Logged)
@@ -311,8 +331,21 @@ func (s Summary) WriteJSON(w io.Writer) error {
 func (s Summary) WriteText(w io.Writer) error {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "requests   %d scheduled   %d ok   %d bad status   %d failed   %d dropped\n",
-		s.Scheduled, s.OK, s.BadStatus, s.Failed, s.Dropped)
+	// A journey run's unit is the session, so say sessions, not requests.
+	word := "requests"
+	if s.Journey != nil {
+		word = "sessions"
+	}
+	fmt.Fprintf(&b, "%s   %d scheduled   %d ok   %d bad status   %d failed   %d dropped\n",
+		word, s.Scheduled, s.OK, s.BadStatus, s.Failed, s.Dropped)
+	if j := s.Journey; j != nil {
+		mean := "-"
+		if j.JourneyLatency != nil {
+			mean = FormatDuration(time.Duration(j.JourneyLatency.MeanMs * float64(time.Millisecond)))
+		}
+		fmt.Fprintf(&b, "journey   %d started, %d completed, %d aborted, mean session duration %s\n",
+			j.SessionsStarted, j.SessionsCompleted, j.SessionsAborted, mean)
+	}
 	average := ""
 	if len(s.Stages) > 1 {
 		average = " on average" // the rate changes during the run
@@ -366,7 +399,7 @@ func (s Summary) WriteText(w io.Writer) error {
 	writeLatency(&b, s.Service)
 	writePhases(&b, s.Phases)
 	writeStages(&b, s.Stages)
-	writeEndpoints(&b, s.Endpoints)
+	writeEndpoints(&b, s.Endpoints, s.Journey != nil)
 	writeEndpointPhases(&b, s.Endpoints)
 	writeEndpointVsLog(&b, s.Endpoints)
 	writeTimeline(&b, s.Timeline)
@@ -546,7 +579,8 @@ func FormatDuration(d time.Duration) string {
 	}
 }
 
-// WritePrometheus writes s in the Prometheus/OpenMetrics text exposition format.
+// WritePrometheus writes s in the Prometheus text exposition format (not
+// OpenMetrics: there is no "# EOF" marker).
 func (s Summary) WritePrometheus(w io.Writer) error {
 	write := func(format string, args ...any) error {
 		_, err := fmt.Fprintf(w, format, args...)

@@ -90,8 +90,8 @@ type Config struct {
 	Body   []byte      // sent with every request; not for gRPC, which has GRPC.Data
 
 	// GRPC, if set, makes every request a call of one gRPC method instead of an
-	// HTTP request. Method, Header, Body, Requests and HTTP2 are then refused,
-	// since a call would ignore them.
+	// HTTP request. Method, Header, Body, Requests, HTTP2, UnixSocket and
+	// ConnectTo are then refused, since a call would ignore them.
 	GRPC *GRPC
 
 	// The load is either Rate for Duration, or Stages, not both.
@@ -141,6 +141,14 @@ type Config struct {
 	// for concurrent use, and it must return quickly: a slow one delays the next
 	// request and shows up as latency.
 	OnRequest func(Sample)
+
+	// Journey, if set, makes the load a stateful journey instead of one
+	// request per scheduled job: Rate and Duration are the journey's session
+	// rate and test length, and every step is sent through the journey's
+	// Render before anything is sent. Method, Header, Body, Requests, GRPC,
+	// HTTP2, UnixSocket, ConnectTo, OnRequest and the phases options are
+	// refused, since a journey sends its own requests.
+	Journey *runner.Journey
 }
 
 // GRPC says which gRPC method to call, unary or streaming, for a [Config] that
@@ -231,7 +239,7 @@ func (c Config) baseConfig(withLoad bool) (runner.Config, error) {
 		return runner.Config{}, errors.New("gmeter: Config.URL is required")
 	case c.Workers < 0:
 		return runner.Config{}, fmt.Errorf("gmeter: Workers must not be negative, got %d", c.Workers)
-	case withLoad && len(c.Stages) == 0 && (c.Rate <= 0 || c.Duration <= 0):
+	case withLoad && c.Journey == nil && len(c.Stages) == 0 && (c.Rate <= 0 || c.Duration <= 0):
 		return runner.Config{}, fmt.Errorf("gmeter: set Rate and Duration, or Stages, to say what load to send (got Rate %v, Duration %v)", c.Rate, c.Duration)
 	case !withLoad && (c.Rate != 0 || c.Duration != 0 || c.Stages != nil):
 		return runner.Config{}, errors.New("gmeter: a capacity search chooses its own rates: leave Rate, Duration and Stages empty")
@@ -256,6 +264,7 @@ func (c Config) baseConfig(withLoad bool) (runner.Config, error) {
 		ConnectTo:   c.ConnectTo,
 		Phases:      true,
 		SampleEvery: time.Second,
+		Journey:     c.Journey,
 	}
 	if c.GRPC != nil {
 		rc.TLS, rc.Phases = nil, false // the connections are made by the caller, and a call has no phases
@@ -293,6 +302,7 @@ func (c Config) checkGRPC() error {
 		is   bool
 	}{
 		{"Method", c.Method != ""}, {"Header", c.Header != nil}, {"Body", c.Body != nil}, {"Requests", c.Requests != nil}, {"HTTP2", c.HTTP2},
+		{"UnixSocket", c.UnixSocket != ""}, {"ConnectTo", c.ConnectTo != ""}, {"Journey", c.Journey != nil},
 	} {
 		if set.is {
 			return fmt.Errorf("gmeter: %s describes an HTTP request, and a GRPC call sends none", set.name)
@@ -376,6 +386,17 @@ func (r *Result) Scheduled() uint64 { return r.raw.Scheduled }
 // Dropped is how many the schedule owed but never sent: the run was cancelled, or
 // the server hung so long the backlog was abandoned.
 func (r *Result) Dropped() uint64 { return r.raw.Dropped }
+
+// Late is how many requests reached the scheduler more than a millisecond after
+// their due time, so it had no chance to sleep. They still count from the due
+// time in Corrected. A high count can mean a slow server filled the workers or
+// that the generator was late. Only timer-lag p99 over 5ms marks a run
+// generator-limited; saturation after the generator stops sleeping is not
+// detected and only produces the late-dispatch warning.
+func (r *Result) Late() uint64 { return r.raw.Late }
+
+// JourneyStats returns the journey run's stats, when the run was one.
+func (r *Result) JourneyStats() *runner.JourneyResult { return r.raw.Journey }
 
 // Elapsed is how long the run took, to the last request's end.
 func (r *Result) Elapsed() time.Duration { return r.raw.Elapsed }
@@ -472,8 +493,8 @@ func (r *Result) WriteText(w io.Writer) error { return r.summary().WriteText(w) 
 // `gmeter diff` compares.
 func (r *Result) WriteJSON(w io.Writer) error { return r.summary().WriteJSON(w) }
 
-// WritePrometheus writes the run's metrics in the Prometheus/OpenMetrics text
-// exposition format.
+// WritePrometheus writes the run's metrics in the Prometheus text exposition
+// format (not OpenMetrics: there is no "# EOF" marker).
 func (r *Result) WritePrometheus(w io.Writer) error { return r.summary().WritePrometheus(w) }
 
 func (r *Result) summary() report.Summary { return report.Summarize(r.raw, r.targetRPS) }

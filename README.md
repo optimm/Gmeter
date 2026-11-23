@@ -80,7 +80,7 @@ Flags must come before the URL. The ones you will reach for first:
 | `-timeout` | `10s` | per-request timeout |
 | `-method`, `-H`, `-body` | `GET` | the request to send; `-body @file` reads the body from a file |
 | `-json`, `-results` | | save a JSON summary, or every request as a CSV, to a path |
-| `-prometheus` | | save the run's metrics in Prometheus/OpenMetrics text format, for a dashboard (`-` prints them instead of the report) |
+| `-prometheus` | | save the run's metrics in Prometheus text format, for a dashboard (`-` prints them instead of the report) |
 
 Every flag, with HTTP/2 and TLS, is in [running a test](docs/running.md#flags). Ctrl-C stops a run early and still
 prints the report for what ran.
@@ -113,6 +113,8 @@ and whether the generator itself kept up. [Reading the report](docs/reading-the-
 | [gRPC](docs/grpc.md) | `gmeter grpc`: unary and streaming calls found by server reflection or from a schema |
 | [Several generators](docs/several-generators.md) | `-agents`: spread one test over several machines |
 | [Comparing runs](docs/comparing-runs.md) | `gmeter diff`: what changed between two runs, per endpoint and per phase |
+| [Journeys](docs/journeys.md) | stateful multi-step sessions with checks, extraction and feeds |
+| [GitHub Actions](docs/ci.md) | the root action: SLO and diff gates, job summary and JSON artifact |
 | [Using it from Go](docs/go-package.md) | the `gmeter` package, for a load test inside `go test` |
 | [Using it from an AI agent](docs/mcp.md) | `gmeter mcp`: the tools an agent gets and the limits you set |
 | [How it works](docs/how-it-works.md) | the pacer, the histogram, the runner, and the choices behind the numbers |

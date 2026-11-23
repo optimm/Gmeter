@@ -15,7 +15,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/optimm/Gmeter"
+	"github.com/optimm/Gmeter/internal/journey"
 	"github.com/optimm/Gmeter/internal/report"
+	"github.com/optimm/Gmeter/internal/runner"
 )
 
 // StageInput is one step or ramp of a load profile.
@@ -32,7 +34,7 @@ type GRPCInput struct {
 	Plaintext bool                `json:"plaintext,omitempty" jsonschema:"speak gRPC without TLS, for a server that does not use it"`
 	Metadata  map[string][]string `json:"metadata,omitempty" jsonschema:"metadata sent with every call, gRPC's counterpart of headers"`
 	// SendMessages and RecvMessages describe a streaming method; both are
-	// ignored for a unary one, and refused if set.
+	// refused for a unary one.
 	SendMessages int `json:"send_messages,omitempty" jsonschema:"for a streaming method, how many request messages each stream sends; 0 is one for a client or bidirectional stream, and a server stream always sends one"`
 	RecvMessages int `json:"recv_messages,omitempty" jsonschema:"for a streaming method, how many responses each stream reads; 0 reads until the server closes"`
 }
@@ -50,6 +52,15 @@ type TargetInput struct {
 	Insecure bool              `json:"insecure_skip_verify,omitempty" jsonschema:"do not verify the server's TLS certificate, for a self-signed one"`
 }
 
+// JourneyInput names a journey scenario file in the server's scenario
+// directory; rate and duration then say the session rate and the test length,
+// since a journey has no requests of its own.
+type JourneyInput struct {
+	File     string `json:"file" jsonschema:"a scenario file by name in the server's scenario directory"`
+	Rate     float64 `json:"rate,omitempty" jsonschema:"sessions per second; multiplied by the scenario's steps against the rate limit"`
+	Duration string  `json:"duration,omitempty" jsonschema:"how long to send, such as 10s"`
+}
+
 // LoadTestInput is what the load_test tool takes.
 type LoadTestInput struct {
 	TargetInput
@@ -58,6 +69,7 @@ type LoadTestInput struct {
 	Stages   []StageInput `json:"stages,omitempty" jsonschema:"a load profile of steps and ramps, instead of rate and duration"`
 	Poisson  bool         `json:"poisson,omitempty" jsonschema:"spread requests at random with the same average rate, as real traffic arrives in bursts"`
 	Seed     uint64       `json:"seed,omitempty" jsonschema:"with poisson, repeat the same arrival times"`
+	Journey  *JourneyInput `json:"journey,omitempty" jsonschema:"a journey scenario instead of sending one request at a time; rate is then the session rate, and every step is checked and extracted by the scenario"`
 }
 
 // LatencyMS is a latency distribution in milliseconds.
@@ -98,23 +110,38 @@ type LoadTestResult struct {
 	Corrected        LatencyMS         `json:"corrected" jsonschema:"latency from when each request was due: what users experienced"`
 	Service          LatencyMS         `json:"service" jsonschema:"latency from when each request was sent: what a closed-loop tester would report"`
 	GeneratorLimited bool              `json:"generator_limited"`
-	TimerLagP99Ms    float64           `json:"timer_lag_p99_ms" jsonschema:"how late the generator's timers fired: over 5 means it was starved"`
+	GeneratorReason  string            `json:"generator_reason,omitempty" jsonschema:"why the generator could not keep time; present only when generator_limited is true"`
+	TimerLagP99Ms    float64           `json:"timer_lag_p99_ms" jsonschema:"how late the generator's timers fired: over 5 is one sign it was starved"`
 	Warnings         []string          `json:"warnings"`
 	Stages           []StageOutput     `json:"stages,omitempty" jsonschema:"one entry per stage, when there was more than one"`
+	Journey          *JourneyOutput    `json:"journey,omitempty" jsonschema:"the journey run's counters, when the tool sent a journey"`
+}
+
+// JourneyOutput is what load_test returns of a journey run: the scenario's
+// counters. Extracted values never appear here or in any other tool output.
+type JourneyOutput struct {
+	Name              string            `json:"name" jsonschema:"the scenario's name"`
+	Steps             int               `json:"steps" jsonschema:"the scenario's steps"`
+	SessionsStarted   uint64            `json:"sessions_started" jsonschema:"sessions scheduled"`
+	SessionsCompleted uint64            `json:"sessions_completed" jsonschema:"sessions that ran every step"`
+	SessionsAborted   uint64            `json:"sessions_aborted" jsonschema:"sessions that ended early"`
+	Failures          map[string]uint64 `json:"failures,omitempty" jsonschema:"counts by failure kind: render, check, extraction"`
 }
 
 const loadTestDescription = `Send a steady or shaped load at an HTTP or gRPC service and report its latency.
 
 Requests are sent on a clock, at the rate asked for, whatever the server does; latency is measured from the
 intended send time ("corrected"), so queueing behind a slow server counts. Give either rate and duration,
-or stages for steps and ramps.
+or stages for steps and ramps, or journey for a stateful scenario.
 
 The verdict is ok, errors, or generator_limited. generator_limited means the load generator itself could not
-keep time (timer lag), so the numbers describe the generator and not the server: lower the rate or the workers
-and run again before concluding anything.
+keep time (timer lag p99 over 5ms). A saturated generator that has stopped sleeping is not detected by this
+signal and only gets the late-dispatch warning. When it fires, the numbers describe the generator and not the
+server: lower the rate or run elsewhere before concluding anything.
 
-Only loopback targets are allowed unless the operator started the server with -allow; rate, duration and
-workers have ceilings that a refusal names. Do not try to get around a refusal: tell the operator.`
+Only loopback targets are allowed unless the operator started the server with -allow; rate, duration,
+workers, timeout and stream messages have ceilings that a refusal names. Do not try to get around a
+refusal: tell the operator.`
 
 func (s *service) addTools(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{
@@ -175,11 +202,19 @@ func (s *service) target(ctx context.Context, in TargetInput) (cfg gmeter.Config
 		if cfg.Timeout, err = time.ParseDuration(in.Timeout); err != nil {
 			return cfg, fmt.Errorf("timeout %q is not a duration such as 5s", in.Timeout)
 		}
+		if err := s.policy.CheckTimeout(cfg.Timeout); err != nil {
+			return cfg, err
+		}
 	}
 	if in.Insecure {
 		cfg.TLS = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // asked for, for a self-signed server
 	}
 	if g := in.GRPC; g != nil {
+		// One stream is one scheduled request, so its messages need their own
+		// ceiling: 10 messages/s at 100 messages per stream is 1000/s on the wire.
+		if err := s.policy.CheckStreamMessages(g.SendMessages, g.RecvMessages); err != nil {
+			return cfg, err
+		}
 		cfg.GRPC = &gmeter.GRPC{Method: g.Method, Plaintext: g.Plaintext, Metadata: g.Metadata, SendMessages: g.SendMessages, RecvMessages: g.RecvMessages}
 		if g.Data != "" {
 			cfg.GRPC.Data = []byte(g.Data)
@@ -204,6 +239,14 @@ func (s *service) config(ctx context.Context, in LoadTestInput) (cfg gmeter.Conf
 		return cfg, 0, err
 	}
 	cfg.Poisson, cfg.Seed = in.Poisson, in.Seed
+	if in.Journey != nil {
+		sc, dur, err := s.compileJourney(ctx, in.Journey, effectiveWorkers(cfg))
+		if err != nil {
+			return cfg, 0, err
+		}
+		cfg.Journey, cfg.Rate, cfg.Duration = sc, in.Journey.Rate, dur
+		return cfg, dur, nil // the journey's own rate and duration replace the plain load's
+	}
 
 	var peak float64
 	switch {
@@ -235,6 +278,53 @@ func (s *service) loadTest(ctx context.Context, req *mcp.CallToolRequest, in Loa
 	return nil, out, err
 }
 
+// compileJourney compiles a journey from the named scenario file, refusing
+// what the policy does not allow: the scenario must live in the server's
+// scenario directory, its effective request rate (session rate times steps)
+// must be within the limits, and its mutating methods must be enabled.
+func (s *service) compileJourney(ctx context.Context, in *JourneyInput, workers int) (*runner.Journey, time.Duration, error) {
+	if s.scenarioDir == "" {
+		return nil, 0, fmt.Errorf("journeys are not enabled: start the server with -scenario-dir DIR of named scenarios")
+	}
+	if in.File == "" {
+		return nil, 0, fmt.Errorf("journey.file is required: the scenario's name in the scenario directory")
+	}
+	sc, err := journey.LoadNamed(s.scenarioDir, in.File, s.policy.AllowRawJourneyYAML)
+	if err != nil {
+		return nil, 0, err
+	}
+	if in.Rate <= 0 {
+		return nil, 0, fmt.Errorf("journey rate must be positive, got %g", in.Rate)
+	}
+	var total time.Duration
+	if in.Duration != "" {
+		if total, err = time.ParseDuration(in.Duration); err != nil || total <= 0 {
+			return nil, 0, fmt.Errorf("journey duration %q is not a positive duration such as 10s", in.Duration)
+		}
+	} else {
+		total = 10 * time.Second
+	}
+	if err := s.policy.CheckJourney(in.Rate, len(sc.Steps), total, workers); err != nil {
+		return nil, 0, err
+	}
+	for _, st := range sc.Steps {
+		if isWriteMethod(st.Method) {
+			if err := s.policy.CheckWriteMethod(st.Method); err != nil {
+				return nil, 0, fmt.Errorf("step %q: %w", st.Label, err)
+			}
+		}
+	}
+	return sc, total, nil
+}
+
+func isWriteMethod(m string) bool {
+	switch strings.ToUpper(m) {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	}
+	return false
+}
+
 // runLoad runs the load and records the run. It returns the gmeter.Result as
 // well, for a tool that judges it.
 func (s *service) runLoad(ctx context.Context, req *mcp.CallToolRequest, in LoadTestInput) (LoadTestResult, *gmeter.Result, error) {
@@ -253,7 +343,7 @@ func (s *service) runLoad(ctx context.Context, req *mcp.CallToolRequest, in Load
 	if err != nil {
 		return LoadTestResult{}, nil, err
 	}
-	sum.Run = runInfo(cfg, started)
+	sum.Run = runInfo(cfg, started, res.JourneyStats())
 	out := resultOf(sum)
 	out.RunID = s.runs.add(sum)
 	return out, res, nil
@@ -275,7 +365,7 @@ func summarize(res *gmeter.Result) (report.Summary, error) {
 
 // runInfo says what was run, so that two runs can be checked for being alike. The
 // URL loses any password, and headers are never recorded.
-func runInfo(cfg gmeter.Config, started time.Time) report.RunInfo {
+func runInfo(cfg gmeter.Config, started time.Time, journey *runner.JourneyResult) report.RunInfo {
 	info := report.RunInfo{
 		URL: redact(cfg.URL), Method: cfg.Method, Workers: cfg.Workers, Arrivals: "even",
 		Seed: cfg.Seed, StartedAt: started.UTC().Format(time.RFC3339),
@@ -287,6 +377,16 @@ func runInfo(cfg gmeter.Config, started time.Time) report.RunInfo {
 		info.Method = "gRPC " + cfg.GRPC.Method
 	} else if info.Method == "" {
 		info.Method = http.MethodGet
+	}
+	if journey != nil {
+		info.Journey = &report.JourneyInfo{
+			Name:              journey.Name,
+			Steps:             journey.Steps,
+			SessionsStarted:   journey.SessionsStarted,
+			SessionsCompleted: journey.SessionsCompleted,
+			SessionsAborted:   journey.SessionsAborted,
+			Failures:          journey.Failures,
+		}
 	}
 	if cfg.Workers == 0 {
 		info.Workers = 50
@@ -310,6 +410,22 @@ func latency(l report.Latency) LatencyMS {
 	return LatencyMS{MeanMs: l.MeanMs, P50Ms: l.P50Ms, P90Ms: l.P90Ms, P99Ms: l.P99Ms, P999Ms: l.P999Ms, MaxMs: l.MaxMs}
 }
 
+// journeyOf turns the report's journey section into what the tool returns:
+// counters only, never the values the scenario extracted from responses.
+func journeyOf(j *report.JourneyInfo) *JourneyOutput {
+	if j == nil {
+		return nil
+	}
+	return &JourneyOutput{
+		Name:              j.Name,
+		Steps:             j.Steps,
+		SessionsStarted:   j.SessionsStarted,
+		SessionsCompleted: j.SessionsCompleted,
+		SessionsAborted:   j.SessionsAborted,
+		Failures:          j.Failures,
+	}
+}
+
 // resultOf turns a run's summary into what the tool returns.
 func resultOf(sum report.Summary) LoadTestResult {
 	out := LoadTestResult{
@@ -318,8 +434,11 @@ func resultOf(sum report.Summary) LoadTestResult {
 		OK: sum.OK, BadStatus: sum.BadStatus, Failed: sum.Failed,
 		Statuses: map[string]uint64{}, Errors: map[string]uint64{},
 		Corrected: latency(sum.Corrected), Service: latency(sum.Service),
-		TimerLagP99Ms: sum.Generator.TimerLagP99Ms,
-		Warnings:      append([]string{}, sum.Warnings...),
+		TimerLagP99Ms:    sum.Generator.TimerLagP99Ms,
+		GeneratorLimited: sum.Generator.Limited,
+		GeneratorReason:  sum.Generator.Reason,
+		Warnings:         append([]string{}, sum.Warnings...),
+		Journey:          journeyOf(sum.Journey),
 	}
 	for code, n := range sum.Statuses {
 		out.Statuses[fmt.Sprint(code)] = n
@@ -333,7 +452,6 @@ func resultOf(sum report.Summary) LoadTestResult {
 			out.Codes[k] = n
 		}
 	}
-	out.GeneratorLimited = sum.Generator.TimerLagP99Ms > float64(report.TimerLagWarn)/float64(time.Millisecond)
 	switch {
 	case out.GeneratorLimited:
 		out.Verdict = "generator_limited"
@@ -358,7 +476,11 @@ func resultOf(sum report.Summary) LoadTestResult {
 // verdict first.
 func sentence(r LoadTestResult) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Sent %d requests at %.0f/s target (%.0f/s achieved): %d ok", r.Scheduled, r.TargetRPS, r.AchievedRPS, r.OK)
+	unit := "requests"
+	if r.Journey != nil {
+		unit = "sessions"
+	}
+	fmt.Fprintf(&b, "Sent %d %s at %.0f/s target (%.0f/s achieved): %d ok", r.Scheduled, unit, r.TargetRPS, r.AchievedRPS, r.OK)
 	if r.BadStatus > 0 {
 		bad := counts(r.Statuses, func(k string) bool { return k >= "400" })
 		if codes := counts(r.Codes, func(k string) bool { return k != "OK" }); codes != "" {
@@ -374,7 +496,11 @@ func sentence(r LoadTestResult) string {
 	}
 	fmt.Fprintf(&b, ". Corrected p99 %.1fms (p50 %.1fms, max %.1fms); service p99 %.1fms.", r.Corrected.P99Ms, r.Corrected.P50Ms, r.Corrected.MaxMs, r.Service.P99Ms)
 	if r.GeneratorLimited {
-		fmt.Fprintf(&b, " The generator could not keep time (timer lag p99 %.1fms): these latencies are not the server's.", r.TimerLagP99Ms)
+		reason := r.GeneratorReason
+		if reason == "" {
+			reason = fmt.Sprintf("timer lag p99 %.1fms", r.TimerLagP99Ms)
+		}
+		fmt.Fprintf(&b, " The generator could not keep time: %s. These latencies are not the server's.", reason)
 	}
 	return b.String()
 }

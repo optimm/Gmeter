@@ -5,7 +5,9 @@
 //
 // An agent sends whatever it is told to wherever it is told, so it only takes
 // jobs from a caller that knows its password, and it should listen only on a
-// network you trust: neither the password nor the traffic is encrypted.
+// network you trust: neither the password nor the traffic is encrypted. The
+// password is full control of the agent's host; Unix socket dialling is refused
+// unless the agent was started with -allow-unix-socket.
 package agent
 
 import (
@@ -56,7 +58,8 @@ type Job struct {
 	Phases   bool             `json:"phases,omitempty"`
 	HTTP2    bool             `json:"http2,omitempty"`
 	// UnixSocket and ConnectTo override where the agent dials, as the flags
-	// do; the path or address is the agent's, not the controller's.
+	// do; the path or address is the agent's, not the controller's. An agent
+	// refuses UnixSocket unless it was started with -allow-unix-socket.
 	UnixSocket string `json:"unix_socket,omitempty"`
 	ConnectTo  string `json:"connect_to,omitempty"`
 	// Insecure skips verifying the server's certificate; CACert, PEM, is the

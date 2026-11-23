@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/optimm/Gmeter/internal/find"
+	"github.com/optimm/Gmeter/internal/journey"
 	"github.com/optimm/Gmeter/internal/report"
+	"github.com/optimm/Gmeter/internal/runner"
 )
 
 // runFind implements `gmeter find`: search for the highest request rate at
@@ -29,6 +31,7 @@ func runFind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		trial     = fs.Duration("trial", 10*time.Second, "how long each trial measures")
 		warmup    = fs.Duration("warmup", 2*time.Second, "how long each trial runs first, not judged, to take the cold-start cost (new connections, cold caches)")
 		confirm   = fs.Int("confirm", 2, "how many times to repeat the answer at the end, to see whether it holds")
+		scenario  = fs.String("scenario", "", "a journey scenario file instead of sending one request at a time: -slo then searches over session rate, and the report says sessions/s")
 	)
 	rf := addRequestFlags(fs, "poisson", 200)
 	addPhasesFlag(fs, rf)
@@ -61,6 +64,14 @@ func runFind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "gmeter find: "+format+"\n", a...)
 		return 2
 	}
+	var sc *runner.Journey
+	var err error
+	if *scenario != "" {
+		sc, err = journey.Compile(*scenario)
+		if err != nil {
+			return usage("-scenario: %v", err)
+		}
+	}
 	if *sloIn == "" {
 		return usage("-slo is required: the latency target a rate has to meet, e.g. -slo p99=50ms")
 	}
@@ -91,12 +102,17 @@ func runFind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return usage("%v", err)
 	}
 	cfg.Arrivals = arrival
+	cfg.Journey = sc
 	shownURL := redactURL(cfg.URL) // anything printed or saved uses this, never cfg.URL
 	scrub := func(s string) string { return strings.ReplaceAll(s, cfg.URL, shownURL) }
 
+	unit := "rps"
+	if sc != nil {
+		unit = "sessions/s"
+	}
 	if !*rf.quiet {
-		fmt.Fprintf(stderr, "gmeter: finding the highest rate for %s %s that meets %s, errors ≤ %g%%%s%s\n",
-			cfg.Method, shownURL, slo, *maxErrors, arrivalsText(arrival, seed), rf.protocolText())
+		fmt.Fprintf(stderr, "gmeter: finding the highest %s for %s %s that meets %s, errors ≤ %g%%%s%s\n",
+			unit, cfg.Method, shownURL, slo, *maxErrors, arrivalsText(arrival, seed), rf.protocolText())
 	}
 	rf.noteTLS(stderr)
 
@@ -116,8 +132,8 @@ func runFind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return v, nil, err
 		}
 		if !*rf.quiet {
-			fmt.Fprintf(stderr, "[trial %d] %g rps: %s %s, errors %.1f%% -> %s\n",
-				trials, rate, slo.Label(), report.FormatDuration(o.Observed), o.ErrorRate*100, v)
+			fmt.Fprintf(stderr, "[trial %d] %g %s: %s %s, errors %.1f%% -> %s\n",
+				trials, rate, unit, slo.Label(), report.FormatDuration(o.Observed), o.ErrorRate*100, v)
 		}
 		return v, o, nil
 	}

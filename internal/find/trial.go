@@ -33,5 +33,6 @@ func RunTrial(ctx context.Context, base runner.Config, slo SLO, warmup, measure 
 		return Fail, Observation{}, err
 	}
 	v, o := Evaluate(slo, rate, res.Stages[len(res.Stages)-1], res)
+	o.Journey = res.Journey
 	return v, o, nil
 }

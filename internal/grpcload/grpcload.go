@@ -89,9 +89,9 @@ func Dial(ctx context.Context, o Options) (*Caller, error) {
 	}
 	switch {
 	case o.SendMessages < 0:
-		return nil, fmt.Errorf("grpc: -stream-send must be at least 0, got %d", o.SendMessages)
+		return nil, fmt.Errorf("grpc: send_messages must be at least 0, got %d", o.SendMessages)
 	case o.RecvMessages < 0:
-		return nil, fmt.Errorf("grpc: -stream-recv must be at least 0, got %d", o.RecvMessages)
+		return nil, fmt.Errorf("grpc: recv_messages must be at least 0, got %d", o.RecvMessages)
 	}
 	switch {
 	case o.Conns < 0:
@@ -289,28 +289,19 @@ func normalizeCounts(path string, clientStreams, serverStreams bool, send, recv 
 	switch {
 	case unary:
 		if send != 0 || recv != 0 {
-			return 0, 0, fmt.Errorf("grpc: %s is a unary method, so -stream-send and -stream-recv have nothing to do", path)
+			return 0, 0, fmt.Errorf("grpc: %s is a unary method, so send_messages and recv_messages have nothing to do", path)
 		}
 	case serverStreaming:
-		if send < 0 {
-			return 0, 0, fmt.Errorf("grpc: -stream-send must be at least 0, got %d", send)
-		}
 		if send > 1 {
-			return 0, 0, fmt.Errorf("grpc: %s is a server-streaming method, which sends one request per stream; -stream-send %d is too many", path, send)
+			return 0, 0, fmt.Errorf("grpc: %s is a server-streaming method, which sends one request per stream; send_messages %d is too many", path, send)
 		}
 		if send == 0 {
 			send = 1
 		}
 	default: // client or bidi
-		if send < 0 {
-			return 0, 0, fmt.Errorf("grpc: -stream-send must be at least 0, got %d", send)
-		}
 		if send == 0 {
 			send = 1
 		}
-	}
-	if recv < 0 {
-		return 0, 0, fmt.Errorf("grpc: -stream-recv must be at least 0, got %d", recv)
 	}
 	return send, recv, nil
 }

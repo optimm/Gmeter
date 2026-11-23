@@ -65,7 +65,7 @@ func addDialFlags(fs *flag.FlagSet, r *requestFlags) {
 // addPrometheusFlag registers -prometheus, for the commands whose summary has
 // metrics to export.
 func addPrometheusFlag(fs *flag.FlagSet, r *requestFlags) {
-	r.prometheus = fs.String("prometheus", "", "also write the run's metrics in Prometheus/OpenMetrics text format to this path ('-' writes the metrics to stdout instead of the text report)")
+	r.prometheus = fs.String("prometheus", "", "also write the run's metrics in Prometheus text format to this path ('-' writes the metrics to stdout instead of the text report)")
 }
 
 // addHTTP2Flag registers -http2, for the commands that speak HTTP (gRPC is

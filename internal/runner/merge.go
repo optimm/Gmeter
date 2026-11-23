@@ -56,6 +56,7 @@ func Merge(results ...*Result) (*Result, error) {
 	changes := map[[2]int]uint64{}
 	for _, r := range results {
 		m.Elapsed = max(m.Elapsed, r.Elapsed)
+		m.Workers += r.Workers
 		m.Scheduled += r.Scheduled
 		m.Dropped += r.Dropped
 		m.Late += r.Late
@@ -81,6 +82,7 @@ func Merge(results ...*Result) (*Result, error) {
 	m.Timeline = mergeWindows(results)
 	m.Stages = mergeStages(results)
 	m.Labels = mergeLabels(results)
+	m.Journey = mergeJourneys(results)
 	if first.Phases != nil {
 		m.Phases = make([]PhaseResult, len(first.Phases))
 		for i, p := range first.Phases {
@@ -99,6 +101,33 @@ func addCounts[K comparable](dst, src map[K]uint64) {
 	for k, v := range src {
 		dst[k] += v
 	}
+}
+
+// mergeJourneys adds up the counters of journey runs; nil when none ran.
+func mergeJourneys(results []*Result) *JourneyResult {
+	var m *JourneyResult
+	for _, r := range results {
+		j := r.Journey
+		if j == nil {
+			continue
+		}
+		if m == nil {
+			m = &JourneyResult{Name: j.Name, Steps: j.Steps, JourneyLatencies: hist.New()}
+		}
+		m.SessionsStarted += j.SessionsStarted
+		m.SessionsCompleted += j.SessionsCompleted
+		m.SessionsAborted += j.SessionsAborted
+		for k, n := range j.Failures {
+			if m.Failures == nil {
+				m.Failures = map[string]uint64{}
+			}
+			m.Failures[k] += n
+		}
+		if j.JourneyLatencies != nil {
+			m.JourneyLatencies.Merge(j.JourneyLatencies)
+		}
+	}
+	return m
 }
 
 // mergeWindows lines the windows up by index: the i-th window of every
@@ -144,6 +173,7 @@ func mergeStages(results []*Result) []StageResult {
 			m.Stage.From += x.Stage.From
 			m.Stage.To += x.Stage.To
 			m.Scheduled += x.Scheduled
+			m.Late += x.Late
 			m.Dropped += x.Dropped
 			m.Failed += x.Failed
 			m.BadStatus += x.BadStatus

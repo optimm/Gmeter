@@ -36,6 +36,39 @@ func okServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
+func TestGeneratorHealthCaseNumbers(t *testing.T) {
+	// Case numbers from the review. Timer lag is the only signal now, so C
+	// and D (huge queues, healthy timer lag) are NOT limited, and the real
+	// A2 shape (every request late, timer lag about 0) is also NOT limited:
+	// that is the known detection gap.
+	cases := []struct {
+		name    string
+		h       GeneratorHealth
+		limited bool
+	}{
+		{"C -workers limited (healthy timer lag)", GeneratorHealth{
+			TimerLagP99: 1 * time.Millisecond,
+		}, false},
+		{"D server limited (healthy timer lag)", GeneratorHealth{
+			TimerLagP99: 1 * time.Millisecond,
+		}, false},
+		{"timer lag over threshold", GeneratorHealth{
+			TimerLagP99: 10 * time.Millisecond,
+		}, true},
+		{"A2 real shape: all late, timer lag about 0 (detection gap)", GeneratorHealth{
+			TimerLagP99: 0,
+		}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, _ := c.h.Limited()
+			if got != c.limited {
+				t.Fatalf("Limited() = %v, want %v", got, c.limited)
+			}
+		})
+	}
+}
+
 func TestSchedulesExactlyRateTimesDuration(t *testing.T) {
 	srv := okServer(t)
 

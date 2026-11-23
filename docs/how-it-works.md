@@ -75,8 +75,12 @@ Back to the [README](../README.md).
   open-loop run the queue grows whenever the server or the worker pool cannot keep up - a normal outcome of a
   load test, not a generator failure. The signal is a single threshold on the scheduler's own wake-up latency
   (p99 over 5ms), so it needs no timing-sensitive test. Timer lag is sampled by the scheduler over the whole
-  run, so a result's `find` verdict uses the run-wide figure, not one stage. Note that a saturated generator that has stopped sleeping is NOT detected by this
-  signal and only gets the late-dispatch warning.
+  run, so a result's `find` verdict uses the run-wide figure, not one stage. Note that a saturated generator
+  that has stopped sleeping is not detected by this signal and only gets the late-dispatch warning.
+- Precision costs CPU: the default `-spin 200µs` busy-waits, up to about a quarter of a core and only below about
+  5000 rps. Turn it off with `-spin 0` if the generator shares a small machine with the thing it is testing.
+- Redirects are not followed (a 302 is a result) and proxy environment variables are ignored.
+- HTTP/1.1 by default; `-http2` for HTTP/2, never a mix of both in one run.
 
 ### What we tried for detecting a saturated generator
 
@@ -102,10 +106,6 @@ three runs, not per-run values; per-run measurements and the throwaway harness
 were not retained. The experiment was not repeated on Linux or Windows, and
 overhead at 80k rps was not measured, so cross-platform availability and the
 overhead adoption criteria remain unverified.
-- Precision costs CPU: the default `-spin 200µs` busy-waits, up to about a quarter of a core and only below about
-  5000 rps. Turn it off with `-spin 0` if the generator shares a small machine with the thing it is testing.
-- Redirects are not followed (a 302 is a result) and proxy environment variables are ignored.
-- HTTP/1.1 by default; `-http2` for HTTP/2, never a mix of both in one run.
 
 ## Development
 

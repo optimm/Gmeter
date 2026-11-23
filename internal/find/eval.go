@@ -80,7 +80,7 @@ type TrialPhases struct {
 // A trial fails if the latency target is missed, the error budget is blown, or
 // requests were left unsent. It passes only if the generator also kept time: a
 // trial that looks fine while the generator's timers ran late (p99 over 5ms)
-// is Limited. A saturated generator that has stopped sleeping is NOT detected
+// is Limited. A saturated generator that has stopped sleeping is not detected
 // by this signal and only gets the late-dispatch warning. A
 // missed target stays a failure whatever the generator did, since corrected
 // latency is honest either way.

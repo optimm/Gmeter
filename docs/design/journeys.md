@@ -135,7 +135,7 @@ steps and a single stall would be counted three times.
 
 This keeps the two questions separate: step p99 says which call got slow, journey p99 says how long a shopper waited.
 Generator-health detection reuses the same rule as a flat run — timer lag p99 over 5ms. A saturated generator
-that has stopped sleeping is NOT detected by this signal and only gets the late-dispatch warning.
+that has stopped sleeping is not detected by this signal and only gets the late-dispatch warning.
 
 ## Checks, extraction and templating details
 

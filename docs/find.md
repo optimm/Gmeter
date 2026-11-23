@@ -87,7 +87,7 @@ The report says plainly when the answer needs a caveat, and these are the ones t
 - **at least N rps**: the search stopped at `-max`, not because the server gave out. Raise `-max`.
 - **generator limited**: a trial whose latency looked fine, but where Gmeter could not keep time, is not trusted:
   it counts as a failure and the report says the server may sustain more. That means timer lag p99 over 5ms. A
-  saturated generator that has stopped sleeping is NOT detected by this signal and only gets the late-dispatch
+  saturated generator that has stopped sleeping is not detected by this signal and only gets the late-dispatch
   warning; see
   [Reading the generator line](reading-the-report.md#reading-the-generator-line)). Run Gmeter somewhere quieter,
   or on a bigger machine.

@@ -135,7 +135,7 @@ intended send time ("corrected"), so queueing behind a slow server counts. Give 
 or stages for steps and ramps, or journey for a stateful scenario.
 
 The verdict is ok, errors, or generator_limited. generator_limited means the load generator itself could not
-keep time (timer lag p99 over 5ms). A saturated generator that has stopped sleeping is NOT detected by this
+keep time (timer lag p99 over 5ms). A saturated generator that has stopped sleeping is not detected by this
 signal and only gets the late-dispatch warning. When it fires, the numbers describe the generator and not the
 server: lower the rate or run elsewhere before concluding anything.
 

@@ -135,6 +135,5 @@ not change the MCP verdict.) A slow server also fills every worker and makes req
 overload result, not a generator failure.
 
 The text report prints one `warning` naming the signal and what to do. The JSON has `generator.limited` and,
-when it is true, `generator.reason`; `warnings` is always an array. When a result comes from a run whose worker
-count is unknown, only the timer-lag signal is available, and a high late share still gets the warning to raise
-`-workers` or check the server.
+when it is true, `generator.reason`; `warnings` is always an array. A high late share still gets the warning to
+raise `-workers` or check the server.

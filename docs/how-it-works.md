@@ -84,28 +84,31 @@ Back to the [README](../README.md).
 
 ### What we tried for detecting a saturated generator
 
-We ran the experiment (5 cases x 3 runs, 5s each, darwin/arm64) measuring the
-Go runtime scheduler latency (`runtime/metrics` `/sched/latencies:seconds`,
-snapshot at start/end and subtracted) and process CPU utilisation
-(`getrusage` user+sys over wall, divided by GOMAXPROCS):
+The figures below come from an independent reviewer's harness on this Mac: 5 cases x 3 runs, 5s each, the test
+server in a separate process, gmeter run in-process through the library, `runtime/metrics`
+`/sched/latencies:seconds` snapshotted at start and end and subtracted, and CPU from `getrusage`. "Highest bucket"
+is the lower bound of the top non-empty histogram bucket; the buckets are coarse.
 
-| case (three runs) | sched p99 | sched max | CPU util |
-|---|---|---|---|
-| A (80k, trivial) | ~0.000s | 0.034-0.042s | 28% |
-| A2 (200k, trivial) | 0.002s | 0.029-0.034s | 47% |
-| B (delay 200ms) | ~0.000s | 0.000-0.001s | 6% |
-| C (delay 10ms, 20 workers) | ~0.000s | 0.001-0.002s | 5% |
-| D (delay 10ms, conc 50) | ~0.000s | 0.006-0.008s | 4% |
+| case | run | achieved/target | sched p99 | highest bucket | gmeter CPU |
+|---|---|---|---|---|---|
+| A 80k trivial, 256 workers | 1 | 79824/80000 | 0.66ms | 21ms | 3.67 cores |
+|  | 2 | 79865/80000 | 0.66ms | 17ms | 3.83 |
+|  | 3 | 79866/80000 | 0.52ms | 17ms | 3.78 |
+| A2 200k trivial, 256 workers | 1 | 84422/200000 | 1.31ms | 50ms | 3.53 |
+|  | 2 | 89277/200000 | 1.31ms | 21ms | 3.66 |
+|  | 3 | 88499/200000 | 1.31ms | 34ms | 3.73 |
+| B 200ms delay, 1k, 50 w | 1-3 | 246/1000 | 1.57/1.05/1.31ms | 5ms (all) | 0.04 |
+| C 10ms delay, 5k, 20 w | 1 | 1609/5000 | 1.05ms | 13ms | 0.20 |
+|  | 2 | 1583/5000 | 1.05ms | 15ms | 0.21 |
+|  | 3 | 1550/5000 | 1.05ms | 17ms | 0.21 |
+| D 10ms delay, conc 50, 10k | 1 | 3955/10000 | 1.05ms | 5ms | 0.48 |
+|  | 2 | 3863/10000 | 1.57ms | 17ms | 0.42 |
+|  | 3 | 3808/10000 | 1.84ms | 13ms | 0.34 |
 
-Neither signal meets the adoption bar: A2's scheduler max (0.029-0.034s)
-overlaps A's (0.034-0.042s), and CPU utilisation is only ~1.7x, not 10x.
-So no signal was adopted: generator_limited stays timer-lag only and a
-saturated generator only gets the late-dispatch warning. A negative result is
-an acceptable outcome. The figures above are case-level summaries across the
-three runs, not per-run values; per-run measurements and the throwaway harness
-were not retained. The experiment was not repeated on Linux or Windows, and
-overhead at 80k rps was not measured, so cross-platform availability and the
-overhead adoption criteria remain unverified.
+Neither signal meets the adoption bar. A2's scheduler p99 of 1.31ms lies inside the range seen for B, C and D
+(1.05-1.84ms); its highest bucket (21-50ms) overlaps A's (17-21ms) and C's (13-17ms); and gmeter's own CPU for
+A2 (3.5-3.7 cores) is no higher than A's (3.7-3.8). So no signal was adopted: generator_limited stays timer-lag
+only and a saturated generator only gets the late-dispatch warning. A negative result is an acceptable outcome.
 
 ## Development
 

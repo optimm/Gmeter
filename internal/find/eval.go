@@ -108,30 +108,11 @@ func Evaluate(slo SLO, rate float64, st runner.StageResult, res *runner.Result) 
 		return Fail, o
 	}
 
-	if limited, reason := stageGeneratorHealth(st, res).Limited(); limited {
+	if limited, reason := res.GeneratorHealth().Limited(); limited {
 		o.Reasons = []string{reason}
 		return Limited, o
 	}
 	return Pass, o
-}
-
-// stageGeneratorHealth takes the queue from the measured stage, not the whole
-// run: a warm-up stage can be slow without saying anything about the rate being
-// judged. Timer lag is a run-wide signal, since it is sampled by the scheduler.
-func stageGeneratorHealth(st runner.StageResult, res *runner.Result) runner.GeneratorHealth {
-	h := runner.GeneratorHealth{
-		Late: st.Late, Scheduled: st.Scheduled, Workers: res.Workers,
-	}
-	if res.TimerLag != nil {
-		h.TimerLagP99 = res.TimerLag.Quantile(0.99)
-	}
-	if st.Corrected != nil {
-		h.CorrectedMean = st.Corrected.Mean()
-	}
-	if st.Service != nil {
-		h.ServiceMean = st.Service.Mean()
-	}
-	return h
 }
 
 // trialPhases is the mean time per answered request in each phase of a stage,

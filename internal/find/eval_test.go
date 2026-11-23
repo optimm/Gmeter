@@ -134,7 +134,7 @@ func TestAGeneratorThatCouldNotKeepTimeMakesAPassLimited(t *testing.T) {
 
 func TestAnUnexplainedQueueMakesAPassLimited(t *testing.T) {
 	// 1000 requests all took 500ms from due time, but only 2ms once sent: the
-	// 40ms a 5-worker pool can explain is far short of the 498ms queue.
+	// 40ms of service across a 5-worker pool is far short of the 498ms queue.
 	// With the new signal (timer-lag only), this trial is not generator-limited
 	// because the timer lag is healthy; the queue is due to server capacity or
 	// insufficient -workers, not generator failure.

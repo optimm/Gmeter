@@ -56,10 +56,7 @@ func TestGeneratorHealthCaseNumbers(t *testing.T) {
 			TimerLagP99: 10 * time.Millisecond,
 		}, true},
 		{"A2 real shape: all late, timer lag about 0 (detection gap)", GeneratorHealth{
-			Late: 400000, Scheduled: 400000, Workers: 256,
 			TimerLagP99: 0,
-			ServiceMean: 100 * time.Microsecond,
-			CorrectedMean: 7100 * time.Millisecond,
 		}, false},
 	}
 	for _, c := range cases {

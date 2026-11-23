@@ -352,25 +352,15 @@ func reachedLate(now, due time.Time) bool {
 	return now.Sub(due) > lateTolerance
 }
 
-// GeneratorHealth is the part of a run that says whether the generator, rather
-// than the server, set the numbers. CorrectedMean minus ServiceMean is the mean
-// time requests waited inside Gmeter, from due time to being sent.
+// GeneratorHealth contains the measured signal used to decide whether the
+// generator kept time.
 type GeneratorHealth struct {
-	Late, Scheduled uint64
-	TimerLagP99     time.Duration
-	CorrectedMean   time.Duration
-	ServiceMean     time.Duration
-	Workers         int
+	TimerLagP99 time.Duration
 }
 
-// Limited says whether the generator could not keep time and why. Timer lag
-// is one signal, but it is only recorded for waits the scheduler actually slept
-// through: once it falls behind it stops sleeping and the figure reads near
-// zero. A high late-dispatch share alone is not enough to claim the generator
-// is at fault: in an open-loop run the queue grows when the server or the
-// worker pool cannot keep up, which is a normal outcome of the load test, not
-// a generator failure. An unknown worker count (zero) makes only the timer-lag
-// test available.
+// Limited reports whether the p99 timer lag is over the warning threshold.
+// This cannot detect a saturated generator that has stopped sleeping; late
+// dispatches alone are ambiguous because a slow server can also fill workers.
 func (h GeneratorHealth) Limited() (bool, string) {
 	if h.TimerLagP99 > TimerLagWarn {
 		return true, fmt.Sprintf("generator timer lag p99 is %v, so its timers were starved or slept too long: lower the rate or run Gmeter on a quieter machine", h.TimerLagP99.Round(time.Microsecond))
@@ -587,17 +577,10 @@ loop:
 // GeneratorHealth returns what is needed to judge whether this run's numbers
 // describe the generator or the server.
 func (r *Result) GeneratorHealth() GeneratorHealth {
-	h := GeneratorHealth{Late: r.Late, Scheduled: r.Scheduled, Workers: r.Workers}
-	if r.TimerLag != nil {
-		h.TimerLagP99 = r.TimerLag.Quantile(0.99)
+	if r.TimerLag == nil {
+		return GeneratorHealth{}
 	}
-	if r.Corrected != nil {
-		h.CorrectedMean = r.Corrected.Mean()
-	}
-	if r.Service != nil {
-		h.ServiceMean = r.Service.Mean()
-	}
-	return h
+	return GeneratorHealth{TimerLagP99: r.TimerLag.Quantile(0.99)}
 }
 
 // source is where due times come from: a computed Schedule or a recorded Replay.

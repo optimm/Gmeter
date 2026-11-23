@@ -74,8 +74,8 @@ Back to the [README](../README.md).
   server is slow) or the generator was starved of CPU") and does not change the MCP verdict, because in an
   open-loop run the queue grows whenever the server or the worker pool cannot keep up - a normal outcome of a
   load test, not a generator failure. The signal is a single threshold on the scheduler's own wake-up latency
-  (p99 over 5ms), so it needs no timing-sensitive test, and a result's `find` verdict uses the measured stage
-  rather than the warm-up. Note that a saturated generator that has stopped sleeping is NOT detected by this
+  (p99 over 5ms), so it needs no timing-sensitive test. Timer lag is sampled by the scheduler over the whole
+  run, so a result's `find` verdict uses the run-wide figure, not one stage. Note that a saturated generator that has stopped sleeping is NOT detected by this
   signal and only gets the late-dispatch warning.
 
 ### What we tried for detecting a saturated generator
@@ -85,7 +85,7 @@ Go runtime scheduler latency (`runtime/metrics` `/sched/latencies:seconds`,
 snapshot at start/end and subtracted) and process CPU utilisation
 (`getrusage` user+sys over wall, divided by GOMAXPROCS):
 
-| case | sched p99 | sched max | CPU util |
+| case (three runs) | sched p99 | sched max | CPU util |
 |---|---|---|---|
 | A (80k, trivial) | ~0.000s | 0.034-0.042s | 28% |
 | A2 (200k, trivial) | 0.002s | 0.029-0.034s | 47% |
@@ -97,7 +97,11 @@ Neither signal meets the adoption bar: A2's scheduler max (0.029-0.034s)
 overlaps A's (0.034-0.042s), and CPU utilisation is only ~1.7x, not 10x.
 So no signal was adopted: generator_limited stays timer-lag only and a
 saturated generator only gets the late-dispatch warning. A negative result is
-an acceptable outcome.
+an acceptable outcome. The figures above are case-level summaries across the
+three runs, not per-run values; per-run measurements and the throwaway harness
+were not retained. The experiment was not repeated on Linux or Windows, and
+overhead at 80k rps was not measured, so cross-platform availability and the
+overhead adoption criteria remain unverified.
 - Precision costs CPU: the default `-spin 200µs` busy-waits, up to about a quarter of a core and only below about
   5000 rps. Turn it off with `-spin 0` if the generator shares a small machine with the thing it is testing.
 - Redirects are not followed (a 302 is a result) and proxy environment variables are ignored.
